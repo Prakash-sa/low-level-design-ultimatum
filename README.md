@@ -53,3 +53,9 @@ Example: separate “Printable” and “Savable” interfaces.
 D – Dependency Inversion (DIP)
 ➜ Depend on abstractions, not concrete classes.
 Example: inject dependencies via constructor or DI container.
+
+## Sources
+
+- [Medium](https://medium.com/@cautaerts/all-23-oop-software-design-patterns-with-examples-in-python-cac1d3f4f4d5)
+- [Guide](https://python-patterns.guide/)
+- [CodeSignal](https://codesignal.com/learn/paths/mastering-design-patterns-with-python)
