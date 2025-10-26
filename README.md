@@ -59,3 +59,4 @@ Example: inject dependencies via constructor or DI container.
 - [Medium](https://medium.com/@cautaerts/all-23-oop-software-design-patterns-with-examples-in-python-cac1d3f4f4d5)
 - [Guide](https://python-patterns.guide/)
 - [CodeSignal](https://codesignal.com/learn/paths/mastering-design-patterns-with-python)
+- [Design Patterns](https://refactoring.guru/design-patterns)
