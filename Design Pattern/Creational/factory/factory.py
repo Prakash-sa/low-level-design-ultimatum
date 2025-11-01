@@ -5,7 +5,6 @@ class Burger:
     def print(self):
         print(self.ingredients)
 
-
 class BurgerFactory:
     def createCheeseBurger(self):
         ingredients=["bun","cheese","beef-patty"]
@@ -18,10 +17,8 @@ class BurgerFactory:
     def createVeganBurger(self):
         ingredients=["bun","sepcial-sauce","veggie-patty"]
         return Burger(ingredients)
-    
 
 burgerFactory=BurgerFactory()
 burgerFactory.createCheeseBurger().print()
 burgerFactory.createDeluxeBurger().print()
 burgerFactory.createVeganBurger().print()
-
