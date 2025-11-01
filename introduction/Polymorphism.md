@@ -2,12 +2,12 @@
 
 Polymorphism ("many forms") lets objects of different types be treated through the same interface while behaving according to their concrete type.
 
-Why it matters
+## Why it matters
 
 - Enables generic code that operates on abstractions (interfaces/base classes) while allowing concrete classes to provide specialized behavior.
 - Improves extensibility and decouples code that uses objects from the object's specific implementation.
 
-Types
+## Types
 
 - Static (compile-time) polymorphism
   - Achieved via method overloading or operator overloading (where the language supports it).
@@ -16,17 +16,17 @@ Types
   - Achieved via method overriding in a class hierarchy.
   - The actual method implementation is chosen at runtime based on the object's concrete type.
 
-Examples (concept)
+## Examples (concept)
 
 - Overloading: several methods named add(...) that accept different parameter lists.
 - Overriding: class Animal defines makeNoise(); subclasses (Dog, Lion) override makeNoise() with type-specific behavior.
 
-Notes
+## Notes
 
 - Operator overloading is not supported in some languages (e.g., Java, JavaScript).
 - Static polymorphism relies on different signatures; dynamic polymorphism requires the same signature and typically the same return type.
 
-Comparison
+## Comparison
 
 | Aspect                   | Static Polymorphism                                           | Dynamic Polymorphism                       |
 | ------------------------ | ------------------------------------------------------------- | ------------------------------------------ |
@@ -37,8 +37,3 @@ Comparison
 | Return type              | Can differ                                                    | Must be the same                           |
 | Private / sealed methods | Can be overloaded                                             | Cannot be overridden                       |
 | Performance              | Generally better (compile-time binding)                       | Generally worse (runtime binding)          |
-
-See also
-
-- `Abstraction.md` — designing simple interfaces and hiding implementation details.
-- `Inheritance.md` — class hierarchies used for overriding and extension.

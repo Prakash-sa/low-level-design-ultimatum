@@ -27,9 +27,10 @@ How to use
 - Read the files under `introduction/` for short explanations and examples.
 - Use the examples as a starting point for small practice programs or interview prep.
 
-Contributing
+## Basics
 
-- If you find typos, missing examples, or want to add a short implementation, please open a pull request with a focused change.
+-  Instance attributes maintain unique data for each object, while class attributes provide a shared value across all instances unless overridden.
+
 
 
 ### SOLID Principle
