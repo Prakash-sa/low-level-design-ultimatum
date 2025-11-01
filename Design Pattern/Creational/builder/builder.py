@@ -1,6 +1,3 @@
-
-
-
 class Burger:
     def __init__(self):
         self.buns=None
