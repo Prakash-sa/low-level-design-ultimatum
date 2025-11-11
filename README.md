@@ -29,9 +29,7 @@ How to use
 
 ## Basics
 
--  Instance attributes maintain unique data for each object, while class attributes provide a shared value across all instances unless overridden.
-
-
+- Instance attributes maintain unique data for each object, while class attributes provide a shared value across all instances unless overridden.
 
 ### SOLID Principle
 
@@ -57,7 +55,9 @@ Example: inject dependencies via constructor or DI container.
 
 ## Sources
 
+- [CodeTekTeach](http://youtube.com/watch?v=c6sMYunKIB8)
 - [Medium](https://medium.com/@cautaerts/all-23-oop-software-design-patterns-with-examples-in-python-cac1d3f4f4d5)
 - [Guide](https://python-patterns.guide/)
 - [CodeSignal](https://codesignal.com/learn/paths/mastering-design-patterns-with-python)
 - [Design Patterns](https://refactoring.guru/design-patterns)
+- [AlgoMaster](https://algomaster.io/learn/lld/what-is-lld)

@@ -5,9 +5,6 @@
 #  which makes them compatible. In this case, a MicroToUsbAdapter makes them compatible, 
 # similar to how we use adapters in the real-world.
 
-
-
-
 class UsbCable:
     def __init__(self):
         self.isPlugged=False

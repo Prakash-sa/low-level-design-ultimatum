@@ -14,7 +14,7 @@ class Lion(Animal):
   def print_animal(self): # method overriding
     print("I am from the Lion class")
 
-
+ 
 lion = Lion()
 lion.print_animal()
 lion.print_animal_two()

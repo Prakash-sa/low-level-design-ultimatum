@@ -5,7 +5,7 @@ class Sum:
 sum = Sum()
 print(sum.addition(14, 35))
 print(sum.addition(31, 34, 43))
-
+ 
 
 class Area:
     def calculateArea(self, length, breadth=-1):
