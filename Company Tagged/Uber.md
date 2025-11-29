@@ -1,4 +1,4 @@
-Uber frequently poses depth LLD exercises requiring working code (2–3 key functions). Below each section links to the in-repo implementation (airline-style: README, START_HERE, 75_MINUTE_GUIDE, INTERVIEW_COMPACT) plus external practice resources.
+Uber frequently poses depth LLD exercises requiring working code (2–3 key functions). Below each section links to the in-repo implementation (README, START_HERE, 75_MINUTE_GUIDE, INTERVIEW_COMPACT) plus external practice resources.
 
 ---
 ## 1. Hit Counter
