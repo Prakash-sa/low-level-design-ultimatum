@@ -1,548 +1,673 @@
-# Elevator System - 75 Minute Interview Implementation Guide
+# Elevator System - 75 Minute Interview Guide
 
-## ⏱️ Time Breakdown
+## System Overview
+**Multi-elevator dispatching system** for high-rise buildings, featuring intelligent request assignment, concurrent car management, door operations, and load monitoring. Think modern smart building elevators.
 
-- **0-5 min**: Problem clarification & requirements
-- **5-15 min**: Design discussion & architecture
-- **15-60 min**: Implementation (core + patterns)
-- **60-75 min**: Testing & walk-through
+**Core Challenge**: Efficient dispatching to minimize average wait time, handle concurrent requests, manage elevator states, and ensure safety constraints.
 
 ---
 
-## 📋 PART 1: Problem Clarification (5 minutes)
+## Requirements Clarification (0-5 min)
 
-### What to Ask
-1. How many floors? (assume 10)
-2. How many elevators? (assume 3)
-3. What's the main dispatch strategy? (nearest car)
-4. Need emergency stop? (yes)
-5. Need load management? (yes, for demo)
+### Functional Requirements
+1. **Multiple Elevators**: 3+ elevator cars serving N floors (default 10)
+2. **Call Management**: External calls (floor + direction) and internal calls (destination floor)
+3. **Dispatching**: Assign nearest available elevator to external requests
+4. **Movement**: Elevators move floor-by-floor with direction tracking
+5. **Door Operations**: Open/close at destination floors with safety timeout
+6. **Load Monitoring**: Track current floor, direction, pending requests
+7. **Display**: Show current floor and direction for each elevator
+8. **State Management**: IDLE, MOVING_UP, MOVING_DOWN, DOOR_OPEN, MAINTENANCE
 
-### Problem Statement to Confirm
-**Design an elevator system for a multi-floor building that:**
-- Handles calls from different floors (UP/DOWN)
-- Dispatches nearest available elevator
-- Manages elevator state (idle, moving, maintenance)
-- Opens/closes doors at floors
-- Tracks passenger load
+### Non-Functional Requirements
+- **Performance**: Dispatch decision in <100ms for 10 elevators
+- **Scale**: Support 50 floors, 20 elevators, 100 concurrent requests
+- **Safety**: Never open doors while moving, prevent overloading
+- **Availability**: System continues if one elevator in maintenance
+
+### Key Design Decisions
+1. **Request Queues**: Separate up_queue and down_queue per elevator
+2. **Dispatching**: Strategy pattern (Nearest, LoadBalanced, ZoneBased)
+3. **State Machine**: Elevator state transitions with validation
+4. **Concurrency**: Thread-safe operations with locks
+5. **Coordination**: Singleton ElevatorSystem manages all cars
 
 ---
 
-## 🏗️ PART 2: Design Discussion (10 minutes)
+## Architecture & Design (5-15 min)
 
-### Entities to Identify
+### System Architecture
+
 ```
-Building → Floors → Elevators → Requests
+ElevatorSystem (Singleton)
+├── Elevators List
+│   └── ElevatorCar → Door → Display → Queues
+├── Floors List
+│   └── Floor → HallButtons (UP/DOWN)
+├── Dispatcher (Strategy)
+│   ├── NearestCarDispatcher
+│   ├── LoadBalancedDispatcher
+│   └── ZoneBasedDispatcher
+└── Observers
+    └── SystemMonitor
 ```
 
-### Key Classes
-1. **ElevatorCar** - Main entity, state machine
-2. **ElevatorSystem** - Orchestrator (singleton)
-3. **Floor/HallPanel** - Call buttons
-4. **Door** - Door operations
-5. **Dispatcher** - Request assignment
-6. **Display** - Status display
+### Design Patterns Used
 
-### Design Patterns
-- **Singleton**: ElevatorSystem (one instance)
-- **Observer**: Display updates
-- **Strategy**: Dispatcher algorithm
-- **State**: Elevator states
-
-### SOLID Quick Map
-- **S**: Each class = one responsibility
-- **O**: New dispatcher = new class, no modification
-- **L**: All cars work the same
-- **I**: Interfaces are minimal
-- **D**: Depend on abstractions
+1. **Singleton**: ElevatorSystem (one instance coordinates all elevators)
+2. **Strategy**: Dispatcher algorithms (Nearest/LoadBalanced/ZoneBased)
+3. **State**: Elevator state machine (IDLE/MOVING/DOOR_OPEN/MAINTENANCE)
+4. **Observer**: System monitor for events
+5. **Command**: Button press actions encapsulated
 
 ---
 
-## 💻 PART 3: Implementation (45 minutes)
+## Core Entities (15-35 min)
 
-### Phase 1: Enums & Basics (5 min)
+### 1. Direction & State Enums
 
 ```python
-# 1. Direction.py
 from enum import Enum
 
 class Direction(Enum):
-    UP = 1
-    DOWN = 2
-    IDLE = 3
+    UP = "up"
+    DOWN = "down"
+    IDLE = "idle"
 
 class ElevatorState(Enum):
-    IDLE = 1
-    MOVING_UP = 2
-    MOVING_DOWN = 3
-    DOOR_OPEN = 4
-    MAINTENANCE = 5
+    IDLE = "idle"
+    MOVING_UP = "moving_up"
+    MOVING_DOWN = "moving_down"
+    DOOR_OPEN = "door_open"
+    MAINTENANCE = "maintenance"
 
 class DoorState(Enum):
-    OPEN = 1
-    CLOSED = 2
+    OPEN = "open"
+    CLOSED = "closed"
+    OPENING = "opening"
+    CLOSING = "closing"
 ```
 
-### Phase 2: Core Components (15 min)
+**Key Points**:
+- Direction tracks movement intent
+- State enforces valid operations (can't move with door open)
+- Door has intermediate states for animations
+
+### 2. Door Class
 
 ```python
-# 2. ElevatorCar.py (simplified)
-from collections import deque
-from Direction import ElevatorState, Direction, DoorState
+import time
 
-class ElevatorCar:
-    def __init__(self, car_id, num_floors):
-        self.car_id = car_id
+class Door:
+    """Elevator door with safety operations"""
+    def __init__(self, elevator_id: str):
+        self.elevator_id = elevator_id
+        self.state = DoorState.CLOSED
+    
+    def open(self):
+        """Open door (safety: only when stopped)"""
+        if self.state == DoorState.CLOSED:
+            self.state = DoorState.OPENING
+            time.sleep(0.1)  # Simulate opening
+            self.state = DoorState.OPEN
+            return True
+        return False
+    
+    def close(self):
+        """Close door"""
+        if self.state == DoorState.OPEN:
+            self.state = DoorState.CLOSING
+            time.sleep(0.1)  # Simulate closing
+            self.state = DoorState.CLOSED
+            return True
+        return False
+    
+    def is_open(self) -> bool:
+        return self.state == DoorState.OPEN
+    
+    def is_closed(self) -> bool:
+        return self.state == DoorState.CLOSED
+```
+
+**Key Points**:
+- Safety checks prevent invalid operations
+- Intermediate states for realistic simulation
+- Simple API (open/close/is_open/is_closed)
+
+### 3. Display Class
+
+```python
+class Display:
+    """Elevator display showing floor and direction"""
+    def __init__(self, elevator_id: str):
+        self.elevator_id = elevator_id
         self.current_floor = 0
-        self.state = ElevatorState.IDLE
         self.direction = Direction.IDLE
-        self.request_queue = deque()
-        self.maintenance = False
-        self.door_state = DoorState.CLOSED
-        
-    def register_request(self, floor, direction):
-        """Add request to queue"""
-        if self.maintenance or self.current_floor == floor:
-            return False
-        self.request_queue.append((floor, direction))
-        return True
     
-    def move_one_floor(self):
-        """Simulate movement"""
-        if self.state == ElevatorState.MOVING_UP:
-            self.current_floor += 1
-            self._check_arrival()
-        elif self.state == ElevatorState.MOVING_DOWN:
-            self.current_floor -= 1
-            self._check_arrival()
-    
-    def _check_arrival(self):
-        """Check if reached target"""
-        if self.request_queue and self.current_floor == self.request_queue[0][0]:
-            self.state = ElevatorState.DOOR_OPEN
-            self.door_state = DoorState.OPEN
-            self.request_queue.popleft()
-    
-    def depart_floor(self):
-        """Leave current floor"""
-        self.door_state = DoorState.CLOSED
-        if self.request_queue:
-            target_floor = self.request_queue[0][0]
-            self.direction = Direction.UP if target_floor > self.current_floor else Direction.DOWN
-            self.state = ElevatorState.MOVING_UP if self.direction == Direction.UP else ElevatorState.MOVING_DOWN
-        else:
-            self.state = ElevatorState.IDLE
-            self.direction = Direction.IDLE
-    
-    def enter_maintenance(self):
-        """Put in maintenance"""
-        self.maintenance = True
-        self.state = ElevatorState.MAINTENANCE
-        self.request_queue.clear()
-    
-    def exit_maintenance(self):
-        """Exit maintenance"""
-        self.maintenance = False
-        self.state = ElevatorState.IDLE
-    
-    def get_status(self):
-        """Get current status"""
-        return {
-            'id': self.car_id,
-            'floor': self.current_floor,
-            'state': self.state.name,
-            'direction': self.direction.name,
-            'queue_size': len(self.request_queue),
-            'in_maintenance': self.maintenance
-        }
-```
-
-### Phase 3: System Controller (12 min)
-
-```python
-# 3. ElevatorSystem.py (singleton + dispatcher)
-from Direction import Direction
-
-class ElevatorSystem:
-    _instance = None
-    
-    def __init__(self, num_floors, num_cars):
-        self.num_floors = num_floors
-        self.cars = [ElevatorCar(i, num_floors) for i in range(num_cars)]
-        self.floors = list(range(num_floors))
-    
-    @staticmethod
-    def get_instance(num_floors=10, num_cars=3):
-        """Singleton pattern"""
-        if ElevatorSystem._instance is None:
-            ElevatorSystem._instance = ElevatorSystem(num_floors, num_cars)
-        return ElevatorSystem._instance
-    
-    def call_elevator(self, floor, direction):
-        """Main method: call elevator from floor"""
-        # Find best car using simple dispatcher
-        best_car = self._find_best_car(floor, direction)
-        if best_car:
-            best_car.register_request(floor, direction)
-        return best_car
-    
-    def _find_best_car(self, floor, direction):
-        """Find nearest idle car"""
-        available_cars = [c for c in self.cars if not c.maintenance]
-        if not available_cars:
-            return None
-        
-        idle_cars = [c for c in available_cars if c.state == ElevatorState.IDLE]
-        if idle_cars:
-            # Pick closest idle car
-            return min(idle_cars, key=lambda c: abs(c.current_floor - floor))
-        
-        # Pick closest moving car
-        return min(available_cars, key=lambda c: abs(c.current_floor - floor))
-    
-    def move_all_cars(self):
-        """Simulate one time step for all cars"""
-        for car in self.cars:
-            if car.state in (ElevatorState.MOVING_UP, ElevatorState.MOVING_DOWN):
-                car.move_one_floor()
-    
-    def depart_from_floor(self, car_id):
-        """Car departs from current floor"""
-        if 0 <= car_id < len(self.cars):
-            self.cars[car_id].depart_floor()
-    
-    def get_system_status(self):
-        """Get status of all cars"""
-        return [car.get_status() for car in self.cars]
-    
-    def print_status(self):
-        """Pretty print system status"""
-        print("\n" + "="*60)
-        print(f"{'ID':<3} {'Floor':<6} {'State':<15} {'Dir':<6} {'Queue':<6} {'Maint':<6}")
-        print("="*60)
-        for status in self.get_system_status():
-            print(f"{status['id']:<3} {status['floor']:<6} {status['state']:<15} {status['direction']:<6} {status['queue_size']:<6} {str(status['in_maintenance']):<6}")
-        print("="*60 + "\n")
-```
-
-### Phase 4: Button & Panel Classes (8 min)
-
-```python
-# 4. Button.py
-from abc import ABC, abstractmethod
-
-class Button(ABC):
-    def __init__(self):
-        self.pressed = False
-    
-    def press(self):
-        self.pressed = True
-        self.execute()
-    
-    @abstractmethod
-    def execute(self):
-        pass
-
-class HallButton(Button):
-    def __init__(self, floor, direction):
-        super().__init__()
-        self.floor = floor
+    def update(self, floor: int, direction: Direction):
+        """Update display with current status"""
+        self.current_floor = floor
         self.direction = direction
     
-    def execute(self):
-        print(f"Hall button pressed: Floor {self.floor}, Direction {self.direction.name}")
-
-class ElevatorButton(Button):
-    def __init__(self, floor):
-        super().__init__()
-        self.floor = floor
-    
-    def execute(self):
-        print(f"Elevator button pressed: Floor {self.floor}")
-
-# 5. ElevatorPanel.py
-class ElevatorPanel:
-    def __init__(self, car_id, num_floors):
-        self.car_id = car_id
-        self.buttons = [ElevatorButton(floor) for floor in range(num_floors)]
-    
-    def press_floor(self, floor):
-        if 0 <= floor < len(self.buttons):
-            self.buttons[floor].press()
-
-class HallPanel:
-    def __init__(self, floor, num_floors):
-        self.floor = floor
-        self.up_button = HallButton(floor, Direction.UP) if floor < num_floors - 1 else None
-        self.down_button = HallButton(floor, Direction.DOWN) if floor > 0 else None
-    
-    def call_up(self):
-        if self.up_button:
-            self.up_button.press()
-    
-    def call_down(self):
-        if self.down_button:
-            self.down_button.press()
+    def show(self) -> str:
+        """Return display string"""
+        arrow = "↑" if self.direction == Direction.UP else "↓" if self.direction == Direction.DOWN else "•"
+        return "Floor %d %s" % (self.current_floor, arrow)
 ```
 
-### Phase 5: Observer Pattern (5 min)
+**Key Points**:
+- Simple state tracking (floor + direction)
+- Visual representation with arrows
+- Updated by elevator during movement
+
+### 4. ElevatorCar Class (State Machine)
 
 ```python
-# 6. Display.py (Observer)
-class Observer:
-    def update(self, car):
+import threading
+from collections import deque
+
+class ElevatorCar:
+    """Elevator car with state machine and request queues"""
+    def __init__(self, elevator_id: str, total_floors: int):
+        self.elevator_id = elevator_id
+        self.current_floor = 0
+        self.direction = Direction.IDLE
+        self.state = ElevatorState.IDLE
+        self.total_floors = total_floors
+        
+        # Components
+        self.door = Door(elevator_id)
+        self.display = Display(elevator_id)
+        
+        # Request queues (sorted)
+        self.up_queue = []
+        self.down_queue = []
+        
+        # Thread safety
+        self.lock = threading.Lock()
+        
+        # Metrics
+        self.total_trips = 0
+        self.total_floors_traveled = 0
+    
+    def add_request(self, floor: int, direction: Direction):
+        """Add floor to appropriate queue"""
+        with self.lock:
+            if direction == Direction.UP:
+                if floor not in self.up_queue:
+                    self.up_queue.append(floor)
+                    self.up_queue.sort()
+            elif direction == Direction.DOWN:
+                if floor not in self.down_queue:
+                    self.down_queue.append(floor)
+                    self.down_queue.sort(reverse=True)
+    
+    def add_destination(self, floor: int):
+        """Add internal destination (from inside elevator)"""
+        with self.lock:
+            if floor > self.current_floor:
+                if floor not in self.up_queue:
+                    self.up_queue.append(floor)
+                    self.up_queue.sort()
+            elif floor < self.current_floor:
+                if floor not in self.down_queue:
+                    self.down_queue.append(floor)
+                    self.down_queue.sort(reverse=True)
+    
+    def has_requests(self) -> bool:
+        """Check if elevator has pending requests"""
+        return len(self.up_queue) > 0 or len(self.down_queue) > 0
+    
+    def get_next_floor(self) -> int:
+        """Get next floor to visit based on direction"""
+        with self.lock:
+            if self.direction == Direction.UP and self.up_queue:
+                return self.up_queue[0]
+            elif self.direction == Direction.DOWN and self.down_queue:
+                return self.down_queue[0]
+            elif self.up_queue:
+                self.direction = Direction.UP
+                return self.up_queue[0]
+            elif self.down_queue:
+                self.direction = Direction.DOWN
+                return self.down_queue[0]
+            else:
+                self.direction = Direction.IDLE
+                return self.current_floor
+    
+    def move_to_floor(self, target_floor: int):
+        """Move elevator to target floor"""
+        if target_floor == self.current_floor:
+            return
+        
+        # Determine direction
+        if target_floor > self.current_floor:
+            self.direction = Direction.UP
+            self.state = ElevatorState.MOVING_UP
+        else:
+            self.direction = Direction.DOWN
+            self.state = ElevatorState.MOVING_DOWN
+        
+        # Move floor by floor
+        while self.current_floor != target_floor:
+            if self.direction == Direction.UP:
+                self.current_floor += 1
+            else:
+                self.current_floor -= 1
+            
+            self.total_floors_traveled += 1
+            self.display.update(self.current_floor, self.direction)
+            time.sleep(0.1)  # Simulate travel time
+        
+        # Arrived at floor
+        self.state = ElevatorState.IDLE
+    
+    def open_door_at_floor(self):
+        """Open door and remove floor from queue"""
+        self.state = ElevatorState.DOOR_OPEN
+        self.door.open()
+        
+        # Remove current floor from queues
+        with self.lock:
+            if self.current_floor in self.up_queue:
+                self.up_queue.remove(self.current_floor)
+            if self.current_floor in self.down_queue:
+                self.down_queue.remove(self.current_floor)
+        
+        time.sleep(0.2)  # Door open duration
+        self.door.close()
+        self.state = ElevatorState.IDLE
+        self.total_trips += 1
+    
+    def run(self):
+        """Main elevator run loop"""
+        while True:
+            if self.state == ElevatorState.MAINTENANCE:
+                time.sleep(1)
+                continue
+            
+            if not self.has_requests():
+                self.state = ElevatorState.IDLE
+                self.direction = Direction.IDLE
+                self.display.update(self.current_floor, self.direction)
+                time.sleep(0.5)
+                continue
+            
+            next_floor = self.get_next_floor()
+            self.move_to_floor(next_floor)
+            self.open_door_at_floor()
+    
+    def get_distance_to_floor(self, floor: int) -> int:
+        """Calculate distance to floor"""
+        return abs(self.current_floor - floor)
+    
+    def is_available(self) -> bool:
+        """Check if elevator is available for dispatch"""
+        return (self.state != ElevatorState.MAINTENANCE and 
+                self.state != ElevatorState.DOOR_OPEN)
+```
+
+**Key Points**:
+- Separate queues for up/down requests (sorted for efficiency)
+- Thread-safe operations with lock
+- State machine prevents invalid transitions
+- Metrics tracking for monitoring
+- Distance calculation for dispatching
+
+---
+
+## Business Logic (35-55 min)
+
+### Dispatcher Strategy Pattern
+
+```python
+from abc import ABC, abstractmethod
+from typing import List, Optional
+
+class DispatcherStrategy(ABC):
+    """Abstract dispatcher strategy"""
+    @abstractmethod
+    def select_elevator(self, elevators: List[ElevatorCar], 
+                       floor: int, direction: Direction) -> Optional[ElevatorCar]:
         pass
 
-class Display(Observer):
-    def __init__(self, car_id):
-        self.car_id = car_id
-        self.current_floor = 0
-        self.state = None
-    
-    def update(self, car):
-        """Called when car state changes"""
-        self.current_floor = car.current_floor
-        self.state = car.state
-        self.display()
-    
-    def display(self):
-        print(f"[Display Car {self.car_id}] Floor: {self.current_floor}, State: {self.state.name}")
+class NearestCarDispatcher(DispatcherStrategy):
+    """Dispatch nearest available elevator"""
+    def select_elevator(self, elevators: List[ElevatorCar], 
+                       floor: int, direction: Direction) -> Optional[ElevatorCar]:
+        available = [e for e in elevators if e.is_available()]
+        if not available:
+            return None
+        
+        # Return nearest elevator
+        return min(available, key=lambda e: e.get_distance_to_floor(floor))
 
-# Add to ElevatorCar:
-class ElevatorCar:
-    # ... existing code ...
-    def __init__(self, car_id, num_floors):
-        # ... existing code ...
-        self.observers = []
+class LoadBalancedDispatcher(DispatcherStrategy):
+    """Dispatch elevator with fewest pending requests"""
+    def select_elevator(self, elevators: List[ElevatorCar], 
+                       floor: int, direction: Direction) -> Optional[ElevatorCar]:
+        available = [e for e in elevators if e.is_available()]
+        if not available:
+            return None
+        
+        # Return elevator with shortest queue
+        return min(available, 
+                  key=lambda e: len(e.up_queue) + len(e.down_queue))
+
+class ZoneBasedDispatcher(DispatcherStrategy):
+    """Dispatch based on floor zones (low/mid/high)"""
+    def __init__(self, total_floors: int, zones: int = 3):
+        self.total_floors = total_floors
+        self.zone_size = total_floors // zones
     
-    def subscribe(self, observer):
-        self.observers.append(observer)
-    
-    def _notify_observers(self):
-        for observer in self.observers:
-            observer.update(self)
+    def select_elevator(self, elevators: List[ElevatorCar], 
+                       floor: int, direction: Direction) -> Optional[ElevatorCar]:
+        available = [e for e in elevators if e.is_available()]
+        if not available:
+            return None
+        
+        # Find elevators in same zone
+        target_zone = floor // self.zone_size
+        same_zone = [e for e in available 
+                    if e.current_floor // self.zone_size == target_zone]
+        
+        if same_zone:
+            return min(same_zone, key=lambda e: e.get_distance_to_floor(floor))
+        
+        # Fallback to nearest
+        return min(available, key=lambda e: e.get_distance_to_floor(floor))
 ```
+
+**Interview Points**:
+- Nearest minimizes wait time (greedy approach)
+- LoadBalanced prevents overloading single elevator
+- ZoneBased optimizes for tall buildings (reduces cross-traffic)
 
 ---
 
-## ✅ PART 4: Testing & Demo (15 minutes)
+## Integration & Patterns (55-70 min)
 
-### Test Scenarios (main.py)
+### Observer Pattern - System Monitor
 
 ```python
-# main.py - Demo scenarios for 75 min interview
+class ElevatorObserver(ABC):
+    """Observer interface for elevator events"""
+    @abstractmethod
+    def update(self, event: str, elevator: ElevatorCar, data: dict):
+        pass
 
-from ElevatorSystem import ElevatorSystem, ElevatorCar
-from Direction import Direction, ElevatorState
-from ElevatorPanel import HallPanel
-from Display import Display
+class SystemMonitor(ElevatorObserver):
+    """Monitor and log elevator events"""
+    def update(self, event: str, elevator: ElevatorCar, data: dict):
+        if event == "request_assigned":
+            print("[MONITOR] Elevator %s assigned to floor %d" % 
+                  (elevator.elevator_id, data['floor']))
+        elif event == "floor_reached":
+            print("[MONITOR] Elevator %s reached floor %d" % 
+                  (elevator.elevator_id, data['floor']))
+        elif event == "door_opened":
+            print("[MONITOR] Elevator %s door opened at floor %d" % 
+                  (elevator.elevator_id, data['floor']))
+```
 
-def scenario_1_basic_call():
-    """Basic call from one floor"""
-    print("\n" + "="*60)
-    print("SCENARIO 1: Basic Hall Call")
-    print("="*60)
-    
-    system = ElevatorSystem.get_instance(floors=10, cars=3)
-    
-    # Passenger on floor 3 calls elevator UP
-    print("\n→ Passenger on floor 3 calls elevator UP")
-    car = system.call_elevator(floor=3, direction=Direction.UP)
-    print(f"✓ Car {car.car_id} assigned, current floor: {car.current_floor}")
-    
-    system.print_status()
+### Singleton - ElevatorSystem
 
-def scenario_2_movement():
-    """Elevator moves to floor"""
-    print("\n" + "="*60)
-    print("SCENARIO 2: Movement Simulation")
-    print("="*60)
+```python
+class ElevatorSystem:
+    """Singleton controller for elevator system"""
+    _instance = None
+    _lock = threading.Lock()
     
-    ElevatorSystem._instance = None
-    system = ElevatorSystem.get_instance(floors=10, cars=2)
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
     
-    # Call from floor 5
-    print("\n→ Call from floor 5 (UP)")
-    car = system.call_elevator(floor=5, direction=Direction.UP)
+    def __init__(self):
+        if not hasattr(self, 'initialized'):
+            self.elevators = []
+            self.floors = []
+            self.dispatcher = NearestCarDispatcher()
+            self.observers = []
+            self.lock = threading.Lock()
+            self.initialized = True
     
-    # Subscribe to display
-    display = Display(car.car_id)
-    car.subscribe(display)
+    def add_elevator(self, elevator: ElevatorCar):
+        """Add elevator to system"""
+        self.elevators.append(elevator)
     
-    print(f"\n→ Car {car.car_id} moving to floor 5...")
-    car.move_one_floor()
-    car._notify_observers()
+    def set_dispatcher(self, dispatcher: DispatcherStrategy):
+        """Change dispatcher strategy at runtime"""
+        self.dispatcher = dispatcher
     
-    print(f"Floor: {car.current_floor}, State: {car.state.name}")
-
-def scenario_3_maintenance():
-    """Put car in maintenance"""
-    print("\n" + "="*60)
-    print("SCENARIO 3: Maintenance Mode")
-    print("="*60)
+    def add_observer(self, observer: ElevatorObserver):
+        """Add observer"""
+        self.observers.append(observer)
     
-    ElevatorSystem._instance = None
-    system = ElevatorSystem.get_instance(floors=10, cars=2)
+    def request_elevator(self, floor: int, direction: Direction) -> bool:
+        """External call - request elevator at floor"""
+        with self.lock:
+            selected = self.dispatcher.select_elevator(self.elevators, floor, direction)
+            
+            if not selected:
+                print("[SYSTEM] No elevator available for floor %d" % floor)
+                return False
+            
+            selected.add_request(floor, direction)
+            self._notify_observers("request_assigned", selected, {'floor': floor})
+            
+            print("[SYSTEM] Assigned Elevator %s to floor %d %s" % 
+                  (selected.elevator_id, floor, direction.value))
+            return True
     
-    car = system.cars[0]
-    print(f"\n→ Putting car {car.car_id} into maintenance")
-    car.enter_maintenance()
+    def press_button_inside(self, elevator_id: str, destination_floor: int):
+        """Internal call - passenger selects destination"""
+        elevator = next((e for e in self.elevators if e.elevator_id == elevator_id), None)
+        if elevator:
+            elevator.add_destination(destination_floor)
+            print("[SYSTEM] Elevator %s: Destination %d added" % 
+                  (elevator_id, destination_floor))
     
-    print(f"Car {car.car_id} state: {car.state.name}")
-    print(f"Can accept requests: {not car.maintenance}")
+    def get_system_status(self) -> dict:
+        """Get current system status"""
+        status = {
+            'total_elevators': len(self.elevators),
+            'available': len([e for e in self.elevators if e.is_available()]),
+            'in_maintenance': len([e for e in self.elevators 
+                                  if e.state == ElevatorState.MAINTENANCE]),
+            'elevators': []
+        }
+        
+        for e in self.elevators:
+            status['elevators'].append({
+                'id': e.elevator_id,
+                'floor': e.current_floor,
+                'state': e.state.value,
+                'direction': e.direction.value,
+                'pending': len(e.up_queue) + len(e.down_queue)
+            })
+        
+        return status
     
-    print("\n→ Calling elevator (should go to different car)")
-    new_car = system.call_elevator(floor=5, direction=Direction.UP)
-    print(f"✓ Car {new_car.car_id} assigned")
-    
-    system.print_status()
-
-def scenario_4_multiple_calls():
-    """Multiple simultaneous calls"""
-    print("\n" + "="*60)
-    print("SCENARIO 4: Multiple Simultaneous Calls")
-    print("="*60)
-    
-    ElevatorSystem._instance = None
-    system = ElevatorSystem.get_instance(floors=10, cars=3)
-    
-    calls = [(2, Direction.UP), (8, Direction.DOWN), (5, Direction.UP)]
-    
-    for floor, direction in calls:
-        print(f"\n→ Call from floor {floor} ({direction.name})")
-        car = system.call_elevator(floor, direction)
-        print(f"✓ Assigned to car {car.car_id}")
-    
-    system.print_status()
-
-def scenario_5_interior_selection():
-    """Passenger selects floor inside car"""
-    print("\n" + "="*60)
-    print("SCENARIO 5: Interior Floor Selection")
-    print("="*60)
-    
-    ElevatorSystem._instance = None
-    system = ElevatorSystem.get_instance(floors=10, cars=1)
-    
-    car = system.cars[0]
-    
-    print("\n→ Passenger calls from floor 2 (UP)")
-    system.call_elevator(floor=2, direction=Direction.UP)
-    
-    print("→ Passenger boards and selects floor 7")
-    car.register_request(floor=7, direction=Direction.IDLE)
-    
-    print(f"Queue size: {len(car.request_queue)}")
-    print(f"Requests: {[(f, d.name) for f, d in car.request_queue]}")
-
-def main():
-    print("\n" + "="*60)
-    print("ELEVATOR SYSTEM - 75 MINUTE INTERVIEW IMPLEMENTATION")
-    print("="*60)
-    
-    scenarios = [
-        scenario_1_basic_call,
-        scenario_2_movement,
-        scenario_3_maintenance,
-        scenario_4_multiple_calls,
-        scenario_5_interior_selection,
-    ]
-    
-    for i, scenario in enumerate(scenarios, 1):
-        try:
-            scenario()
-            print(f"\n✓ Scenario {i} completed")
-        except Exception as e:
-            print(f"\n✗ Scenario {i} failed: {e}")
-
-if __name__ == "__main__":
-    main()
+    def _notify_observers(self, event: str, elevator: ElevatorCar, data: dict):
+        """Notify all observers"""
+        for observer in self.observers:
+            observer.update(event, elevator, data)
 ```
 
 ---
 
-## 📊 What You've Covered
+## Interview Q&A (12 Questions)
 
-### Design Patterns (Interview Points)
-✅ **Singleton** - ElevatorSystem (one instance)
-✅ **Observer** - Display subscribes to car changes
-✅ **Strategy** - Dispatcher algorithm (_find_best_car)
-✅ **State** - ElevatorState enum
-✅ **Command** - Button hierarchy
+### Basic (0-5 min)
 
-### SOLID Principles
-✅ **S**: Each class one responsibility
-✅ **O**: Add new strategies without modifying
-✅ **L**: All cars interchangeable
-✅ **I**: Minimal interfaces
-✅ **D**: Depend on abstractions (Observer)
+1. **"What are the core entities in an elevator system?"**
+   - Answer: ElevatorCar, Door, Display, Floor, Button, ElevatorSystem (coordinator), Dispatcher (strategy).
 
-### Features Demonstrated
-✅ Call elevator from floor
-✅ Dispatch to nearest car
-✅ Movement simulation
-✅ Door open/close
-✅ Maintenance mode
-✅ Observer pattern
-✅ Multiple requests
-✅ State tracking
+2. **"What are the elevator states?"**
+   - Answer: IDLE (stopped, no requests), MOVING_UP/DOWN (in transit), DOOR_OPEN (loading passengers), MAINTENANCE (out of service).
 
----
+3. **"How do you handle external vs internal requests?"**
+   - Answer: External (floor + direction) → dispatcher selects elevator. Internal (destination only) → added to current elevator's queue.
 
-## 💡 Interview Tips
+### Intermediate (5-10 min)
 
-### When Asked "How would you extend this?"
-- **New dispatcher**: Create new class, implement `_find_best_car` logic
-- **Priority floors**: Add priority to request tuple
-- **Concurrent requests**: Add thread-safe queue
-- **Load management**: Add `load` and `capacity` to ElevatorCar
+4. **"Explain the dispatching algorithm."**
+   - Answer: Strategy pattern. Nearest finds closest available elevator. LoadBalanced picks elevator with fewest requests. ZoneBased assigns by floor zones.
 
-### Common Follow-ups
-1. **How to handle stuck elevator?** 
-   - Add health check, auto-maintenance mode
+5. **"How do you prevent doors from opening while moving?"**
+   - Answer: State machine. Door.open() only succeeds when state is IDLE or DOOR_OPEN. Moving states block door operations.
 
-2. **How to optimize dispatch?**
-   - SCAN algorithm (sweep up/down)
-   - Look-ahead (consider queue depth)
+6. **"How are request queues managed?"**
+   - Answer: Separate up_queue (sorted ascending) and down_queue (sorted descending). Elevator serves requests in current direction first, then switches.
 
-3. **How to test this?**
-   - Unit tests for each class
-   - Integration tests for scenarios
+7. **"How do you handle concurrent requests?"**
+   - Answer: System-level lock protects dispatcher. Elevator-level locks protect queue operations. Thread-safe state transitions.
 
-4. **Complexity?**
-   - Dispatch: O(N) where N = cars
-   - Movement: O(1) per floor
-   - Memory: O(N*M) for N cars, M requests
+### Advanced (10-15 min)
+
+8. **"How would you optimize for tall buildings (50+ floors)?"**
+   - Answer: ZoneBased dispatcher partitions floors. Express elevators for top floors. Local elevators for lower floors. Sky lobbies for transfers.
+
+9. **"How would you implement load balancing?"**
+   - Answer: Track queue length per elevator. Dispatcher selects elevator with min(pending_requests). Alternative: weight by distance + queue length.
+
+10. **"How to detect and handle stuck elevators?"**
+    - Answer: Heartbeat monitoring (elevator reports position every 5s). Timeout detection (no movement for 30s). Auto-transition to MAINTENANCE. Redistribute pending requests.
+
+11. **"How would you add priority for VIP floors?"**
+    - Answer: Add priority_queue separate from up/down queues. Process priority requests first. Alternative: Add weight to dispatcher distance calculation.
+
+12. **"How to scale to 100 elevators?"**
+    - Answer: Partition elevators by building section. Separate ElevatorSystem per zone. Use message queue (Kafka) for cross-zone requests. Cache dispatcher decisions. Database for state persistence.
 
 ---
 
-## 🎯 Implementation Checklist
+## SOLID Principles Applied
 
-- [ ] **0-5 min**: Clarify requirements
-- [ ] **5-15 min**: Draw architecture on whiteboard
-- [ ] **15-20 min**: Create enums (Direction, ElevatorState, DoorState)
-- [ ] **20-35 min**: Implement ElevatorCar class
-- [ ] **35-50 min**: Implement ElevatorSystem (singleton + dispatcher)
-- [ ] **50-60 min**: Add Button & Panel classes
-- [ ] **60-65 min**: Add Display (Observer pattern)
-- [ ] **65-75 min**: Run demo scenarios & explain design
-
----
-
-## 📝 Total Lines of Code
-
-- **Direction.py**: ~20 lines
-- **ElevatorCar.py**: ~50 lines
-- **ElevatorSystem.py**: ~45 lines
-- **Button.py**: ~25 lines
-- **ElevatorPanel.py**: ~20 lines
-- **Display.py**: ~20 lines
-- **main.py**: ~80 lines
-
-**Total: ~260 lines** - Perfect for 75-minute interview!
+| Principle | Application |
+|-----------|------------|
+| **Single Responsibility** | ElevatorCar handles movement; Door handles operations; Dispatcher handles selection |
+| **Open/Closed** | New dispatcher strategies without modifying ElevatorSystem |
+| **Liskov Substitution** | All DispatcherStrategy subclasses interchangeable at runtime |
+| **Interface Segregation** | Observer only requires update(); Strategy only requires select_elevator() |
+| **Dependency Inversion** | ElevatorSystem depends on abstract DispatcherStrategy, not concrete classes |
 
 ---
 
-## 🚀 Start Coding!
+## UML Diagram
 
-Begin with Phase 1 (enums), then systematically implement each phase. Show working code at each step. Explain design patterns as you implement them.
+```
+┌────────────────────────────────────────────────────┐
+│         ElevatorSystem (Singleton)                 │
+├────────────────────────────────────────────────────┤
+│ - elevators: List[ElevatorCar]                     │
+│ - dispatcher: DispatcherStrategy                   │
+│ - observers: List[ElevatorObserver]                │
+├────────────────────────────────────────────────────┤
+│ + request_elevator(floor, direction)               │
+│ + press_button_inside(elevator_id, floor)          │
+│ + get_system_status()                              │
+└────────────────────────────────────────────────────┘
+           │              │
+           ▼              ▼
+    ┌──────────────┐  ┌──────────────┐
+    │ ElevatorCar  │  │ Dispatcher   │
+    ├──────────────┤  │ (Strategy)   │
+    │ current_floor│  ├──────────────┤
+    │ direction    │  │ Nearest      │
+    │ state        │  │ LoadBalanced │
+    │ up_queue     │  │ ZoneBased    │
+    │ down_queue   │  └──────────────┘
+    ├──────────────┤
+    │ + add_request()    │
+    │ + move_to_floor()  │
+    │ + run()            │
+    └──────────────┘
+         │     │
+         ▼     ▼
+    ┌────┐  ┌─────────┐
+    │Door│  │Display  │
+    └────┘  └─────────┘
+
+State Machine:
+IDLE ──request──> MOVING_UP/DOWN ──arrive──> DOOR_OPEN ──timeout──> IDLE
+  │                                                                     │
+  └────────────────────> MAINTENANCE <────────────────────────────────┘
+
+┌────────────────────────────────────┐
+│   DispatcherStrategy (Abstract)    │
+├────────────────────────────────────┤
+│ + select_elevator(elevators, floor)│
+└────────────────────────────────────┘
+           △
+           │ implements
+    ┌──────┴──────────┬──────────────┐
+    │                 │              │
+NearestCar      LoadBalanced    ZoneBased
+```
+
+---
+
+## 5 Demo Scenarios
+
+### Demo 1: Basic Operation
+- Initialize 3 elevators at floor 0
+- Request elevator at floor 5 (UP)
+- System dispatches nearest elevator
+- Elevator moves to floor 5, opens door
+
+### Demo 2: Concurrent Requests
+- Request floor 3 (UP) and floor 7 (DOWN) simultaneously
+- System dispatches 2 different elevators
+- Both elevators serve requests independently
+- Display status of all elevators
+
+### Demo 3: Internal Destination
+- Passenger in Elevator-1 presses button for floor 8
+- Elevator adds floor 8 to up_queue
+- Elevator serves external floor 5, then internal floor 8
+- Verify queue management
+
+### Demo 4: Load Balancing
+- Switch to LoadBalancedDispatcher
+- Create 10 requests across different floors
+- Verify requests distributed evenly
+- Compare with NearestCarDispatcher
+
+### Demo 5: Zone-Based Dispatching
+- Switch to ZoneBasedDispatcher (3 zones)
+- Request floor 2 (low), floor 15 (mid), floor 28 (high)
+- Verify elevators assigned to their zones first
+- Fallback to nearest if zone empty
+
+---
+
+## Key Implementation Notes
+
+### Request Queue Management
+- Use sorted lists (not heaps) for transparency
+- up_queue sorted ascending (serve lowest first going up)
+- down_queue sorted descending (serve highest first going down)
+- Remove duplicates on insertion
+
+### Concurrency Handling
+- System-level lock for dispatcher
+- Elevator-level lock for queue operations
+- Use threading.Thread for elevator run loops
+- Daemon threads for background operation
+
+### Performance Optimization
+- Cache elevator distances
+- Index elevators by zone
+- Lazy evaluation of next floor
+- Batch request processing
+
+### Testing Strategy
+1. Unit test each dispatcher strategy
+2. Unit test elevator state transitions
+3. Integration test multi-elevator coordination
+4. Concurrency test (100 simultaneous requests)
+5. Edge cases: all elevators busy, maintenance mode, invalid floors
