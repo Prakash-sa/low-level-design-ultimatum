@@ -80,6 +80,111 @@ LibrarySystem (Singleton)
 ├─ fine_calculator
 ```
 
+### Class Diagram (UML-style ASCII)
+
+Below is a UML-like ASCII class diagram illustrating the main classes and relationships used in the guide.
+
+```text
+                +------------------------+
+                |     LibrarySystem      |
+                |------------------------|
+                | - books: Dict[str,Book]|
+                | - members: Dict[str,*] |
+                | - checkouts: Dict[*]   |
+                | - search_strategy      |
+                | - fine_calculator      |
+                |------------------------|
+                | + add_book(book)       |
+                | + register_member(...) |
+                | + checkout_book(...)   |
+                | + return_book(...)     |
+                +-----------+------------+
+                        |
+                        | manages
+                        |
+              1                     v                   1
+        +----------------+    +----------------+    +----------------+
+        |     Member     |1..*|    Checkout    |*..1|      Book      |
+        |----------------|----|----------------|----|----------------|
+        | - member_id    |    | - checkout_id  |    | - isbn         |
+        | - name         |    | - member       |    | - title        |
+        | - email        |    | - book         |    | - author       |
+        | - member_type  |    | - checkout_date|    | - total_copies |
+        | - checkouts[]  |    | - due_date     |    | - available    |
+        |----------------|    | - return_date  |    | - reservations |
+        | + get_checkout_limit() | + return_checkout()| + checkout()    |
+        +-------+--------+    +----------------+    +----------------+
+            |      \
+            |       \
+      subclasses:   |        \
+      +-------------+         \
+      |                       \
+  +---------------+   +---------------+   +----------------+
+  | StudentMember  |   | FacultyMember |   | PremiumMember  |
+  +---------------+   +---------------+   +----------------+
+  | get_checkout_limit() | get_checkout_limit() | get_checkout_limit() |
+  | get_checkout_days()  | get_checkout_days()  | get_checkout_days()  |
+  +----------------------+----------------------+----------------------+
+
+  +----------------------+    +----------------------+    +----------------------+
+  |  SearchStrategy (I)  |<---|  ISBNSearchStrategy  |    |  TitleSearchStrategy |
+  |  + search(books, q)  |    +----------------------+    +----------------------+
+  +----------------------+    |  + search(...)       |    |  + search(...)       |
+                +----------------------+    +----------------------+
+
+  +----------------------+    +----------------------+    +----------------------+
+  |   FineCalculator     |    |     Observer (I)     |<---|   EmailNotifier      |
+  | + calculate_fine(...)|    | + notify(message)    |    +----------------------+
+  +----------------------+    +----------------------+    | + notify(...)        |
+                              +----------------------+
+
+Notes:
+- Arrows show ownership and multiplicity. LibrarySystem manages collections of Books, Members and Checkouts.
+- `Member` is abstract with concrete subclasses for different member policies.
+- `SearchStrategy` is an interface pattern (Strategy) with multiple concrete strategies.
+- `Observer` is used for notifications (Email/SMS) via Observer pattern.
+
+```
+
+<!-- Embedded diagram (SVG); PNG fallback instructions below -->
+
+![Library class diagram](images/library_diagram.svg)
+
+**Arrow conventions used in the diagram:**
+
+- IS-A (inheritance): drawn with a triangle arrowhead pointing to the parent (labelled "IS-A (inheritance)").
+- HAS-A (aggregation/composition): drawn with diamonds on the arrow end — filled diamond indicates composition/strong ownership, hollow diamond indicates aggregation/looser ownership. Each HAS-A arrow is labeled with multiplicity (e.g., `0..*`, `1`).
+
+If you specifically need a PNG, you can convert the included SVG locally:
+
+```bash
+# Using Inkscape:
+inkscape "Examples/Library Management System/Interview/images/library_diagram.svg" --export-type=png --export-filename="Examples/Library Management System/Interview/images/library_diagram.png"
+
+# Or using rsvg-convert (librsvg):
+rsvg-convert -o "Examples/Library Management System/Interview/images/library_diagram.png" "Examples/Library Management System/Interview/images/library_diagram.svg"
+```
+
+The SVG is included in the repo at `Examples/Library Management System/Interview/images/library_diagram.svg`.
+
+### IS-A vs HAS-A
+
+- **IS-A (inheritance)**: Used when a class is a subtype of another and should be usable wherever the parent is expected.
+    - Example: `StudentMember` IS-A `Member` (a student member can be used as a Member).
+    - UML hint in ASCII: show subclass under parent and annotate with `<|--` or label `IS-A`.
+
+- **HAS-A (aggregation/composition)**: Used when a class contains or owns another object (has a reference to it).
+    - Example: `LibrarySystem` HAS-A collection of `Book` objects; `Member` HAS-A list of `Checkout` records.
+    - If lifetime is bound (composition), annotate as filled diamond in full UML; for ASCII we label `HAS-A` and show multiplicity (1..*, 0..1).
+
+### Diagram annotations (applied above)
+
+- `Member` -> `StudentMember` / `FacultyMember` / `PremiumMember` : IS-A (inheritance)
+- `LibrarySystem` --1..*--> `Book` : HAS-A (aggregation) — Library manages but books can exist independently
+- `Member` --0..*--> `Checkout` : HAS-A (composition-like ownership of checkout records)
+
+Use these labels during interviews when describing your design to clearly express the relationships and ownership semantics.
+
 ### Design Patterns to Mention
 1. **Singleton** - LibrarySystem
 2. **Strategy** - Search, FineCalculator

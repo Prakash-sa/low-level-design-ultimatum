@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+  <style>
+    .box { fill: #fff; stroke: #222; stroke-width: 2px; }
+    .title { font: 16px 'DejaVu Sans', Arial; font-weight: bold; }
+    .text { font: 13px 'DejaVu Sans', Arial; }
+    .note { font: 12px 'DejaVu Sans', Arial; fill: #333; }
+    .label { font: 12px 'DejaVu Sans', Arial; fill: #000; }
+    .arrow { stroke: #000; stroke-width: 2px; fill: none; }
+  </style>
+
+  <defs>
+    <!-- triangle arrowhead for inheritance (IS-A) -->
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="10" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#000" />
+    </marker>
+    <!-- hollow diamond for aggregation (HAS-A, hollow near owner) -->
+    <marker id="hollowDiamond" markerWidth="14" markerHeight="14" refX="7" refY="7" orient="auto">
+      <path d="M7,0 L14,7 L7,14 L0,7 z" fill="#fff" stroke="#000" stroke-width="1"/>
+    </marker>
+    <!-- filled diamond for composition (HAS-A strong ownership) -->
+    <marker id="filledDiamond" markerWidth="14" markerHeight="14" refX="7" refY="7" orient="auto">
+      <path d="M7,0 L14,7 L7,14 L0,7 z" fill="#000" />
+    </marker>
+  </defs>
+
+  <!-- LibrarySystem -->
+  <rect x="420" y="40" width="360" height="90" class="box" rx="6"/>
+  <text x="600" y="65" text-anchor="middle" class="title">LibrarySystem</text>
+  <text x="600" y="85" text-anchor="middle" class="text">- books: Dict[isbn, Book]</text>
+  <text x="600" y="100" text-anchor="middle" class="text">- members: Dict[id, Member]</text>
+
+  <!-- Member, Checkout, Book -->
+  <rect x="80" y="220" width="260" height="120" class="box" rx="6"/>
+  <text x="210" y="245" text-anchor="middle" class="title">Member (abstract)</text>
+  <text x="210" y="265" text-anchor="middle" class="text">- member_id, name, email</text>
+  <text x="210" y="285" text-anchor="middle" class="text">- checkouts[]</text>
+
+  <rect x="440" y="220" width="320" height="120" class="box" rx="6"/>
+  <text x="600" y="245" text-anchor="middle" class="title">Checkout</text>
+  <text x="600" y="265" text-anchor="middle" class="text">- checkout_id</text>
+  <text x="600" y="285" text-anchor="middle" class="text">- member, book, due_date</text>
+
+  <rect x="920" y="220" width="260" height="120" class="box" rx="6"/>
+  <text x="1050" y="245" text-anchor="middle" class="title">Book</text>
+  <text x="1050" y="265" text-anchor="middle" class="text">- isbn, title, author</text>
+  <text x="1050" y="285" text-anchor="middle" class="text">- total_copies, available</text>
+
+  <!-- Subclasses -->
+  <rect x="80" y="380" width="180" height="70" class="box" rx="6"/>
+  <text x="170" y="415" text-anchor="middle" class="text">StudentMember</text>
+  <rect x="280" y="380" width="180" height="70" class="box" rx="6"/>
+  <text x="370" y="415" text-anchor="middle" class="text">FacultyMember</text>
+  <rect x="480" y="380" width="180" height="70" class="box" rx="6"/>
+  <text x="570" y="415" text-anchor="middle" class="text">PremiumMember</text>
+
+  <!-- Search / Observer -->
+  <rect x="80" y="520" width="260" height="70" class="box" rx="6"/>
+  <text x="210" y="555" text-anchor="middle" class="title">SearchStrategy (I)</text>
+  <rect x="360" y="520" width="260" height="70" class="box" rx="6"/>
+  <text x="490" y="555" text-anchor="middle" class="text">ISBNSearch / TitleSearch</text>
+
+  <rect x="880" y="520" width="260" height="70" class="box" rx="6"/>
+  <text x="1010" y="555" text-anchor="middle" class="title">Observer (I)</text>
+  <text x="1010" y="575" text-anchor="middle" class="text">EmailNotifier / SMSNotifier</text>
+
+  <!-- Lines from LibrarySystem -->
+  <!-- LibrarySystem manages others (aggregation lines) -->
+  <line x1="600" y1="130" x2="210" y2="220" class="arrow" marker-end="url(#hollowDiamond)" />
+  <text x="400" y="170" class="label">manages (HAS-A)</text>
+  <line x1="600" y1="130" x2="600" y2="220" class="arrow" marker-end="url(#hollowDiamond)" />
+  <line x1="600" y1="130" x2="1050" y2="220" class="arrow" marker-end="url(#hollowDiamond)" />
+
+  <!-- IS-A annotation -->
+  <!-- Member -> subclasses (IS-A) -->
+  <line x1="210" y1="340" x2="210" y2="380" class="arrow" marker-end="url(#arrowhead)" />
+  <text x="230" y="360" class="label">IS-A (inheritance)</text>
+
+  <!-- HAS-A annotations -->
+  <!-- Member -> Checkout (HAS-A) -->
+  <line x1="340" y1="280" x2="440" y2="280" class="arrow" marker-end="url(#filledDiamond)" />
+  <text x="390" y="300" class="label">HAS-A 0..*</text>
+
+  <!-- Checkout -> Book (HAS-A) -->
+  <line x1="760" y1="280" x2="920" y2="280" class="arrow" marker-end="url(#filledDiamond)" />
+  <text x="840" y="300" class="label">HAS-A 1</text>
+
+  <!-- Legend -->
+  <rect x="20" y="680" width="1160" height="100" fill="#f9f9f9" stroke="#ddd"/>
+  <text x="40" y="705" class="note">Legend: IS-A = inheritance (subtype). HAS-A = aggregation/composition (owns or references other objects).</text>
+
+</svg>
