@@ -148,24 +148,26 @@ Notes:
 
 <!-- Embedded diagram (SVG); PNG fallback instructions below -->
 
-![Library class diagram](images/library_diagram.svg)
+<!-- library_diagram.svg removed -->
+_Library diagram image has been removed from this guide._
 
-**Arrow conventions used in the diagram:**
+## Components of a class diagram
 
-- IS-A (inheritance): drawn with a triangle arrowhead pointing to the parent (labelled "IS-A (inheritance)").
-- HAS-A (aggregation/composition): drawn with diamonds on the arrow end — filled diamond indicates composition/strong ownership, hollow diamond indicates aggregation/looser ownership. Each HAS-A arrow is labeled with multiplicity (e.g., `0..*`, `1`).
+- **Class:** A rectangle divided into three compartments: name (top), attributes (middle), and operations (bottom). The embedded diagram includes a sample `ACCOUNT` class showing these compartments.
+- **Class Name:** Centered, bold, and capitalized in the top compartment (e.g., `ACCOUNT`).
+- **Attributes:** Variables listed in the middle compartment with visibility markers and types (e.g., `- id: int`, `+ balance: float`).
+- **Operations:** Methods listed in the bottom compartment with visibility, parameters, and return types (e.g., `+ deposit(amount: float) -> None`).
+- **Visibility markers:** `+` (public), `-` (private), `#` (protected).
+- **Relationships:** Lines connecting classes:
+    - Association: static connection between classes.
+    - Inheritance (Generalization): IS-A relationship shown with a hollow triangle arrowhead pointing to the parent.
+    - Aggregation: HAS-A relationship shown with a hollow diamond at the owner end (part can exist independently).
+    - Composition: Strong HAS-A shown with a filled diamond at the owner end (part's lifetime tied to whole).
 
-If you specifically need a PNG, you can convert the included SVG locally:
+Refer to the embedded SVG for visual examples of each component and relationship.
 
-```bash
-# Using Inkscape:
-inkscape "Examples/Library Management System/Interview/images/library_diagram.svg" --export-type=png --export-filename="Examples/Library Management System/Interview/images/library_diagram.png"
-
-# Or using rsvg-convert (librsvg):
-rsvg-convert -o "Examples/Library Management System/Interview/images/library_diagram.png" "Examples/Library Management System/Interview/images/library_diagram.svg"
-```
-
-The SVG is included in the repo at `Examples/Library Management System/Interview/images/library_diagram.svg`.
+<!-- class_components.svg removed -->
+_Class components sample image has been removed from this guide._
 
 ### IS-A vs HAS-A
 
