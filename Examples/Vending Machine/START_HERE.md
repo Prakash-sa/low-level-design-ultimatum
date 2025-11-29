@@ -1,56 +1,58 @@
-# 🤖 Vending Machine - Quick Start Guide
+# 🤖 Vending Machine - Quick Start (5‑Minute Reference)
 
-## ⏱️ 75-Minute Interview Breakdown
-| Time | What to Do | Duration |
-|------|-----------|----------|
-| 0-10 min | Requirements & Architecture | 10 min |
-| 10-30 min | Core Entities & Classes | 20 min |
-| 30-50 min | Patterns & Business Logic | 20 min |
-| 50-70 min | System Integration | 20 min |
-| 70-75 min | Demos & Q&A | 5 min |
+## ⏱️ Timeline
+| Time | Focus | Output |
+|------|-------|--------|
+| 0–5  | Requirements | Scope: selection, payment, dispense, refill |
+| 5–15 | Architecture | Entities + state & event mapping |
+| 15–35 | Core Entities | Product, Slot, Transaction, enums |
+| 35–55 | Logic | select, compute price, pay, dispense, low‑stock, refill |
+| 55–70 | Integration | Strategies + Observer events + summary |
+| 70–75 | Demo & Q&A | Run scenarios & explain patterns |
 
-## 🎯 Demo Scenarios
-- Display
-- Select
-- Payment
-- Verify
-- Dispense
-- Change
-- Inventory
-- Error
+## 🧱 Core Entities Cheat Sheet
+Product(id, name)
+Slot(id, product, quantity, base_price)
+Transaction(id, slot, price, amount_paid, status)
+Enums: MachineState(IDLE, ACCEPTING_PAYMENT, DISPENSING, OUT_OF_ORDER), TransactionStatus(INITIATED, PAID, DISPENSED, REFUNDED, FAILED)
 
-## 💡 Key Talking Points
-**Singleton Pattern**: "We use Singleton to ensure only one instance of the system exists"
-**Observer Pattern**: "This allows real-time notifications without tight coupling"
-**Strategy Pattern**: "We can easily swap different strategies without changing core code"
-**Factory Pattern**: "Object creation is centralized and extensible"
+## 🛠 Patterns Talking Points
+Singleton: One controller managing all slots & transactions.
+Strategy: PricingStrategy (fixed vs demand) & PaymentStrategy (coins/card/mobile).
+Observer: Emits events for low_stock, slot_refilled, transaction_success, transaction_failed.
+State: TransactionStatus guards dispensing only after PAID.
+Factory: Helper methods create slots/transactions with generated IDs.
 
-## ✅ Success Criteria
-- [ ] All entities implemented and working
-- [ ] Design patterns clearly demonstrated
-- [ ] At least 3 demo scenarios run successfully
-- [ ] Can explain 2 design patterns
-- [ ] Can discuss SOLID principles in context
-- [ ] Code is clean and well-structured
+## 🎯 Demo Order
+1. Setup: Create products, slots, observer.
+2. Dynamic Pricing: Switch strategy; compare prices.
+3. Purchase: Select → pay exact → dispense.
+4. Low Stock & Refill: Deplete, trigger event, refill.
+5. Failure & Refund: Underpay triggers fail & refund event.
 
-## 🚀 Quick Commands
+Run:
 ```bash
-# Run the complete working implementation
 python3 INTERVIEW_COMPACT.py
-
-# Read detailed implementation guide
-cat 75_MINUTE_GUIDE.md
-
-# Study complete reference
-cat README.md
 ```
 
-## 🆘 If You Get Stuck
-- **Early phase (< 20 min)**: Skip complex patterns, implement basic entities first
-- **Mid phase (20-50 min)**: Focus on business logic, patterns can be simplified
-- **Late phase (> 50 min)**: Show 1-2 working demos, explain others verbally
+## ✅ Success Checklist
+- [ ] Price changes under demand strategy
+- [ ] Low stock event fires at threshold
+- [ ] Dispense only after PAID state
+- [ ] Refund emitted on failure
+- [ ] Refill resets quantity & emits slot_refilled
+- [ ] Can explain each pattern mapping
 
-**Core Entities**: Machine, Item, Inventory, Payment, Dispenser
+## 💬 Quick Answers
+Why Strategy? → Swap pricing/payment models without touching core transaction flow.
+Why Observer? → Future integrations (telemetry, remote alerts) decoupled from logic.
+Prevent invalid dispense? → Check TransactionStatus == PAID before dispensing.
+Low stock detection? → Threshold (e.g., qty <= 2) triggers event for proactive restock.
 
----
-Remember: Show, don't tell. Run code, don't just describe it!
+## 🆘 If Behind
+<20m: Implement Slot + Product + select/dispense flow only.
+20–50m: Add Transaction + basic payment + events.
+>50m: Show working purchase, narrate dynamic pricing & future payment types.
+
+Stay concise; emphasize extensibility, safety, and clear state transitions.
+

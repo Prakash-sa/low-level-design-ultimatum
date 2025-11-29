@@ -1,41 +1,128 @@
-# 🍽️ Restaurant Management System - Interview Guide
+# 🍽️ Restaurant Management System - Low Level Design
 
 ## Overview
-Restaurant system with tables, orders, menu, and billing
+A comprehensive system for managing restaurant operations: table reservations, seating, menu catalog, order lifecycle from placement to kitchen preparation and serving, billing with dynamic pricing strategies (happy hour, service charge), payments, and real-time notifications for status changes. Designed for interview demonstration with clear patterns and extensibility.
 
-## Core Entities
-- Table, MenuItem, Order, Chef, Waiter
+## Core Domain Entities
 
-## Key Design Patterns
-1. **Singleton** - Ensures single instance of system
-2. **Strategy** - Flexible algorithms for different operations
-3. **Observer** - Real-time notifications and updates
-4. **State** - Clear state transitions and management
-5. **Factory** - Object creation and type handling
-6. **Command/Decorator** - Complex operations and enhancements
+### 1. **MenuItem**
+- Attributes: `item_id`, `name`, `category` (STARTER / MAIN / DRINK / DESSERT), `base_price`, `is_available`
+- Methods: `get_price(strategy)`, `mark_unavailable()`
 
-## SOLID Principles
-- **S**ingle Responsibility: Each class has one reason to change
-- **O**pen/Closed: Open for extension, closed for modification
-- **L**iskov Substitution: Subclasses properly substitute parents
-- **I**nterface Segregation: Focused, cohesive interfaces
-- **D**ependency Inversion: Depend on abstractions, not concretions
+### 2. **Table**
+- Attributes: `table_id`, `capacity`, `status` (AVAILABLE / RESERVED / OCCUPIED)
+- Methods: `reserve()`, `occupy()`, `release()`
 
-## Interview Preparation
-1. Study the 75_MINUTE_GUIDE.md for step-by-step implementation
-2. Run INTERVIEW_COMPACT.py to see working demos
-3. Review START_HERE.md for quick reference and talking points
-4. Practice explaining design patterns and architectural decisions
+### 3. **Customer**
+- Attributes: `customer_id`, `name`, `contact`
+- Methods: `create_reservation()`, `place_order()`
 
-## Key Takeaways
-✅ Modular, extensible architecture
-✅ Clear separation of concerns
-✅ Observable patterns for notifications
-✅ Strategy pattern for flexible behaviors
-✅ Singleton for system-wide resources
-✅ Factory pattern for object creation
+### 4. **Reservation**
+- Attributes: `reservation_id`, `customer`, `table`, `time`, `status` (PENDING / CONFIRMED / CANCELLED)
+- Methods: `confirm()`, `cancel()`
+
+### 5. **OrderItem**
+- Attributes: `menu_item`, `quantity`, `final_price`
+- Methods: `calculate(strategy)`
+
+### 6. **Order**
+- Attributes: `order_id`, `table`, `items[]`, `status` (RECEIVED / PREPARING / READY / SERVED / CANCELLED), `subtotal`, `bill_total`
+- Methods: `add_item()`, `update_status()`, `calculate_totals(strategy)`
+
+### 7. **Payment**
+- Attributes: `payment_id`, `order`, `amount`, `method` (CARD / CASH / WALLET), `timestamp`
+- Methods: `process()`
+
+### 8. **KitchenTicket**
+- Attributes: `ticket_id`, `order`, `queued_at`, `started_at`, `completed_at`
+- Methods: `start()`, `complete()`
+
+### 9. **InventoryItem** (Optional Extension)
+- Attributes: `sku`, `name`, `quantity`
+- Methods: `consume(amount)`, `replenish(amount)`
+
+## Design Patterns Applied
+
+| Pattern | Why | Implementation |
+|---------|-----|----------------|
+| Singleton | Single system orchestrator | `RestaurantSystem.get_instance()` |
+| Strategy | Flexible pricing/service rules | `PricingStrategy` subclasses (Base, HappyHour, ServiceCharge) |
+| Observer | Decoupled notifications | `RestaurantObserver` + `ConsoleObserver` events (`reservation_created`, `order_status_changed`, `payment_processed`) |
+| State | Order & Reservation lifecycle | `OrderStatus`, `ReservationStatus`, transitions enforced in methods |
+| Factory | Clean creation of entities | `OrderFactory`, `ReservationFactory` generate IDs & validate inputs |
+| Command | Encapsulated operations | `PlaceOrderCommand`, `UpdateOrderStatusCommand`, `ProcessPaymentCommand`, `CreateReservationCommand`, `CancelReservationCommand` |
+
+## Core Flows
+
+### Reservation Flow
+```
+Customer requests reservation → RestaurantSystem finds AVAILABLE table → Reservation created (PENDING) → confirm() → Table status RESERVED → Customer arrives → occupy() → status OCCUPIED
+```
+
+### Order Lifecycle
+```
+Order placed (RECEIVED) → KitchenTicket created → status PREPARING → cooking done → READY → waiter serves → SERVED → payment processed → table released
+```
+
+### Billing Flow with Strategy
+```
+order.subtotal = Σ(item.base_price × qty)
+strategy adjustments: discount% or service fee → bill_total = strategy.apply(subtotal)
+```
+
+## Pricing Strategies (Strategy Pattern)
+
+| Strategy | Rule | Example |
+|----------|------|---------|
+| BasePricingStrategy | No modification | Lunch standard pricing |
+| HappyHourPricingStrategy | Percentage discount on certain categories | 20% off DRINK 4–6 PM |
+| ServiceChargePricingStrategy | Add service charge percentage | 10% service fee on dine-in |
+| Composite (Interview extension) | Combine discount + charge | Happy hour + service fee |
+
+## Order States (State Pattern)
+```
+RECEIVED → PREPARING → READY → SERVED
+              ↘ CANCELLED (allowed only before READY)
+```
+
+## Reservation States
+```
+PENDING → CONFIRMED → CANCELLED
+```
+
+## Success Criteria Checklist
+- [x] Reservation & table status transitions
+- [x] Order lifecycle with state validation
+- [x] Strategy based billing (discount + service charge)
+- [x] Observer notifications for key events
+- [x] Command pattern for encapsulated actions
+- [x] Factory based ID generation & validation
+- [x] Demo scenarios runnable (`python3 INTERVIEW_COMPACT.py`)
+
+## Sample Usage
+```python
+system = RestaurantSystem.get_instance()
+customer = Customer("C001", "Alice", "alice@example.com")
+table = system.get_available_table(capacity=4)
+reservation = system.create_reservation(customer, table, datetime.now())
+reservation.confirm()
+order = system.place_order(table, [("ITEM001", 2), ("ITEM005", 1)])
+order.calculate_totals(HappyHourPricingStrategy())
+payment = system.process_payment(order, method="CARD")
+```
+
+## Scalability & Extensions
+- Multiple branches: Branch identifier inside `RestaurantSystem`
+- Distributed kitchen: Separate KitchenService microservice
+- Realtime waiter tablets: WebSocket observer implementation
+- Inventory deductions on order placement
+- Analytics: event streaming (Kafka) for orders & payments
+
+## Files
+- `README.md` (this overview)
+- `START_HERE.md` (rapid interview guide)
+- `INTERVIEW_COMPACT.py` (full runnable implementation with demos)
+- `75_MINUTE_GUIDE.md` (step-by-step deep dive + UML + Q&A)
 
 ---
-For detailed implementation timeline, see **75_MINUTE_GUIDE.md**
-For runnable code examples, see **INTERVIEW_COMPACT.py**
-For quick reference, see **START_HERE.md**
+**Next**: Open `START_HERE.md` for 5‑minute prep or run demos: `python3 INTERVIEW_COMPACT.py`.

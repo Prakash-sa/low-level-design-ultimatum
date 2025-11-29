@@ -1,56 +1,88 @@
-# ❓ Stack Overflow - Quick Start Guide
+# ❓ Stack Overflow - Quick Start (5‑Minute Read)
 
-## ⏱️ 75-Minute Interview Breakdown
-| Time | What to Do | Duration |
-|------|-----------|----------|
-| 0-10 min | Requirements & Architecture | 10 min |
-| 10-30 min | Core Entities & Classes | 20 min |
-| 30-50 min | Patterns & Business Logic | 20 min |
-| 50-70 min | System Integration | 20 min |
-| 70-75 min | Demos & Q&A | 5 min |
-
-## 🎯 Demo Scenarios
-- User
-- Ask
-- Tag
-- Answer
-- Vote
-- Accept
-- Search
-- Profile
-
-## 💡 Key Talking Points
-**Singleton Pattern**: "We use Singleton to ensure only one instance of the system exists"
-**Observer Pattern**: "This allows real-time notifications without tight coupling"
-**Strategy Pattern**: "We can easily swap different strategies without changing core code"
-**Factory Pattern**: "Object creation is centralized and extensible"
-
-## ✅ Success Criteria
-- [ ] All entities implemented and working
-- [ ] Design patterns clearly demonstrated
-- [ ] At least 3 demo scenarios run successfully
-- [ ] Can explain 2 design patterns
-- [ ] Can discuss SOLID principles in context
-- [ ] Code is clean and well-structured
-
-## 🚀 Quick Commands
-```bash
-# Run the complete working implementation
-python3 INTERVIEW_COMPACT.py
-
-# Read detailed implementation guide
-cat 75_MINUTE_GUIDE.md
-
-# Study complete reference
-cat README.md
-```
-
-## 🆘 If You Get Stuck
-- **Early phase (< 20 min)**: Skip complex patterns, implement basic entities first
-- **Mid phase (20-50 min)**: Focus on business logic, patterns can be simplified
-- **Late phase (> 50 min)**: Show 1-2 working demos, explain others verbally
-
-**Core Entities**: Question, Answer, User, Tag, Vote
+## 🎯 What You’re Building
+Minimal Stack Overflow core: ask questions, answer, vote, accept best answer, update reputation, tag & search. Patterns mirror Airline design for consistency.
 
 ---
-Remember: Show, don't tell. Run code, don't just describe it!
+
+## ⏱️ 75-Minute Timeline (Memorize This Table)
+| Time | Focus | Output |
+|------|-------|--------|
+| 0–5  | Requirements | Scope, exclusions (no comments, edits) |
+| 5–15 | Architecture | Entities + pattern mapping sketch |
+| 15–35 | Core Entities | User, Question, Answer, Tag, Vote, enums |
+| 35–55 | Logic & Patterns | ask/answer/vote/accept + reputation strategy + observer |
+| 55–70 | Integration | Singleton system + search + events + demos |
+| 70–75 | Demo & Q&A | Run scenarios, explain trade-offs |
+
+---
+
+## 🧱 Core Entities (Flash Cards)
+User(id, name, reputation, badges)
+Question(id, title, body, author, tags[], answers[], votes, accepted_answer_id, status)
+Answer(id, body, author, question_id, votes, accepted_flag)
+Tag(name)
+Vote(id, user_id, target_type, target_id, value)
+
+Enums: QuestionStatus (OPEN, CLOSED), VoteValue (+1, -1)
+
+---
+
+## 🛠 Patterns Talking Points
+Singleton: One `StackOverflowSystem` for consistent in-memory state.
+Strategy (Reputation): Central rule engine for scoring; swap without touching entities.
+Observer: Domain events (question_posted, answer_posted, vote_cast, answer_accepted) decouple side-effects.
+State: `QuestionStatus` prevents answering CLOSED questions; accepted answer invariant.
+Factory: Helper methods centralize creation & validation.
+
+---
+
+## 🏁 Demo Scenarios (Run Order)
+1. Setup: Users, tags, initial question
+2. Answers: Multiple answers posted
+3. Voting: Up/down vote effects + reputation updates
+4. Accept: Mark best answer, bonus applied
+5. Search & Summary: Keyword search + statistics
+
+Run all:
+```bash
+python3 INTERVIEW_COMPACT.py
+```
+
+---
+
+## ✅ Success Checklist
+- [ ] Explain each pattern & why it fits
+- [ ] Show one accepted answer only
+- [ ] Reputation numbers change correctly
+- [ ] Observer prints all events
+- [ ] Search returns matching question titles
+- [ ] Can discuss scaling: indexing, caching, sharding
+
+---
+
+## 💬 Quick Answers
+“Why Strategy?” → Swap reputation rules (e.g., seasonal campaigns) without editing entities.  
+“Why Observer?” → Enables analytics, notifications pipelines later.  
+“Prevent double accept?” → Guard: only question author + only if none accepted.  
+“Downvote penalty?” → Author -2; voter -1 (discourages casual negativity).  
+
+---
+
+## 🆘 If You Stall
+< 20 min: Implement just User + Question + Answer + ask/answer.  
+20–50 min: Add vote + reputation logic; events minimal.  
+> 50 min: Demo flows; narrate missing features instead of panic coding.
+
+---
+
+## 🚀 Commands
+```bash
+python3 INTERVIEW_COMPACT.py      # Run demos
+grep -n 'def demo_' INTERVIEW_COMPACT.py  # See demo sections
+```
+
+Review deeper design: `75_MINUTE_GUIDE.md`.
+
+Stay focused: deliver core flows + articulate extensibility.
+

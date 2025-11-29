@@ -1,248 +1,289 @@
-# Stack Overflow - 75 Minute Interview Implementation Guide
+# Stack Overflow - 75 Minute Deep Implementation & Interview Guide
 
-## System Overview
-Q&A platform with questions, answers, voting, reputation, and tagging system
+## 1. System Overview
+Core Q&A platform slice: users ask questions, others answer, voting adjusts reputation, question author can accept best answer. Tags provide classification; simple keyword search; events broadcast for extensibility.
 
-## Core Requirements
-- Ask questions
-- Provide answers
-- Voting system
-- Reputation system
-- Tags
-- Search functionality
-- User profiles
-- Accept answer
-
-## Core Entities
-- Question
-- Answer
-- User
-- Tag
-- Vote
+Excluded (declare early): comments, edits/revisions, bounties, community wiki, rate limiting, full-text indexing (described only), moderation queues.
 
 ---
 
-## 75-Minute Implementation Timeline
-
-### Phase 0: Requirements Clarification (0-5 minutes)
-**Goal**: Understand the problem and define scope
-
-**Discuss**:
-- Functional requirements
-- Non-functional requirements
-- Core entities and relationships
-- Scale and constraints
-
-**Expected Output**: Clear understanding of what to build
+## 2. Core Functional Requirements
+| Requirement | Included | Notes |
+|-------------|----------|-------|
+| Ask Question | ✅ | Title + body + tags |
+| Answer Question | ✅ | Multiple answers per question |
+| Up/Down Vote Q/A | ✅ | Reputation rules centralized |
+| Accept Answer | ✅ | Only by question author; single accepted |
+| Reputation Tracking | ✅ | Strategy-based calculations |
+| Tagging | ✅ | Many-to-many, stored as names list |
+| Search | ✅ (simple) | In-memory substring match |
+| Events / Notifications | ✅ | Observer prints to console |
+| User Profile (basic) | ✅ | Reputation, counts |
 
 ---
 
-### Phase 1: Architecture & Design (5-15 minutes)
-**Goal**: Design system architecture
+## 3. Design Patterns Mapping
+| Pattern | Domain Use | Benefit |
+|---------|------------|---------|
+| Singleton | Central `StackOverflowSystem` | Consistent state, simple memory model |
+| Strategy | Reputation calculation | Swap scoring mechanics freely |
+| Observer | Publish domain events | Decouple side-effects (analytics, notifications) |
+| State | `QuestionStatus` OPEN/CLOSED | Prevent invalid operations |
+| Factory | Creation helpers in system | Validation + uniform IDs |
 
-**What to cover**:
-- Singleton pattern for system instance
-- Entity relationships
-- Key design patterns to implement
-- Basic class hierarchy
+Optional future: Command for complex multi-step operations (vote with audit), Decorator for caching search results.
 
-**Code Skeleton**:
+---
+
+## 4. Enumerations & Constants
 ```python
 from enum import Enum
+
+class QuestionStatus(Enum):
+    OPEN = "open"
+    CLOSED = "closed"
+
+class VoteValue(Enum):
+    UP = 1
+    DOWN = -1
+
+# Reputation rule constants (Strategy can override)
+REP_Q_UP = 10      # Question author gains
+REP_A_UP = 15      # Answer author gains
+REP_ACCEPT = 30    # Accepted answer bonus
+REP_DOWN_AUTHOR = -2  # Author loses on downvote
+REP_DOWN_VOTER = -1   # Cost to cast downvote
+```
+
+---
+
+## 5. Core Classes (Condensed)
+```python
+class User:
+    def __init__(self, user_id, name):
+        self.id = user_id; self.name = name; self.reputation = 0
+        self.questions = []; self.answers = []
+
+class Question:
+    def __init__(self, qid, title, body, author, tags):
+        self.id=qid; self.title=title; self.body=body; self.author=author
+        self.tags=tags; self.answers=[]; self.votes=0; self.accepted_answer_id=None
+        self.status=QuestionStatus.OPEN
+    def add_answer(self, answer): self.answers.append(answer)
+
+class Answer:
+    def __init__(self, aid, body, author, question):
+        self.id=aid; self.body=body; self.author=author; self.question=question
+        self.votes=0; self.accepted=False
+
+class Vote:
+    def __init__(self, vid, user, target_type, target_id, value):
+        self.id=vid; self.user=user; self.target_type=target_type
+        self.target_id=target_id; self.value=value
+```
+
+---
+
+## 6. Reputation Strategy (Strategy Pattern)
+```python
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional
-from datetime import datetime
 
-# Enumerations
-class Status(Enum):
-    ACTIVE = 1
-    INACTIVE = 2
-    COMPLETED = 3
-
-# Base Classes
-class Entity:
-    def __init__(self):
-        self.id = None
-        self.created_at = datetime.now()
-```
-
-**Expected Output**: Architecture diagram on whiteboard + pseudocode
-
----
-
-### Phase 2: Core Entities (15-35 minutes)
-**Goal**: Implement core entity classes
-
-**What to implement**:
-- All entity classes from requirements
-- Basic attributes and methods
-- Inheritance hierarchy
-- Enumerations
-
-**Code Structure** (~100-150 lines):
-```python
-class Entity1:
-    def __init__(self, id):
-        self.id = id
-        # attributes...
-    
-    def method1(self):
-        # implementation
-        pass
-
-class Entity2:
-    def __init__(self, id):
-        self.id = id
-        # attributes...
-```
-
-**Line Count**: 0 → ~150 lines
-
----
-
-### Phase 3: Business Logic & Patterns (35-55 minutes)
-**Goal**: Implement core business logic
-
-**What to implement**:
-- Strategy pattern for flexible behaviors
-- Factory pattern for object creation
-- Observer pattern for notifications
-- State management
-- Calculation logic
-
-**Code Structure** (~100-150 lines):
-```python
-class StrategyInterface:
+class ReputationStrategy(ABC):
     @abstractmethod
-    def execute(self):
-        pass
+    def apply_vote(self, system, vote): pass
+    @abstractmethod
+    def apply_accept(self, system, question, answer): pass
 
-class ConcreteStrategy1(StrategyInterface):
-    def execute(self):
-        # implementation
-        pass
-
-class SystemController:
-    def __init__(self):
-        self.strategy = ConcreteStrategy1()
-    
-    def process(self):
-        self.strategy.execute()
+class BasicReputationStrategy(ReputationStrategy):
+    def apply_vote(self, system, vote):
+        if vote.target_type == "question":
+            q = system.questions[vote.target_id]
+            if vote.value == VoteValue.UP: q.author.reputation += REP_Q_UP
+            else: q.author.reputation += REP_DOWN_AUTHOR; vote.user.reputation += REP_DOWN_VOTER
+        else:  # answer
+            a = system.answers[vote.target_id]
+            if vote.value == VoteValue.UP: a.author.reputation += REP_A_UP
+            else: a.author.reputation += REP_DOWN_AUTHOR; vote.user.reputation += REP_DOWN_VOTER
+    def apply_accept(self, system, question, answer):
+        answer.author.reputation += REP_ACCEPT
 ```
-
-**Line Count**: ~150 → ~300 lines
 
 ---
 
-### Phase 4: System Integration (55-70 minutes)
-**Goal**: Integrate all components into main system
-
-**What to implement**:
-- Main system/controller class
-- Singleton pattern implementation
-- Integration of all components
-- Error handling
-
-**Code Structure** (~100-150 lines):
+## 7. Observer Pattern
 ```python
-class System:
+class Observer(ABC):
+    @abstractmethod
+    def update(self, event: str, payload: dict): pass
+
+class ConsoleObserver(Observer):
+    def update(self, event, payload):
+        print(f"[EVENT] {event.upper():16} | {payload}")
+```
+
+Events fired: `question_posted`, `answer_posted`, `vote_cast`, `answer_accepted`, `question_closed`.
+
+---
+
+## 8. Singleton Controller
+```python
+class StackOverflowSystem:
     _instance = None
-    
-    def __init__(self):
-        self.entities = []
-        self.observers = []
-    
-    @classmethod
-    def get_instance(cls):
-        if cls._instance is None:
-            cls._instance = System()
+    def __new__(cls):
+        if not cls._instance: cls._instance = super().__new__(cls)
         return cls._instance
-    
-    def add_entity(self, entity):
-        self.entities.append(entity)
-        self.notify_observers()
-    
-    def notify_observers(self):
-        for observer in self.observers:
-            observer.update()
+    def __init__(self):
+        if getattr(self, '_init', False): return
+        self.users={}; self.questions={}; self.answers={}; self.votes={}
+        self.observers=[]; self.reputation_strategy=BasicReputationStrategy(); self._init=True
+    def add_observer(self,o): self.observers.append(o)
+    def _notify(self,e,p): [o.update(e,p) for o in self.observers]
+    def create_user(self, name):
+        uid=f"U{len(self.users)+1}"; u=User(uid,name); self.users[uid]=u; return u
+    def ask_question(self, user_id, title, body, tags):
+        user=self.users[user_id]; qid=f"Q{len(self.questions)+1}"; q=Question(qid,title,body,user,tags)
+        user.questions.append(q); self.questions[qid]=q; self._notify("question_posted",{"qid":qid,"author":user.name}); return q
 ```
-
-**Line Count**: ~300 → ~450 lines
-
----
-
-### Phase 5: Demo & Testing (70-75 minutes)
-**Goal**: Show working implementation with demo scenarios
-
-**Demo Scenarios** (~50-100 lines):
-1. Basic operation flow
-2. Pattern in action
-3. Error handling
-4. Edge case handling
-5. Statistics/summary
-
-**Example**:
 ```python
-def demo_1_basic():
-    system = System.get_instance()
-    # Demo scenario 1
-    print("Demo 1: Basic operation")
-
-def demo_2_pattern():
-    system = System.get_instance()
-    # Demo scenario 2
-    print("Demo 2: Pattern demonstration")
-
-if __name__ == "__main__":
-    demo_1_basic()
-    demo_2_pattern()
+    def answer_question(self, user_id, question_id, body):
+        user=self.users[user_id]; q=self.questions[question_id]
+        aid=f"A{len(self.answers)+1}"; a=Answer(aid,body,user,q); q.add_answer(a)
+        user.answers.append(a); self.answers[aid]=a
+        self._notify("answer_posted",{"aid":aid,"qid":question_id,"author":user.name}); return a
+    def vote(self, user_id, target_type, target_id, up=True):
+        voter=self.users[user_id]; vid=f"V{len(self.votes)+1}"; value=VoteValue.UP if up else VoteValue.DOWN
+        v=Vote(vid,voter,target_type,target_id,value); self.votes[vid]=v
+        # apply counts
+        if target_type=="question": self.questions[target_id].votes += value.value
+        else: self.answers[target_id].votes += value.value
+        self.reputation_strategy.apply_vote(self,v)
+        self._notify("vote_cast",{"vid":vid,"target":target_id,"value":value.name}); return v
+    def accept_answer(self, user_id, question_id, answer_id):
+        q=self.questions[question_id]
+        if q.author.id != user_id or q.accepted_answer_id: return False
+        a=self.answers[answer_id]; q.accepted_answer_id=answer_id; a.accepted=True
+        self.reputation_strategy.apply_accept(self,q,a)
+        self._notify("answer_accepted",{"qid":question_id,"aid":answer_id}); return True
+    def search(self, keyword):
+        k=keyword.lower(); return [q for q in self.questions.values() if k in q.title.lower() or k in q.body.lower()]
 ```
 
 ---
 
-## Key Points to Remember
+## 9. UML Class Diagram (ASCII)
+```
+┌────────────────────────────────────────────────────────┐
+│                    STACK OVERFLOW CORE                 │
+└────────────────────────────────────────────────────────┘
+          ┌───────────────────────┐
+          │ StackOverflowSystem   │ ◄── Singleton
+          ├───────────────────────┤
+          │ users{} questions{}   │
+          │ answers{} votes{}     │
+          │ observers[]           │
+          │ reputation_strategy   │
+          ├───────────────────────┤
+          │ +ask_question()       │
+          │ +answer_question()    │
+          │ +vote() +accept_answer│
+          │ +search()             │
+          └──────────┬────────────┘
+                     │
+   ┌─────────────────┼────────────────┐
+   │                 │                │
+   ▼                 ▼                ▼
+User              Question          Answer
+ (reputation)     (answers[])       (accepted flag)
+    ▲                ▲                │
+    │                │                │
+    └──────────── Vote ───────────────┘ (value ±1)
 
-### Design Patterns
-- **Singleton**: Ensure only one instance of system
-- **Strategy**: Different algorithms for same operation
-- **Observer**: Notify multiple listeners of changes
-- **Factory**: Encapsulate object creation
-- **State**: Represent state transitions
+Observer (update) ◄── events fired from system
+ReputationStrategy ◄── applied inside vote/accept flows
+```
 
-### SOLID Principles
-- **Single Responsibility**: Each class one reason to change
-- **Open/Closed**: Open for extension, closed for modification
-- **Liskov Substitution**: Subtypes must be substitutable
-- **Interface Segregation**: Depend on specific interfaces
-- **Dependency Inversion**: Depend on abstractions
+---
 
-### Common Pitfalls
-- ❌ Not using Singleton - leads to multiple instances
-- ❌ Tight coupling - hard to extend
-- ❌ Not using abstractions - not flexible
-- ❌ No error handling - crashes on edge cases
-- ✅ Always use design patterns
-- ✅ Keep classes focused
-- ✅ Use abstractions and interfaces
+## 10. Demo Flow Outline
+1. Setup: two users, tags, one question asked.  
+2. Answers: both users supply answers (events).  
+3. Voting: multiple up/down votes applied; print reputations.  
+4. Accept: author accepts best answer; verify bonus.  
+5. Search: keyword returns the question; summary stats printed.
 
-## Interview Tips
+---
 
-1. **Talk through your design** - Explain patterns as you implement
-2. **Ask clarifying questions** - "Should we support...?"
-3. **Handle edge cases** - Show you think about errors
-4. **Optimize incrementally** - Start simple, then optimize
-5. **Use design patterns** - Shows you know when to apply them
-6. **Write clean code** - Good naming and structure
-7. **Test as you go** - Run demos after each phase
-8. **Discuss trade-offs** - Why you chose this approach
+## 11. Interview Q&A (Prepared Answers)
+**Q1: Why a Strategy for reputation?**  To detach scoring rules from domain classes; enables experiments (e.g., seasonal boosts) without touching `User`, `Question`, `Answer`.
 
-## Success Criteria
+**Q2: Prevent multiple accepted answers?**  Store `accepted_answer_id`; guard early: if already set, reject. Only question author ID allowed to accept.
 
-✅ All core entities implemented
-✅ Design patterns clearly used
-✅ At least 3 demo scenarios work
-✅ Code is clean and readable
-✅ Error handling present
-✅ Can explain design decisions
-✅ SOLID principles applied
-✅ 75 minutes used efficiently
+**Q3: Handling abusive downvotes?**  Downvote cost to voter (–1) discourages spam; in production add rate limiting & anomaly detection.
+
+**Q4: Scaling search?**  Replace linear scan with inverted index or external search engine (Elasticsearch). Maintain denormalized question documents (title/body/tags). Observer events feed indexing pipeline.
+
+**Q5: Concurrency concerns?**  Use optimistic locking on vote counters or atomic increments; acceptance would require transactional check (no accepted then set).
+
+**Q6: Prevent vote fraud?**  Store per-user vote history; restrict multiple votes on same target; add delayed aggregation pipeline.
+
+**Q7: Closing questions?**  Add moderator role; transition `QuestionStatus.OPEN → CLOSED`; block `answer_question` if closed.
+
+**Q8: Reputation recalculation?**  Strategy allows batch recompute (e.g., migration) by replaying Vote & Accept events.
+
+**Q9: Observer extension?**  Attach `AnalyticsObserver`, `EmailObserver`; current implementation prints only—swap with async queue publisher.
+
+**Q10: Tag popularity ranking?**  Maintain counter map; update in `ask_question`; eventual caching layer (Redis) for hot tag queries.
+
+**Q11: Security concerns?**  Input sanitization (avoid HTML injection), rate limiting API calls, permission checks on accept/close actions.
+
+**Q12: Why not put reputation logic in User?**  Violates SRP—User should store state, not encode all scoring variants.
+
+---
+
+## 12. Edge Cases & Guards
+| Edge Case | Handling |
+|-----------|----------|
+| Accept non-existent answer | Validate existence before flagging |
+| Vote on missing target | Reject & no event fired |
+| Downvote own post | Allow or optionally block (clarify) |
+| Duplicate tag names | Normalize to lowercase; de-duplicate list |
+| Empty search keyword | Return empty or all (clarify) |
+| Accept after close | If question closed but unaccepted, still allowed? Clarify policy |
+
+---
+
+## 13. Scaling Discussion Prompts
+- Caching: hot question pages (Redis) invalidated on answer/vote events.
+- Denormalization: store aggregate counts (votes, answer_count) for fast listing.
+- Sharding: by question ID modulo shard count or tag category.
+- Event-driven: Observer could push to Kafka; separate consumers update search index & analytics.
+- Consistency vs availability: eventual consistency acceptable for reputation totals; strict consistency needed for single accepted answer.
+
+---
+
+## 14. Quick Demo Snippet (from `INTERVIEW_COMPACT.py`)
+```python
+system = StackOverflowSystem()
+system.add_observer(ConsoleObserver())
+u1 = system.create_user("Alice"); u2 = system.create_user("Bob")
+q = system.ask_question(u1.id, "How to reverse a list in Python?", "Need idiomatic approach", ["python","list"])
+a1 = system.answer_question(u2.id, q.id, "Use slicing: lst[::-1]")
+system.vote(u1.id, "answer", a1.id, up=True)
+system.accept_answer(u1.id, q.id, a1.id)
+print(u2.reputation)  # Expect +15 (upvote) +30 (accepted) = 45
+```
+
+---
+
+## 15. Final Checklist Before Demo
+- [ ] All demos run without exceptions
+- [ ] Reputations reflect defined constants
+- [ ] Console events appear for each operation
+- [ ] Accepted answer invariant holds
+- [ ] Search returns expected results
+- [ ] You can narrate future improvements (search, caching, moderation)
+
+---
+
+Deliver clarity over breadth: emphasize why each pattern is justified, not merely present.
+
