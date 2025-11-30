@@ -1,36 +1,39 @@
 class Burger:
     def __init__(self):
-        self.buns=None
-        self.patty=None
-        self.cheese=None
+        self.buns = None
+        self.patty = None
+        self.cheese = None
+    
+    def setBuns(self, bunStyle):
+        self.buns = bunStyle 
+    
+    def setPatty(self, pattyStyle):
+        self.patty = pattyStyle
 
-    def setBuns(self,bunStyle):
-        self.buns=bunStyle
-
-    def setPatty(self,pattyStyle):
-        self.patty=pattyStyle
-
-    def setCheese(self,cheeseStyle):
-        self.cheese=cheeseStyle
+    def setCheese(self, cheeseStyle):
+        self.cheese = cheeseStyle
+    
+    def __str__(self):
+        return f"Burger(buns={self.buns}, patty={self.patty}, cheese={self.cheese})"
 
 class BurgerBuilder:
     def __init__(self):
-        self.burger=Burger()
+        self.burger = Burger()
 
-    def addBuns(self,bunStyle):
+    def addBuns(self, bunStyle):
         self.burger.setBuns(bunStyle)
-        return self
+        return self  # Enable method chaining
     
-    def addPatty(self,pattyStyle):
+    def addPatty(self, pattyStyle):
         self.burger.setPatty(pattyStyle)
-        return self
+        return self  # Enable method chaining
     
-    def addCheese(self,cheeseStyle):
+    def addCheese(self, cheeseStyle):
         self.burger.setCheese(cheeseStyle)
-        return self
+        return self  # Enable method chaining
     
     def build(self):
         return self.burger
-    
-burger=BurgerBuilder().addBuns("sesame").addPatty("fisth-patty").addCheese("swiss cheese").build()
 
+burger = BurgerBuilder().addBuns("sesame").addPatty("fish-patty").addCheese("swiss cheese").build()
+print(burger)

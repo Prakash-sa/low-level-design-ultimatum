@@ -31,5 +31,5 @@ class Values:
     
 
 value=Values([-7,-4,0,2,6,9])
-print(value.filter(RemoveNegativeStrategy))
-print(value.filter(RemoveOddStrategy))
+print(value.filter(RemoveNegativeStrategy()))
+print(value.filter(RemoveOddStrategy()))
