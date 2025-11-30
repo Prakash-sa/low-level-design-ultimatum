@@ -21,6 +21,8 @@ Quick links
 - [Encapsulation](introduction/Encapsulation.md)
 - [Inheritance](introduction/Inheritance.md)
 - [Polymorphism](introduction/Polymorphism.md)
+- [Class vs Instance Variables](Introduction/Class Variable vs Insatance Variable.md)
+- [Python Built-in Exceptions](Introduction/Python Built-in Exceptions.md)
 
 How to use
 
@@ -30,6 +32,16 @@ How to use
 ## Basics
 
 - Instance attributes maintain unique data for each object, while class attributes provide a shared value across all instances unless overridden.
+
+### Core Engineering Principles
+
+- **DRY (Don't Repeat Yourself):** Avoid duplication. Extract common logic into functions, classes, or modules. Improves maintainability and reduces bugs.
+- **KISS (Keep It Simple, Stupid):** Prefer simple solutions over clever ones. Simplicity eases understanding, testing, and refactoring.
+- **YAGNI (You Aren’t Gonna Need It):** Don’t build features until they’re actually needed. Reduces waste and complexity.
+- **Separation of Concerns:** Split responsibilities across modules/layers (e.g., UI, domain, persistence). Each part focuses on a single concern.
+- **Law of Demeter (Principle of Least Knowledge):** Minimize knowledge of internal details of other objects; interact through clear interfaces.
+- **Fail Fast:** Validate early, raise errors immediately on invalid state to prevent cascading failures.
+- **Idempotency:** Design operations that can be safely retried without unintended side effects (important for APIs and distributed systems).
 
 ### SOLID Principle
 
@@ -52,6 +64,35 @@ Example: separate “Printable” and “Savable” interfaces.
 D – Dependency Inversion (DIP)
 ➜ Depend on abstractions, not concrete classes.
 Example: inject dependencies via constructor or DI container.
+
+## Common Interview Q&A
+
+- **Q: What’s the difference between class and instance variables?**
+  - **A:** Class variables are shared across all instances and live in the class `__dict__`. Instance variables are unique per object and live in the instance `__dict__`. Modifying a class variable via an instance creates a shadowing instance attribute.
+
+- **Q: When do you choose inheritance vs composition?**
+  - **A:** Use inheritance for strict IS-A relationships and shared behavior contracts. Prefer composition to assemble behaviors dynamically and avoid tight coupling; composition is more flexible and testable.
+
+- **Q: Explain LSP with an example.**
+  - **A:** Subtypes must be usable anywhere the base type is expected. A classic violation: making `Square` inherit `Rectangle` and changing width sets height, breaking callers that rely on independent width/height. Fix via different abstraction (e.g., `Shape` with area) or avoid misleading inheritance.
+
+- **Q: What are signs you’re violating SRP?**
+  - **A:** Class changes for multiple reasons (e.g., business rules, logging, persistence). Split responsibilities: business service, repository, logger.
+
+- **Q: What is YAGNI and how do you apply it?**
+  - **A:** Build only what’s needed now. Avoid premature generalization, speculative configuration flags, or complex extension points until requirements demand them.
+
+- **Q: How do you apply KISS in API design?**
+  - **A:** Favor clear, minimal endpoints, predictable inputs/outputs, and consistent error models. Reduce optional params; provide sensible defaults and versioning.
+
+- **Q: What’s DRY vs deduplication trade-off?**
+  - **A:** DRY removes duplication, but over-abstracting can harm readability. Extract only cohesive, stable logic; duplicated code that evolves differently may be safer than a leaky abstraction.
+
+- **Q: Explain Dependency Inversion with a quick example.**
+  - **A:** Depend on interfaces (e.g., `PaymentGateway`) instead of concrete classes (`Stripe`). Inject the implementation; high-level modules stay stable while low-level details vary.
+
+- **Q: How do you design idempotent operations?**
+  - **A:** Use natural keys or request IDs; ensure repeated calls have the same effect (e.g., PUT replaces state, POST with idempotency key prevents duplicates).
 
 ## Sources
 
