@@ -23,6 +23,7 @@ Quick links
 - [Polymorphism](introduction/Polymorphism.md)
 - [Class vs Instance Variables](Introduction/Class Variable vs Insatance Variable.md)
 - [Python Built-in Exceptions](Introduction/Python Built-in Exceptions.md)
+ - [OOP Principles (All-in-One)](Introduction/OOP Principles.md)
 
 How to use
 
