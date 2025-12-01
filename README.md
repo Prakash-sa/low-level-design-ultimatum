@@ -56,6 +56,7 @@ Example: strategy pattern for payment methods.
 L – Liskov Substitution Principle (LSP)
 ➜ Subtypes must be usable as base type without breaking logic.
 Example: Shape hierarchy with Rectangle and Square.
+ A classic violation occurs with a Rectangle and Square hierarchy, where a Square cannot be substituted for a Rectangle because setting the width and height independently breaks the Square's required equal dimensions. 
 
 I – Interface Segregation (ISP)
 ➜ Prefer many small interfaces to one big one.
@@ -63,7 +64,10 @@ Example: separate “Printable” and “Savable” interfaces.
 
 D – Dependency Inversion (DIP)
 ➜ Depend on abstractions, not concrete classes.
+
 Example: inject dependencies via constructor or DI container.
+Without DIP: A Switch class directly instantiates and uses a Lamp class.
+With DIP: An ISwitchClient interface is introduced, and both Switch and Lamp depend on it. Switch uses the ISwitchClient interface, and Lamp implements it. This means Switch doesn't know or care about the specific Lamp implementation and can be used with any other class that implements ISwitchClient. 
 
 ## Common Interview Q&A
 
