@@ -425,17 +425,17 @@ class SiteGenerator:
 </html>
 <script>
 // Simple nav collapse/expand
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', () => {{
     const toggles = document.querySelectorAll('.nav-toggle');
-    toggles.forEach(btn => {
-        btn.addEventListener('click', (event) => {
+    toggles.forEach(btn => {{
+        btn.addEventListener('click', (event) => {{
             event.preventDefault();
             const li = btn.closest('.nav-folder');
             const collapsed = li.getAttribute('data-collapsed') === 'true';
             li.setAttribute('data-collapsed', collapsed ? 'false' : 'true');
-        });
-    });
-});
+        }});
+    }});
+}});
 </script>"""
         return html
     
