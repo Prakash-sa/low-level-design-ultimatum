@@ -10,11 +10,14 @@ from pathlib import Path
 import markdown
 import json
 from datetime import datetime
+from urllib.parse import quote
 
 class SiteGenerator:
     def __init__(self, root_dir, output_dir="_site"):
-        self.root_dir = Path(root_dir)
-        self.output_dir = Path(output_dir)
+        self.root_dir = Path(root_dir).resolve()
+        out_dir = Path(output_dir)
+        # Normalize output directory to an absolute path so filtering works reliably
+        self.output_dir = out_dir if out_dir.is_absolute() else (self.root_dir / out_dir).resolve()
         self.site_structure = {}
         self.pages = []
         # Base path where the site will be hosted (GitHub Pages project URL)
@@ -23,6 +26,43 @@ class SiteGenerator:
     def is_hidden(self, path):
         """Check if any part of the path is hidden (starts with a dot)"""
         return any(part.startswith('.') for part in path.relative_to(self.root_dir).parts)
+    
+    def build_tree(self, path):
+        """Recursively build nav tree for folders and supported files"""
+        items = []
+        
+        try:
+            entries = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        except Exception as e:
+            print(f"Error reading {path}: {e}")
+            return items
+        
+        for entry in entries:
+            if entry == self.output_dir or self.output_dir in entry.parents:
+                continue
+            if self.is_hidden(entry) or entry.name in ('__pycache__',):
+                continue
+            
+            if entry.is_dir():
+                rel = entry.relative_to(self.root_dir)
+                url = f"{self.base_url}{quote(rel.as_posix(), safe='/')}/"
+                items.append({
+                    "name": entry.name,
+                    "url": url,
+                    "type": "folder",
+                    "items": self.build_tree(entry)
+                })
+            elif entry.suffix in ('.md', '.py'):
+                rel = entry.relative_to(self.root_dir).with_suffix('.html')
+                url = f"{self.base_url}{quote(rel.as_posix(), safe='/')}"
+                items.append({
+                    "name": entry.stem,
+                    "url": url,
+                    "type": "file",
+                    "items": []
+                })
+        
+        return items
         
     def ensure_output_dir(self):
         """Create output directory structure"""
@@ -37,7 +77,8 @@ class SiteGenerator:
         current_url = self.base_url
         
         for part in parts:
-            current_url += f"{part}/"
+            encoded = quote(part)
+            current_url += f"{encoded}/"
             breadcrumbs.append({"name": part, "url": current_url})
         
         return breadcrumbs
@@ -60,70 +101,15 @@ class SiteGenerator:
         return html_content
     
     def get_nav_items(self, current_path=None):
-        """Generate navigation items from folder structure"""
-        nav_items = []
-        
-        # Add Introduction
-        nav_items.append({
-            "name": "📚 Introduction",
-            "url": f"{self.base_url}Introduction/",
-            "items": self.get_folder_items("Introduction")
-        })
-        
-        # Add Design Patterns
-        nav_items.append({
-            "name": "🏗️ Design Patterns",
-            "url": f"{self.base_url}Design%20Pattern/",
-            "items": self.get_folder_items("Design Pattern")
-        })
-        
-        # Add Examples
-        nav_items.append({
-            "name": "💼 Examples",
-            "url": f"{self.base_url}Examples/",
-            "items": self.get_folder_items("Examples")
-        })
-        
-        # Add Company Tagged
-        nav_items.append({
-            "name": "🏢 Company Tagged",
-            "url": f"{self.base_url}Company%20Tagged/",
-            "items": self.get_folder_items("Company Tagged")
-        })
-        
-        return nav_items
-    
-    def get_folder_items(self, folder_name):
-        """Get items from a folder"""
-        items = []
-        folder_path = self.root_dir / folder_name
-        
-        if not folder_path.exists():
-            return items
-        
-        try:
-            for item in sorted(folder_path.iterdir()):
-                if item.name.startswith('.') or item.name == '__pycache__':
-                    continue
-                
-                if item.is_dir():
-                    url = f"{self.base_url}{folder_name}/{item.name}/"
-                    items.append({
-                        "name": item.name,
-                        "url": url,
-                        "type": "folder"
-                    })
-                elif item.suffix == '.md':
-                    url = f"{self.base_url}{folder_name}/{item.name.replace('.md', '.html')}"
-                    items.append({
-                        "name": item.stem,
-                        "url": url,
-                        "type": "file"
-                    })
-        except Exception as e:
-            print(f"Error reading folder {folder_name}: {e}")
-        
-        return items
+        """Generate navigation items from folder structure (recursive tree)"""
+        nav = [{
+            "name": "🏠 Home",
+            "url": self.base_url,
+            "type": "file",
+            "items": []
+        }]
+        nav.extend(self.build_tree(self.root_dir))
+        return nav
     
     def generate_html_wrapper(self, title, content, breadcrumbs, nav_items):
         """Generate complete HTML page"""
@@ -171,42 +157,39 @@ class SiteGenerator:
             border-bottom: 2px solid rgba(255, 255, 255, 0.3);
         }}
         
+        nav ul {{
+            list-style: none;
+            padding-left: 0;
+            margin-left: 0;
+        }}
+        
+        nav li {{
+            margin: 4px 0;
+        }}
+        
         nav a {{
             display: block;
             color: white;
             text-decoration: none;
-            padding: 8px 12px;
-            margin: 5px 0;
+            padding: 8px 10px;
             border-radius: 4px;
-            transition: all 0.3s ease;
+            transition: all 0.2s ease;
+            word-break: break-word;
         }}
         
         nav a:hover {{
             background: rgba(255, 255, 255, 0.2);
-            padding-left: 20px;
+            padding-left: 14px;
         }}
         
-        nav .nav-section {{
-            margin-bottom: 25px;
-        }}
-        
-        nav .nav-section-title {{
+        .nav-folder > a {{
             font-weight: 600;
-            padding: 10px 12px;
-            margin: 15px 0 10px 0;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 4px;
-            font-size: 0.95em;
         }}
         
-        nav .nav-item {{
-            padding-left: 20px;
-            font-size: 0.9em;
-        }}
-        
-        nav .nav-item.active a {{
-            background: rgba(255, 255, 255, 0.25);
-            font-weight: 600;
+        .nav-children {{
+            margin-left: 12px;
+            border-left: 1px solid rgba(255, 255, 255, 0.2);
+            padding-left: 8px;
         }}
         
         main {{
@@ -377,21 +360,19 @@ class SiteGenerator:
         return html
     
     def generate_nav_html(self, nav_items):
-        """Generate navigation HTML"""
-        nav_html = ""
-        for item in nav_items:
-            nav_html += f"""<div class="nav-section">
-    <div class="nav-section-title">{item['name']}</div>"""
-            
-            if item.get('items'):
-                for sub_item in item['items']:
-                    nav_html += f"""
-    <div class="nav-item">
-        <a href="{sub_item['url']}">{sub_item['name']}</a>
-    </div>"""
-            nav_html += "\n</div>\n"
+        """Generate navigation HTML as nested tree"""
+        def render(items):
+            html = "<ul>"
+            for item in items:
+                item_class = "nav-folder" if item["type"] == "folder" else "nav-file"
+                html += f'<li class="{item_class}"><a href="{item["url"]}">{item["name"]}</a>'
+                if item.get("items"):
+                    html += f'<div class="nav-children">{render(item["items"])}</div>'
+                html += "</li>"
+            html += "</ul>"
+            return html
         
-        return nav_html
+        return render(nav_items)
     
     def generate_breadcrumb_html(self, breadcrumbs):
         """Generate breadcrumb HTML"""
@@ -410,7 +391,7 @@ class SiteGenerator:
         items = []
         try:
             for item in sorted(folder_path.iterdir()):
-                if item.name.startswith('.') or item.name == '__pycache__':
+                if self.is_hidden(item) or item.name == '__pycache__':
                     continue
                 
                 rel_path = item.relative_to(self.root_dir)
@@ -419,19 +400,19 @@ class SiteGenerator:
                     items.append({
                         "name": item.name,
                         "type": "folder",
-                        "url": f"{self.base_url}{'/'.join(rel_path.parts)}/"
+                        "url": f"{self.base_url}{quote('/'.join(rel_path.parts), safe='/')}/"
                     })
                 elif item.suffix == '.md':
                     items.append({
                         "name": item.stem,
                         "type": "file",
-                        "url": f"{self.base_url}{'/'.join(rel_path.parts[:-1])}/{item.stem}.html"
+                        "url": f"{self.base_url}{quote('/'.join(rel_path.with_suffix('').parts), safe='/')}.html"
                     })
                 elif item.suffix in ['.py']:
                     items.append({
                         "name": item.name,
                         "type": "code",
-                        "url": f"{self.base_url}{'/'.join(rel_path.parts)}"
+                        "url": f"{self.base_url}{quote('/'.join(rel_path.with_suffix('').parts), safe='/')}.html"
                     })
         except Exception as e:
             print(f"Error processing directory {folder_path}: {e}")
