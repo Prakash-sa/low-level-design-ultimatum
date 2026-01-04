@@ -11,14 +11,16 @@
 ## Table of Contents
 
 1. [Quick Start (5 min)](#quick-start)
-2. [System Overview](#system-overview)
-3. [Requirements & Scope](#requirements--scope)
-4. [Architecture Diagram](#architecture-diagram)
-5. [Interview Q&A](#interview-qa)
-6. [Scaling Q&A](#scaling-qa)
-7. [Demo Scenarios](#demo-scenarios)
-8. [Complete Implementation](#complete-implementation)
-9. [Design Patterns Summary](#design-patterns-summary)
+2. [Step 01: The Setup — Clarify Requirements](#step-01-the-setup--clarify-requirements)
+3. [Step 02: Structure — Define Entities](#step-02-structure--define-entities)
+4. [Step 03: Interface — APIs & Entry Points](#step-03-interface--apis--entry-points)
+5. [Step 04: Architecture — Relationships & Diagram](#step-04-architecture--relationships--diagram)
+6. [Step 05: Optimization — Design Patterns](#step-05-optimization--design-patterns)
+7. [Step 06: Implementation — Code & Concurrency](#step-06-implementation--code--concurrency)
+8. [Demo Scenarios](#demo-scenarios)
+9. [Interview Q&A](#interview-qa)
+10. [Scaling Q&A](#scaling-qa)
+11. [Success Checklist](#success-checklist)
 
 ---
 
@@ -29,85 +31,445 @@
 ### What Problem Are We Solving?
 Customers search flights → hold seat (temporary 5-min reservation) → pay → confirm booking → or hold expires → seat released. Prevent overbooking through atomic seat status transitions and hold timeout management.
 
-### Key Design Patterns
-| Pattern | Why | Used For |
-|---------|-----|----------|
-| **Singleton** | Single consistent state | AirlineSystem (thread-safe) |
-| **Strategy (Pricing)** | Pluggable algorithms | Fixed price vs Demand-based pricing |
-| **Observer** | Decouple notifications | Email/SMS/Console on hold/confirm events |
-| **State** | Valid transitions | BookingStatus & SeatStatus enums |
-| **Factory** | Centralized creation | Seat/Flight/Booking creation |
-
-### Critical Interview Points
-- ✅ How to prevent overbooking? → Status transition (AVAILABLE → HOLD → BOOKED) with TTL expiry
-- ✅ Hold vs Confirmed? → Hold = temporary (5 min); Confirmed = permanent after payment
-- ✅ Handle hold expiry? → Background job checks hold_until timestamp, expires stale holds
-- ✅ Concurrency? → Singleton + threading.Lock for atomic operations
-
----
-
-## System Overview
-
-### Core Problem
+### Core Flow
 ```
-Customer searches flights
-        ↓
-SELECT FLIGHT & SEAT (browse available seats)
-        ↓
-HOLD SEAT (temporary 5-minute reservation, seat status = HOLD)
-        ↓
-PAYMENT (validate pricing via strategy)
-        ↓
-CONFIRM (if hold still valid: seat status = BOOKED, booking = CONFIRMED)
-        ↓
-or HOLD EXPIRES (if > 5 min: release seat, booking = EXPIRED)
-        ↓
-Result: Either CONFIRMED with booked seat OR EXPIRED with available seat
+Browse Flights → Select Seat → HOLD (5 min) → PAYMENT → CONFIRM (permanent)
+                                    ↓ or timeout
+                                  EXPIRED (seat released)
 ```
 
-### Key Constraints
-- **Concurrency**: 500-1000+ users simultaneously holding/confirming seats
-- **Consistency**: No overbooking (seat can only be held/booked by one user)
-- **Availability**: Real-time seat status updates, fast searches
-- **Pricing**: Different prices for Economy/Business + demand-based surcharges
-- **Notifications**: Async updates on hold/confirm/expire/cancel events
+---
+
+## Step 01: The Setup — Clarify Requirements
+
+> **Interview Tip**: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.
+
+### Questions to Ask (30 seconds each)
+
+1. **Single machine or distributed?** → "Distributed system with 500-1K concurrent users"
+2. **Do we track passenger history?** → "Yes, past bookings for cancellations"
+3. **Multi-airline or single?** → "Single airline"
+4. **Real payment processing?** → "Mock payment service for interview"
+5. **Cancellations after confirmation?** → "Yes, with refund policies"
+
+### Actors (Who uses the system?)
+
+| Actor | Role | Example Actions |
+|-------|------|-----------------|
+| **Customer** | Browse & book flights | Search, hold seat, confirm, cancel |
+| **Airline Admin** | Manage flights & pricing | Create flights, set pricing strategy, monitor overbooking |
+| **System** | Controller & notifications | Expire holds, send emails, update seat status |
+
+### Functional Requirements (What does the system do?)
+
+✅ **Search & Browse**
+  - Search flights by route, date, aircraft type
+  - View seat inventory with real-time availability
+  
+✅ **Hold & Reserve**
+  - Temporarily hold seat for 5 minutes
+  - Prevent double-booking of same seat
+  - Generate booking ID & hold expiry time
+  
+✅ **Confirm & Book**
+  - Confirm booking after payment
+  - Permanently mark seat as booked
+  - Update booking status
+  
+✅ **Cancel & Release**
+  - Cancel confirmed booking
+  - Release seat back to available
+  - Calculate refund based on policy
+  
+✅ **Automatic Expiry**
+  - Automatically expire holds after 5 minutes
+  - Release seat if hold not confirmed
+  - Notify passenger of expiry
+  
+✅ **Dynamic Pricing**
+  - Support multiple pricing strategies
+  - Adjust price based on occupancy
+  - Apply seat class surcharges (Economy vs Business)
+  
+✅ **Notifications**
+  - Notify on hold success, confirmation, expiry, cancellation
+  - Support multiple channels (email, SMS, console)
+
+### Non-Functional Requirements (How does it perform?)
+
+✅ **Concurrency**: Support 500-1000+ simultaneous holds/confirms  
+✅ **Consistency**: No overbooking (seat can only be held by ONE user)  
+✅ **Availability**: Real-time seat status updates, <100ms searches  
+✅ **Latency**: <200ms for hold/confirm operations  
+✅ **Uptime**: 99.9% (8.6 hours downtime/month allowed)  
+✅ **Throughput**: 1M flights/day = ~12 flights/second average (easily handled)  
+✅ **Hold Expiry Accuracy**: ±30 seconds tolerance acceptable  
+
+### Constraints & Clarifications
+
+| Constraint | Decision |
+|-----------|----------|
+| **Distributed?** | YES - multi-region with replicas |
+| **Single airline?** | YES - simplify scope |
+| **Real payment?** | NO - mock service (payment failure still tested) |
+| **Overbooking allowed?** | YES - controlled 5% oversell for no-shows |
+| **Cancellation fee?** | Time-based: Full refund if >24h, 50% if >6h, None if <6h |
+| **Seat hold timeout** | Fixed 5 minutes |
+| **Max passengers per booking** | 1 (single seat per booking) |
 
 ---
 
-## Requirements & Scope
+## Step 02: Structure — Define Entities
 
-### Functional Requirements
-✅ Browse flights (search by route, date, aircraft)  
-✅ View seat inventory with real-time availability  
-✅ Hold seat temporarily (5-minute timeout)  
-✅ Confirm booking after payment  
-✅ Cancel booking (release seat back to available)  
-✅ Automatic hold expiry and seat release  
-✅ Dynamic pricing (fixed vs demand-based)  
-✅ Event notifications (held, confirmed, expired, cancelled)  
-✅ Overbooking prevention (atomic seat operations)  
+> **Interview Tip**: Extract core objects from requirements. Look for **nouns**. Write them on whiteboard immediately.
 
-### Non-Functional Requirements
-✅ Support 500-1000+ concurrent users  
-✅ <100ms flight search response  
-✅ <200ms hold/confirm response  
-✅ 99.9% uptime  
-✅ No overbooking (0% violation)  
-✅ Hold expiry within ±30 seconds  
+### Step 2.1: List Core Entities (Extract Nouns)
 
-### Out of Scope
-❌ Passenger check-in or boarding  
-❌ Real payment gateway  
-❌ Loyalty programs  
-❌ Baggage management  
-❌ Flight cancellation (only booking cancellation)  
-❌ Multi-airline federation  
+From the requirements above, identify nouns:
+
+```
+Flight, Seat, Passenger, Booking, Price, Status, Notification, ...
+```
+
+### Step 2.2: Define Core Classes
+
+#### **Seat** — A single seat in a flight
+```
+Properties:
+  - seat_id: str (e.g., "1A", "1B", "12C")
+  - seat_class: SeatClass (ECONOMY or BUSINESS)
+  - status: SeatStatus (AVAILABLE, HOLD, BOOKED)
+  - booked_by: Optional[str] (passenger ID or None)
+
+Behaviors:
+  - is_available(): Check if seat can be held
+  - hold(): Transition to HOLD status
+  - book(): Transition to BOOKED status
+  - release(): Transition back to AVAILABLE
+```
+
+#### **Flight** — A single flight with multiple seats
+```
+Properties:
+  - flight_id: str (e.g., "AA101")
+  - origin: str (e.g., "NYC")
+  - destination: str (e.g., "LAX")
+  - departure: datetime
+  - aircraft_type: str (e.g., "Boeing 737")
+  - seats: Dict[str, Seat] (collection of 30-180 seats)
+
+Behaviors:
+  - add_seat(seat): Register seat in flight
+  - get_seat(seat_id): Retrieve seat by ID
+  - available_seats_count(): Count available seats for pricing
+```
+
+#### **Passenger** — A person booking flights
+```
+Properties:
+  - passenger_id: str
+  - name: str
+  - email: str
+
+Behaviors:
+  - (none - just data holder)
+```
+
+#### **Booking** — A single seat reservation
+```
+Properties:
+  - booking_id: str (unique per booking)
+  - passenger: Passenger (who booked)
+  - flight: Flight (which flight)
+  - seat: Seat (which seat)
+  - price: float (calculated price)
+  - status: BookingStatus (HOLD, CONFIRMED, CANCELLED, EXPIRED)
+  - created_at: datetime
+  - hold_until: datetime (when hold expires)
+
+Behaviors:
+  - confirm(): Mark as CONFIRMED, book the seat
+  - cancel(): Mark as CANCELLED, release seat
+  - expire(): Mark as EXPIRED, release seat (auto-called after 5 min)
+```
+
+#### **AirlineSystem** — Main controller (Singleton)
+```
+Properties:
+  - flights: Dict[str, Flight]
+  - passengers: Dict[str, Passenger]
+  - bookings: Dict[str, Booking]
+  - observers: List[Observer] (for notifications)
+  - pricing_strategy: PricingStrategy
+
+Behaviors:
+  - hold_seat(passenger_id, flight_id, seat_id): Create booking + hold seat
+  - confirm_booking(booking_id): Transition HOLD → CONFIRMED
+  - cancel_booking(booking_id): Transition to CANCELLED
+  - check_and_expire_holds(): Expire all old HOLD bookings (background job)
+  - set_pricing_strategy(strategy): Switch pricing algorithm
+  - notify_observers(event, booking): Broadcast event to all listeners
+```
+
+### Step 2.3: Define Enumerations (State & Type)
+
+```python
+class SeatStatus(Enum):
+    AVAILABLE = "available"    # Can be held
+    HOLD = "hold"              # Temporarily reserved by user
+    BOOKED = "booked"          # Permanently booked after payment
+
+class BookingStatus(Enum):
+    HOLD = "hold"              # User in checkout (5-min window)
+    CONFIRMED = "confirmed"    # User paid, booking permanent
+    CANCELLED = "cancelled"    # User cancelled
+    EXPIRED = "expired"        # 5-min hold window closed
+
+class SeatClass(Enum):
+    ECONOMY = 1                # $100 base price
+    BUSINESS = 2               # $200 base price
+```
+
+### Step 2.4: Why These Entities?
+
+| Entity | Why | Cost of Missing |
+|--------|-----|-----------------|
+| **Seat** | Granular seat tracking | Can't prevent overbooking |
+| **Flight** | Group seats logically | Can't organize inventory |
+| **Passenger** | Track who booked | Can't send notifications |
+| **Booking** | Hold lifecycle tracking | Can't manage holds or expiry |
+| **AirlineSystem** | Central controller | No thread-safe coordination |
 
 ---
 
-## Architecture Diagram
+## Step 03: Interface — APIs & Entry Points
 
-### UML Class Diagram
+> **Interview Tip**: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".
+
+### Step 3.1: Public API Contracts
+
+#### **1. Search Flights**
+```python
+def search_flights(origin: str, destination: str, date: str) -> List[Flight]:
+    """
+    Find all flights matching route and date.
+    Returns: List of Flight objects with available seat counts.
+    Raises: FlightNotFoundError if no matches.
+    Response Time: <100ms (cached)
+    """
+    pass
+```
+
+#### **2. Browse Seats**
+```python
+def get_available_seats(flight_id: str) -> Dict[str, Seat]:
+    """
+    Get all available (AVAILABLE status) seats in a flight.
+    Returns: Dict mapping seat_id → Seat object.
+    Raises: FlightNotFoundError if flight doesn't exist.
+    Response Time: <50ms (cached)
+    """
+    pass
+```
+
+#### **3. Hold Seat** ⭐ CRITICAL
+```python
+def hold_seat(passenger_id: str, flight_id: str, seat_id: str, 
+              hold_seconds: int = 300) -> Booking:
+    """
+    Temporarily reserve a seat for 5 minutes (default 300 seconds).
+    
+    Precondition: seat.status == AVAILABLE
+    Postcondition: seat.status == HOLD, booking.status == HOLD
+    
+    Returns: Booking object with booking_id, price, hold_until timestamp.
+    
+    Raises:
+      - SeatNotAvailableError: Seat already held/booked by another user
+      - FlightNotFoundError: Flight doesn't exist
+      - PassengerNotFoundError: Passenger not registered
+      - SeatNotFoundError: Seat ID invalid
+    
+    Concurrency: THREAD-SAFE with atomic status transition
+    Response Time: <200ms
+    Idempotency: NO (multiple calls = multiple bookings)
+    """
+    pass
+```
+
+#### **4. Confirm Booking** ⭐ CRITICAL
+```python
+def confirm_booking(booking_id: str) -> bool:
+    """
+    Permanently book a seat after payment succeeds.
+    
+    Precondition: booking.status == HOLD
+    Postcondition: booking.status == CONFIRMED, seat.status == BOOKED
+    
+    Returns: True if success, False if failed.
+    
+    Raises:
+      - BookingNotFoundError: Booking ID invalid
+      - BookingExpiredError: Hold window closed (now > hold_until)
+      - BookingNotHeldError: Booking not in HOLD state (already confirmed/cancelled)
+    
+    Concurrency: THREAD-SAFE
+    Response Time: <200ms
+    Side Effects: Sends notification to passenger (email/SMS)
+    """
+    pass
+```
+
+#### **5. Cancel Booking**
+```python
+def cancel_booking(booking_id: str) -> bool:
+    """
+    Cancel a booking and release seat back to available.
+    
+    Precondition: booking.status in [HOLD, CONFIRMED]
+    Postcondition: booking.status = CANCELLED, seat.status = AVAILABLE
+    
+    Returns: True if success, False if failed.
+    
+    Raises:
+      - BookingNotFoundError: Booking ID invalid
+      - BookingAlreadyExpiredError: Can't cancel expired booking
+    
+    Side Effects: 
+      - Calculates refund based on time_until_departure
+      - Sends cancellation email
+    """
+    pass
+```
+
+#### **6. Automatic Hold Expiry** (Background Job)
+```python
+def check_and_expire_holds() -> None:
+    """
+    Scan all HOLD bookings and auto-expire stale ones.
+    Called every 1 minute by background scheduler.
+    
+    For each HOLD booking:
+      if now > booking.hold_until:
+        - Set booking.status = EXPIRED
+        - Set seat.status = AVAILABLE
+        - Notify passenger
+    
+    Response Time: O(n) where n = total HOLD bookings (tolerate ~5 min delay)
+    Concurrency: Can run in parallel, guarded by distributed locks
+    """
+    pass
+```
+
+#### **7. Set Pricing Strategy**
+```python
+def set_pricing_strategy(strategy: PricingStrategy) -> None:
+    """
+    Dynamically switch pricing algorithm.
+    New pricing applies to next hold_seat() call.
+    
+    Strategy: Pluggable (FixedPricing or DemandBasedPricing)
+    """
+    pass
+```
+
+#### **8. Register Observer** (For Notifications)
+```python
+def add_observer(observer: Observer) -> None:
+    """
+    Register callback for booking events.
+    
+    Events: "held", "confirmed", "cancelled", "expired"
+    Observer will be called: observer.update(event, booking)
+    
+    Example: Add EmailNotifier to send emails on confirm/expire
+    """
+    pass
+```
+
+### Step 3.2: Exception Hierarchy
+
+```python
+class AirlineException(Exception):
+    """Base exception"""
+    pass
+
+class SeatNotAvailableError(AirlineException):
+    """Seat already held/booked"""
+    pass
+
+class BookingExpiredError(AirlineException):
+    """Hold window closed"""
+    pass
+
+class FlightNotFoundError(AirlineException):
+    """Flight ID invalid"""
+    pass
+
+class PassengerNotFoundError(AirlineException):
+    """Passenger not registered"""
+    pass
+```
+
+### Step 3.3: API Usage Example
+
+```python
+system = AirlineSystem.get_instance()
+
+# 1. Search flights
+flights = system.search_flights("NYC", "LAX", "2025-01-15")
+
+# 2. Browse seats
+flight = flights[0]
+seats = system.get_available_seats(flight.flight_id)
+
+# 3. HOLD seat
+booking = system.hold_seat(
+    passenger_id="P001",
+    flight_id="AA101",
+    seat_id="1A"
+)
+print(f"Booking ID: {booking.booking_id}, Price: ${booking.price}")
+
+# 4. CONFIRM booking
+success = system.confirm_booking(booking.booking_id)
+
+# 5. CANCEL booking
+system.cancel_booking(booking.booking_id)
+```
+
+---
+
+## Step 04: Architecture — Relationships & Diagram
+
+> **Interview Tip**: Use composition, aggregation, and inheritance. Prefer composition over inheritance. Check cardinality (1:1, 1:N).
+
+### Step 4.1: Relationship Types
+
+```
+AirlineSystem HAS-A flights (1:N Composition)
+  └─ AirlineSystem is "owner", manages lifecycle of flights
+
+Flight HAS-A seats (1:N Composition)
+  └─ Flight contains collection of Seat objects
+
+Booking REFERENCES passenger (1:1 Association)
+  └─ Booking links to Passenger (no ownership)
+
+Booking REFERENCES flight (1:1 Association)
+  └─ Booking links to Flight (no ownership)
+
+Booking REFERENCES seat (1:1 Association)
+  └─ Booking links to Seat (no ownership)
+
+AirlineSystem USES-A PricingStrategy (1:1 Composition)
+  └─ AirlineSystem owns and manages pricing algorithm
+
+AirlineSystem NOTIFIES Observer (1:N Association)
+  └─ Multiple observers listen to events
+```
+
+### Step 4.2: Complete UML Class Diagram
 
 ```
 ┌──────────────────────────────────────┐
@@ -119,6 +481,7 @@ Result: Either CONFIRMED with booked seat OR EXPIRED with available seat
 │ - bookings: Dict[str, Booking]       │
 │ - observers: List[Observer]          │
 │ - pricing_strategy: PricingStrategy  │
+│ - _lock: threading.Lock              │
 ├──────────────────────────────────────┤
 │ + get_instance(): AirlineSystem      │
 │ + hold_seat(...): Booking            │
@@ -126,30 +489,31 @@ Result: Either CONFIRMED with booked seat OR EXPIRED with available seat
 │ + cancel_booking(booking_id): bool   │
 │ + check_and_expire_holds(): void     │
 │ + set_pricing_strategy(strategy)     │
+│ + add_observer(observer): void       │
 │ + notify_observers(event, booking)   │
 └──────────────────────────────────────┘
-           │ manages
+           │ manages 1:N
            ▼
-    ┌─────────────────────┐
-    │      Flight         │
-    ├─────────────────────┤
-    │ - flight_id: str    │
-    │ - origin: str       │
-    │ - destination: str  │
-    │ - departure: dt     │
-    │ - aircraft_type: str│
-    │ - seats: Dict       │
-    ├─────────────────────┤
-    │ + add_seat(seat)    │
-    │ + get_seat(id)      │
-    │ + available_count() │
-    └─────────────────────┘
-           │ contains
+    ┌─────────────────────────────────┐
+    │      Flight                     │
+    ├─────────────────────────────────┤
+    │ - flight_id: str                │
+    │ - origin: str                   │
+    │ - destination: str              │
+    │ - departure: datetime           │
+    │ - aircraft_type: str            │
+    │ - seats: Dict[str, Seat]        │
+    ├─────────────────────────────────┤
+    │ + add_seat(seat): void          │
+    │ + get_seat(seat_id): Seat       │
+    │ + available_seats_count(): int  │
+    └─────────────────────────────────┘
+           │ contains 1:N
            ▼
     ┌─────────────────────────────────┐
     │         Seat                    │
     ├─────────────────────────────────┤
-    │ - seat_id: str (e.g., "1A")     │
+    │ - seat_id: str                  │
     │ - seat_class: SeatClass         │
     │ - status: SeatStatus            │
     │ - booked_by: Optional[str]      │
@@ -159,728 +523,230 @@ Result: Either CONFIRMED with booked seat OR EXPIRED with available seat
     │ + book(): void                  │
     │ + release(): void               │
     └─────────────────────────────────┘
-           │ linked in
+           ▲ linked by
+           │
+    ┌─────────────────────────────────┐
+    │        Booking                  │
+    ├─────────────────────────────────┤
+    │ - booking_id: str               │
+    │ - passenger: Passenger          │
+    │ - flight: Flight                │
+    │ - seat: Seat                    │
+    │ - price: float                  │
+    │ - status: BookingStatus         │
+    │ - hold_until: datetime          │
+    ├─────────────────────────────────┤
+    │ + confirm(): void               │
+    │ + cancel(): void                │
+    │ + expire(): void                │
+    └─────────────────────────────────┘
+           │ references 1:1
            ▼
-    ┌──────────────────────────────────┐
-    │        Booking                   │
-    ├──────────────────────────────────┤
-    │ - booking_id: str                │
-    │ - passenger: Passenger           │
-    │ - flight: Flight                 │
-    │ - seat: Seat                     │
-    │ - price: float                   │
-    │ - status: BookingStatus          │
-    │ - hold_until: datetime           │
-    ├──────────────────────────────────┤
-    │ + confirm(): void                │
-    │ + cancel(): void                 │
-    │ + expire(): void                 │
-    └──────────────────────────────────┘
-           │ references
-           ▼
-    ┌──────────────────────┐
-    │     Passenger        │
-    ├──────────────────────┤
-    │ - passenger_id: str  │
-    │ - name: str          │
-    │ - email: str         │
-    └──────────────────────┘
+    ┌─────────────────────┐
+    │     Passenger       │
+    ├─────────────────────┤
+    │ - passenger_id: str │
+    │ - name: str         │
+    │ - email: str        │
+    └─────────────────────┘
+
 
 STRATEGY PATTERN (Pricing):
-┌────────────────────────────────┐
-│ PricingStrategy (Abstract)     │
-│ + calculate_price(flight, seat)│
-└──┬─────────────────────────────┘
-   │
+┌────────────────────────────────────┐
+│ PricingStrategy (Abstract)         │
+├────────────────────────────────────┤
+│ + calculate_price(flight, seat)    │
+└──┬─────────────────────────────────┘
+   │ implemented by
    ├─→ FixedPricing (Economy $100, Business $200)
    └─→ DemandBasedPricing (1.0x - 1.5x multiplier)
 
 OBSERVER PATTERN (Notifications):
-┌────────────────────────────────┐
-│ Observer (Abstract)            │
-│ + update(event, booking)       │
-└──┬─────────────────────────────┘
-   │
+┌────────────────────────────────────┐
+│ Observer (Abstract)                │
+├────────────────────────────────────┤
+│ + update(event, booking)           │
+└──┬─────────────────────────────────┘
+   │ implemented by
    ├─→ ConsoleObserver (logging)
    ├─→ EmailNotifier
    └─→ SMSNotifier
-
-ENUMS:
-SeatStatus: AVAILABLE → HOLD → BOOKED
-BookingStatus: HOLD → CONFIRMED | EXPIRED | CANCELLED
-SeatClass: ECONOMY | BUSINESS
 ```
+
+### Step 4.3: Cardinality Summary
+
+| Relationship | Cardinality | Type | Reason |
+|-------------|------------|------|--------|
+| AirlineSystem → Flights | 1:N | Composition | System owns all flights |
+| Flight → Seats | 1:N | Composition | Flight owns all its seats |
+| Booking → Passenger | 1:1 | Association | Booking references one passenger |
+| Booking → Flight | 1:1 | Association | Booking references one flight |
+| Booking → Seat | 1:1 | Association | Booking reserves one seat |
+| AirlineSystem → PricingStrategy | 1:1 | Composition | System owns pricing rule |
+| AirlineSystem → Observers | 1:N | Association | System notifies multiple listeners |
 
 ---
 
-## Interview Q&A
+## Step 05: Optimization — Design Patterns
 
-### Basic Questions
+> **Interview Tip**: Don't force patterns. Only solve specific problems.
 
-**Q1: How do you prevent overbooking of a seat?**
+### Pattern 1: **Singleton** (For AirlineSystem)
 
-A: Atomic status transitions with atomicity guarantee:
+**Problem**: Multiple threads need single consistent view of flights, bookings, passengers.
 
-1. **Seat Status Enum**: AVAILABLE → HOLD → BOOKED (explicit state)
-2. **Atomic Hold Operation**: Before holding, check `seat.status == AVAILABLE`. If true, immediately set to HOLD in one transaction.
-3. **Database Uniqueness**: In real systems, enforce `(flight_id, seat_id)` unique constraint with no duplicates
-4. **Optimistic Locking**: Each seat has version number; on hold, increment version; if version mismatch, retry
+**Solution**: One global AirlineSystem instance, thread-safe initialization.
 
 ```python
-def hold_seat(user_id, flight_id, seat_id):
-    seat = flight.get_seat(seat_id)
+class AirlineSystem:
+    _instance = None
+    _lock = threading.Lock()
     
-    if seat.status != SeatStatus.AVAILABLE:
-        raise AlreadyHeldError()  # Another user holding/booked
-    
-    # Atomic: status AVAILABLE → HOLD
-    seat.status = SeatStatus.HOLD
-    seat.booked_by = user_id
-    
-    # Create booking with 5-min hold window
-    booking = Booking(..., hold_until=now + 300s)
-    return booking
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
 ```
 
-**Q2: What's the difference between HOLD and CONFIRMED?**
+**Benefit**: ✅ Single source of truth, ✅ Thread-safe (double-checked lock), ✅ Global access  
+**Trade-off**: ⚠️ Global state (hard to test), ⚠️ Harder to scale across machines
 
-A:
-- **HOLD**: Temporary 5-minute reservation while user is in checkout. Seat status = HOLD. If payment not completed by 5 min, booking EXPIRED and seat released.
-- **CONFIRMED**: Permanent booking after successful payment. Seat status = BOOKED. Booking status = CONFIRMED.
+---
 
-Timeline: Browse → Hold (5-min window) → If payment succeeds → Confirm (permanent) → Or timeout → Expire (seat releases)
+### Pattern 2: **Strategy** (For Pricing)
 
-**Q3: How do you handle hold expiry?**
+**Problem**: Pricing varies (fixed vs demand-based) and may change in future.
 
-A: Two approaches:
-
-1. **Lazy Expiry**: When user tries to confirm, check `if now > booking.hold_until` and expire if stale
-2. **Eager Cleanup**: Background job runs every minute, scans HOLD bookings, expires stale ones, releases seats
+**Solution**: Pluggable pricing algorithms, swap without modifying booking logic.
 
 ```python
-def check_and_expire_holds(self):
-    now = datetime.now()
-    for booking in self.bookings.values():
-        if booking.status == BookingStatus.HOLD and now > booking.hold_until:
-            booking.expire()  # seat.status = AVAILABLE, booking.status = EXPIRED
-            self.notify_observers("expired", booking)
-```
+class PricingStrategy(ABC):
+    @abstractmethod
+    def calculate_price(self, flight: Flight, seat: Seat) -> float:
+        pass
 
-**Q4: Why use Strategy pattern for pricing?**
+class FixedPricing(PricingStrategy):
+    def calculate_price(self, flight: Flight, seat: Seat) -> float:
+        return 200.0 if seat.seat_class == SeatClass.BUSINESS else 100.0
 
-A: Pricing varies by seat class + demand:
-- Fixed: Economy $100, Business $200 (predictable, simple)
-- Demand-based: Base × (1.0 to 1.5) based on occupancy rate (dynamic surcharges)
-- Future: Seasonal, early-bird discount, fuel surcharge
+class DemandBasedPricing(PricingStrategy):
+    def calculate_price(self, flight: Flight, seat: Seat) -> float:
+        base = 200.0 if seat.seat_class == SeatClass.BUSINESS else 100.0
+        occupancy_rate = 1.0 - (flight.available_seats_count() / len(flight.seats))
+        multiplier = 1.0 + (occupancy_rate * 0.5)  # up to 1.5x surge
+        return base * multiplier
 
-Strategy lets us swap algorithms without modifying booking logic:
-```python
+# Usage: Switch algorithm at runtime
 system.set_pricing_strategy(DemandBasedPricing())
-price = strategy.calculate_price(flight, seat)  # Uses new strategy
+price = system.pricing_strategy.calculate_price(flight, seat)
 ```
+
+**Benefit**: ✅ Easy to add new pricing (Seasonal, EarlyBird, etc.), ✅ No booking logic change  
+**Trade-off**: ⚠️ Extra abstraction layer
 
 ---
 
-### Intermediate Questions
+### Pattern 3: **Observer** (For Notifications)
 
-**Q5: How would you scale this to 1M concurrent users and 1M flights/day?**
+**Problem**: Booking events (hold, confirm, expire) need to trigger emails/SMS/logging.
 
-A: Multi-tier distributed architecture:
-
-```
-Layer 1: API Gateway (Nginx)
-  └─ Route by user_id hash (consistent hashing)
-  
-Layer 2: AirlineSystem Replicas (100K users each, 10 instances)
-  ├─ Instance 1 (users 0-100K)
-  ├─ Instance 2 (users 100K-200K)
-  ├─ ...
-  └─ Instance 10 (users 900K-1M)
-  └─ Session affinity (same user → same instance)
-  
-Layer 3: Distributed Locks (Redis Cluster)
-  └─ Key: "lock:flight_id:seat_id" with 15-min TTL
-  └─ Ensures atomic status transition across replicas
-  
-Layer 4: Database (Sharded by flight_id)
-  ├─ Shard 1: Flights 0-250K
-  ├─ Shard 2: Flights 250K-500K
-  ├─ Shard 3: Flights 500K-750K
-  └─ Shard 4: Flights 750K-1M
-  └─ Each shard: 1 primary + 2 read replicas
-  
-Layer 5: Notifications (Kafka + Workers)
-  ├─ Topic: booking_events (1M+ messages/day)
-  ├─ Email worker (100 msgs/sec)
-  ├─ SMS worker (50 msgs/sec)
-  └─ Worker auto-scale based on Kafka lag
-  
-Layer 6: Caching (Redis)
-  └─ Popular routes (5-min TTL)
-  └─ Flight metadata
-  └─ Seat availability (updated on every hold/release)
-```
-
-**Throughput Estimate**: 
-- 1M flights/day = ~12 events/sec (easily handled)
-- Per-flight: average 150 bookings/day
-- Peak: 5,000 holds/sec (during holiday rush)
-- Each hold: 50ms (distributed lock + DB write)
-
----
-
-**Q6: How do you handle payment failure gracefully?**
-
-A:
-
-```
-User clicks "Confirm"
-    ↓
-Check if hold still valid: if now > hold_until → EXPIRED, seat released, error
-    ↓
-Call payment_gateway.charge(card)
-    ↓
-If success → Set booking.status = CONFIRMED, seat.status = BOOKED
-    ↓
-If failure → Retry 3x with exponential backoff (1s, 2s, 4s)
-    ↓
-On final failure → booking.status = PAYMENT_FAILED
-                → Automatically expire booking
-                → Release seat (seat.status = AVAILABLE)
-                → Notify user: "Payment declined. Hold released. Try again."
-                → Log for manual review
-```
-
-**Key**: Payment failure must trigger hold expiry, not leave seat in HOLD limbo.
-
----
-
-**Q7: How to handle race condition: 2 users holding same seat simultaneously?**
-
-A: Atomicity with locks:
+**Solution**: Observer pattern decouples event producer from consumers.
 
 ```python
-with distributed_lock.acquire(f"flight:{flight_id}:seat:{seat_id}", timeout=5):
-    seat = flight.get_seat(seat_id)
-    
-    if seat.status != SeatStatus.AVAILABLE:
-        raise SeatNotAvailableError()  # Already held by another user
-    
-    # Atomic transition
-    seat.status = SeatStatus.HOLD
-    seat.booked_by = user_id
-    booking = Booking(...)
+class Observer(ABC):
+    @abstractmethod
+    def update(self, event: str, booking: Booking):
+        pass
+
+class EmailNotifier(Observer):
+    def update(self, event: str, booking: Booking):
+        if event == "confirmed":
+            send_email(booking.passenger.email, "Booking Confirmed!")
+
+class ConsoleObserver(Observer):
+    def update(self, event: str, booking: Booking):
+        print(f"[{event.upper()}] Booking {booking.booking_id}")
+
+# Usage: Add multiple observers
+system.add_observer(EmailNotifier())
+system.add_observer(ConsoleObserver())
+
+# On any event:
+system.notify_observers("confirmed", booking)
 ```
 
-**Guarantees**: Only one user per seat at a time. Lock ensures serialization. TTL prevents deadlocks.
+**Benefit**: ✅ Loose coupling, ✅ Easy to add new notifiers (SMS, Slack, etc.)  
+**Trade-off**: ⚠️ Observer lifecycle management
 
 ---
 
-**Q8: How to implement per-seat upgrades (Economy → Business)?**
+### Pattern 4: **State Enums** (For Status Transitions)
 
-A:
+**Problem**: Booking can be in HOLD, CONFIRMED, EXPIRED, CANCELLED. Invalid transitions must be prevented.
+
+**Solution**: Use enums to explicitly track state.
 
 ```python
-def upgrade_booking(booking_id: str, new_seat_id: str) -> bool:
+class BookingStatus(Enum):
+    HOLD = "hold"
+    CONFIRMED = "confirmed"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
+
+# Valid transitions:
+def confirm_booking(booking_id: str):
     booking = bookings[booking_id]
-    
-    if booking.status != BookingStatus.CONFIRMED:
-        raise ValueError("Can only upgrade confirmed bookings")
-    
-    old_seat = booking.seat
-    new_seat = booking.flight.get_seat(new_seat_id)
-    
-    # Calculate upgrade charge
-    upgrade_price = pricing_strategy.calculate_price(...) - booking.price
-    
-    if upgrade_price <= 0:
-        raise ValueError("Downgrade not allowed")
-    
-    # Charge user for upgrade
-    charge_success = payment_service.charge(booking.user, upgrade_price)
-    
-    if charge_success:
-        old_seat.release()
-        new_seat.book()
-        booking.seat = new_seat
-        booking.price += upgrade_price
-        notify_observers("upgraded", booking)
-        return True
-    
-    return False
+    if booking.status != BookingStatus.HOLD:
+        raise ValueError("Can only confirm HOLD bookings")
+    booking.status = BookingStatus.CONFIRMED
 ```
+
+**Benefit**: ✅ Explicit state, ✅ Invalid transitions caught at runtime  
+**Trade-off**: ⚠️ Need explicit state transition logic
 
 ---
 
-**Q9: How to handle overbooking (intentionally oversell by 5%)?**
+### Pattern 5: **Factory** (For Creating Bookings)
 
-A: Controlled overbooking for no-shows:
+**Problem**: Creating a booking requires initializing multiple objects (Seat, Booking, notification).
+
+**Solution**: Factory method encapsulates creation logic.
 
 ```python
-def get_available_seats(flight: Flight, show_all: bool = False) -> List[Seat]:
-    booked_seats = sum(1 for s in flight.seats.values() if s.status == SeatStatus.BOOKED)
-    available_seats = sum(1 for s in flight.seats.values() if s.status == SeatStatus.AVAILABLE)
-    
-    if show_all:
-        return [s for s in flight.seats.values() if s.status in [AVAILABLE, HOLD]]
-    
-    # Calculate oversell threshold (5% of capacity)
-    capacity = len(flight.seats)
-    oversell_threshold = int(capacity * 0.05)
-    max_bookable = capacity + oversell_threshold
-    
-    if booked_seats >= max_bookable:
-        # Stop selling, but allow holds (for revenue management)
-        return []
-    
-    return available_seats
-```
-
-**Key**: Overbooking is policy decision; track oversold passengers separately; offer compensation if needed.
-
----
-
-**Q10: What metrics would you track for this system?**
-
-A:
-
-| Metric | Alert Threshold |
-|--------|-----------------|
-| Seat hold success rate | < 99% |
-| Booking confirmation rate | < 98% |
-| Hold expiry auto-release success | < 99% |
-| Overbooking incidents | > 1 per 10K flights |
-| API latency (p99) | > 500ms |
-| Database query latency | > 100ms |
-| Cache hit ratio | < 80% |
-| Kafka consumer lag | > 5 min |
-| Payment success rate | < 95% |
-| Uptime | < 99.9% |
-
-```python
-# Prometheus metrics
-booking_holds_total = Counter('booking_holds_total', 'Total seat holds')
-booking_confirms_total = Counter('booking_confirms_total', 'Total confirmations')
-booking_expires_total = Counter('booking_expires_total', 'Total expirations')
-overbooking_incidents = Counter('overbooking_incidents_total', 'Overbooking count')
-```
-
----
-
-## Scaling Q&A
-
-### Q1: How to scale to 10M concurrent users with 100M bookings/day?
-
-**Problem**: Single system can't handle 100M bookings/day (1,157 bookings/sec).
-
-**Solution**: Extreme horizontal scaling:
-
-```
-Tier 1: Global Load Balancer
-  ├─ Region: US-East (40M bookings/day)
-  ├─ Region: EU (35M bookings/day)
-  ├─ Region: APAC (25M bookings/day)
-  └─ Route by user geolocation + consistent hashing
-  
-Tier 2: Per-Region Cluster (1,000 API servers)
-  ├─ Each handles 100K bookings/day
-  └─ Session affinity (same user → same server)
-  
-Tier 3: Distributed Locks (Redis Cluster, 100 nodes)
-  └─ Per-shard: "lock:flight_id:seat_id"
-  
-Tier 4: Database (Multi-shard, 1,000 shards)
-  └─ Shard key: flight_id % 1000
-  └─ Each shard: primary + 5 replicas
-  └─ Replication lag: 100ms
-  
-Tier 5: Cache (Memcached Cluster, 500 nodes)
-  └─ Popular routes, seat layouts, flight metadata
-  └─ Invalidation on booking status change
-  
-Tier 6: Message Queue (Kafka, 1,000 partitions)
-  └─ booking_events topic (100M+ messages/day)
-  └─ Email/SMS/Analytics workers consume in parallel
-```
-
-**Throughput**: 100M / 86400s = 1,157 bookings/sec
-- Per shard: 1,157 / 1000 = 1.2 bookings/sec (easily handled)
-
----
-
-### Q2: How to prevent overbooking in distributed system?
-
-**Problem**: Distributed replicas can't share seat status in real-time.
-
-**Solution**: Pessimistic locking + version control:
-
-```
-User A at replica-1 holds seat 1A
-    ↓
-Acquire lock: Redis.SET("lock:FL123:1A", "USER_A", NX, EX=15s)
-    ↓
-Check seat version: DB.GET(flight_id, seat_id, version=5)
-    ↓
-Update: DB.UPDATE(...) WHERE version=5 SET version=6, status=HOLD
-    ↓
-On success: Release lock, return booking
-
-User B at replica-2 tries same seat
-    ↓
-Acquire lock: Redis.SET("lock:FL123:1A", "USER_B", NX, EX=15s) → FAIL
-    ↓
-Wait & retry (exponential backoff)
-    ↓
-On retry: Seat version=6, status=HOLD → SeatNotAvailableError
-```
-
-**Guarantees**: 
-- Lock prevents concurrent holds
-- Version control detects stale reads
-- No seat can be booked twice
-
----
-
-### Q3: How to scale hold expiry checks?
-
-**Problem**: 100M holds/day with 5-min timeout = 1.2M expiries to check per second at peak.
-
-**Solution**: Decentralized expiry with delay queues:
-
-```
-When hold created: Put (booking_id, expire_time) into Redis
-    ↓
-Delay Queue (Kafka Topic with 5-min retention)
-    ├─ Partition 0: Expiries for 00:00-00:05
-    ├─ Partition 1: Expiries for 00:05-00:10
-    ├─ Partition 2: Expiries for 00:10-00:15
-    └─ ...
-    
-Expiry Worker (100 instances)
-    ├─ Consume from 1 partition each
-    ├─ Check: if now > expire_time → expire booking
-    ├─ Release seat
-    └─ Notify observers (async via Kafka)
-    
-Throughput: 1.2M / 100 = 12K expiries per worker per second (easily handled)
-```
-
-**Advantages**: No background job scanning all bookings. Distributed. Scalable.
-
----
-
-### Q4: How to cache seat availability?
-
-**Problem**: Every hold/release invalidates cache. Invalidation storms at scale.
-
-**Solution**: Cache with TTL + versioning:
-
-```
-Cache Key: "flight:{flight_id}:seats"
-Value: {
-    version: 42,
-    capacity: 180,
-    available_count: 45,
-    booked_count: 135,
-    held_count: 0,
-    timestamp: 1234567890
-}
-TTL: 5 seconds (refresh automatically)
-
-On hold/release:
-    1. Update DB
-    2. Increment version: version = 43
-    3. Broadcast version to all replicas
-    4. Replicas invalidate cache (or let TTL expire)
-    5. Next query fetches fresh data
-    
-Benefits: 5-sec staleness acceptable for "Available seats: 45"
-Cost: 5% stale data vs 99.9% cache hit ratio
-```
-
----
-
-### Q5: How to implement real-time seat availability updates?
-
-**Solution**: WebSocket + Redis Pub/Sub:
-
-```python
-# When hold succeeds
-def on_hold_success(flight_id, seat_id, user_id):
-    redis_pub.publish(
-        f"flight:{flight_id}:updates",
-        json.dumps({"event": "seat_held", "seat": seat_id})
-    )
-
-# Client-side (WebSocket)
-def on_message(msg):
-    if msg['event'] == 'seat_held':
-        mark_seat_unavailable(msg['seat'])  # UI update in 100ms
-```
-
-**Latency**: 
-- Broadcast: 10ms
-- Network: 50ms
-- UI update: 40ms
-- **Total**: ~100ms (near real-time)
-
----
-
-### Q6: How to handle high-load scenarios (holiday rush)?
-
-**Solution**: Load shedding + graceful degradation:
-
-```python
-def hold_seat(user_id, flight_id, seat_id):
-    # Check system load
-    current_throughput = get_current_tps()
-    
-    if current_throughput > threshold (e.g., 3000 TPS):
-        # Graceful degradation
-        if priority_queue.length() > 100000:
-            raise TooManyRequestsError("System busy. Try again in 30s.")
-        
-        # Enqueue request
-        priority_queue.enqueue({
-            user_id, flight_id, seat_id,
-            priority: user.loyalty_score  # VIP gets priority
-        })
-        return {"status": "queued", "position": priority_queue.length()}
-    
-    # Normal path
-    return do_hold_seat(user_id, flight_id, seat_id)
-```
-
-**Benefits**: Graceful degradation vs total failure. Queue-based fairness.
-
----
-
-### Q7: How to ensure exactly-once booking semantics?
-
-**Problem**: Retry storm during network failures can double-charge or double-book.
-
-**Solution**: Idempotency keys:
-
-```python
-# Client generates unique idempotency_key
-def hold_seat(user_id, flight_id, seat_id, idempotency_key):
-    
-    # Check idempotency cache
-    cached_result = redis.get(f"idempotency:{idempotency_key}")
-    if cached_result:
-        return json.loads(cached_result)  # Return cached result
-    
-    # Do hold
-    booking = do_hold_seat(user_id, flight_id, seat_id)
-    
-    # Cache result with 1-hour TTL
-    redis.setex(f"idempotency:{idempotency_key}", 3600, json.dumps(booking))
-    
+def hold_seat(self, passenger_id: str, flight_id: str, seat_id: str):
+    # Factory logic: create booking with all dependencies
+    seat.hold()
+    price = self.pricing_strategy.calculate_price(flight, seat)
+    booking = Booking(f"BK{len(self.bookings)+1}", passenger, flight, seat, price)
+    booking.hold_until = datetime.now() + timedelta(seconds=300)
+    self.bookings[booking.booking_id] = booking
     return booking
-
-# Client can retry 10x with same idempotency_key → always get same result
 ```
 
-**Guarantees**: Exactly-once semantics despite network failures.
+**Benefit**: ✅ Centralized creation, ✅ Consistent initialization  
+**Trade-off**: ⚠️ If grows, consider Builder pattern
 
 ---
 
-### Q8: How to recover from database failure?
+### Design Patterns Summary Table
 
-**Solution**: Multi-region failover:
-
-```
-Primary Region (US-East) - ACTIVE
-  └─ 1000 DB shards (primary + 5 replicas)
-  └─ Replication lag: 100ms
-
-Secondary Region (US-West) - STANDBY
-  └─ 1000 DB shards (read-only replicas from primary)
-  └─ Replication lag: 500ms
-
-Failover Mechanism:
-  - Health check every 10s
-  - If primary down for 30s → promote secondary
-  - Redirect all traffic to US-West
-  - RTO: 30s, RPO: 500ms (acceptable for bookings)
-```
+| Pattern | Problem Solved | Benefit |
+|---------|---|---|
+| **Singleton** | Need single global AirlineSystem | Consistent state across all clients |
+| **Strategy** | Varying pricing algorithms | Pluggable, easy to extend |
+| **Observer** | Events trigger notifications | Loose coupling, event-driven |
+| **State (Enum)** | Explicit booking lifecycle | Invalid transitions prevented |
+| **Factory** | Complex object creation | Centralized, consistent |
 
 ---
 
-### Q9: How to handle regulatory compliance (seat caps, refund policies)?
+## Step 06: Implementation — Code & Concurrency
 
-**Solution**: Policy engine + audit logs:
+> **Interview Tip**: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.
 
-```python
-class RefundPolicy:
-    FULL_REFUND = 1.0     # Full refund anytime
-    50_PERCENT = 0.5       # 50% refund if > 24h before flight
-    NO_REFUND = 0.0        # No refund if < 6h before flight
-
-def calculate_refund(booking):
-    policy = get_refund_policy(booking.flight.airline)
-    time_remaining = booking.flight.departure - datetime.now()
-    
-    if time_remaining > 24h:
-        refund_pct = policy.FULL_REFUND
-    elif time_remaining > 6h:
-        refund_pct = policy.FIFTY_PERCENT
-    else:
-        refund_pct = policy.NO_REFUND
-    
-    return booking.price * refund_pct
-
-# Audit log all refunds
-audit_log.record({
-    booking_id: "BK123",
-    original_price: 150.0,
-    refund_amount: 150.0,
-    refund_pct: 1.0,
-    policy: "FULL_REFUND",
-    timestamp: now()
-})
-```
-
----
-
-### Q10: How to implement revenue optimization (overbooking + surge pricing)?
-
-**Solution**: Revenue management system:
-
-```python
-class RevenueOptimizer:
-    def __init__(self, flight: Flight):
-        self.flight = flight
-        self.target_occupancy = 0.95  # 95% = some oversell buffer
-        self.base_price = flight.base_price
-    
-    def get_dynamic_price(self) -> float:
-        current_occupancy = 1.0 - (self.flight.available_count() / len(self.flight.seats))
-        
-        if current_occupancy < 0.5:
-            return self.base_price * 0.7  # Discount to fill seats
-        elif current_occupancy < 0.8:
-            return self.base_price * 1.0  # Normal price
-        elif current_occupancy < 0.95:
-            return self.base_price * 1.3  # Premium
-        else:
-            return self.base_price * 1.8  # Last-minute surge
-    
-    def should_accept_booking(self) -> bool:
-        booked = len([s for s in self.flight.seats.values() if s.status == SeatStatus.BOOKED])
-        capacity = len(self.flight.seats)
-        max_bookable = int(capacity * 1.05)  # 5% overbooking
-        
-        return booked < max_bookable
-```
-
-**Result**: Airlines maximize revenue while managing overbooking risk.
-
----
-
-## Demo Scenarios
-
-### Demo 1: Setup - Create Flights & Seats
-
-```python
-def demo_setup():
-    system = AirlineSystem.get_instance()
-    system.observers.clear()
-    system.flights.clear()
-    system.passengers.clear()
-    system.bookings.clear()
-    
-    system.add_observer(ConsoleObserver())
-    
-    # Create flight
-    flight = Flight(
-        "AA101", "NYC", "LAX",
-        datetime.now() + timedelta(hours=2),
-        "Boeing 737"
-    )
-    
-    # Add seats (10 Business, 20 Economy)
-    for i in range(1, 11):
-        flight.add_seat(Seat(f"{i}A", SeatClass.BUSINESS))
-    for i in range(1, 21):
-        flight.add_seat(Seat(f"{i}B", SeatClass.ECONOMY))
-    
-    system.add_flight(flight)
-    
-    # Register passengers
-    p1 = Passenger("P001", "John Doe", "john@example.com")
-    p2 = Passenger("P002", "Jane Smith", "jane@example.com")
-    system.register_passenger(p1)
-    system.register_passenger(p2)
-    
-    print(f"✅ Setup: Flight AA101 with 30 seats (10 Business, 20 Economy)")
-    print(f"✅ Registered 2 passengers")
-    
-    return system, flight, p1, p2
-```
-
-### Demo 2: Search & Browse
-
-```
-Browse Flights:
-  AA101: NYC → LAX at 2:00 PM (2 hours from now)
-  Aircraft: Boeing 737
-  Available seats: 30 (10 Business, 20 Economy)
-  
-Fixed Pricing:
-  Business: $200
-  Economy: $100
-```
-
-### Demo 3: Hold Seat
-
-```
-John holds seat 1A (Business) for 5 minutes
-  Booking: BK001
-  Status: HOLD
-  Price: $200
-  Hold until: 2:15 PM
-
-Jane holds seat 1B (Economy) for 5 minutes
-  Booking: BK002
-  Status: HOLD
-  Price: $100
-  Hold until: 2:15 PM
-```
-
-### Demo 4: Dynamic Pricing
-
-```
-Current occupancy: 2/30 (6.7%)
-Price: Economy $100, Business $200 (low demand discount applied)
-
-After 20 more bookings (73% occupancy):
-Price: Economy $130 (30% surge), Business $260 (30% surge)
-
-After 28 bookings (93% occupancy, near capacity):
-Price: Economy $150 (50% surge), Business $300 (50% surge)
-Last-minute premium pricing kicks in!
-```
-
-### Demo 5: Full Booking Flow
-
-```
-John (BK001):
-  [00:00] HOLD - Seat 1A for 5 minutes ($200)
-  [01:30] CONFIRM - Payment processed
-  [01:31] CONFIRMED - Seat booked permanently
-  📧 Email: Booking confirmation to john@example.com
-
-Jane (BK002):
-  [00:10] HOLD - Seat 1B for 5 minutes ($100)
-  [04:00] EXPIRED - Hold expired, seat released back to AVAILABLE
-  Booking status: EXPIRED
-  📧 Email: Hold expired notification to jane@example.com
-```
-
----
-
-## Complete Implementation
+### Complete Thread-Safe Implementation
 
 ```python
 from enum import Enum
@@ -996,8 +862,8 @@ class DemandBasedPricing(PricingStrategy):
         base = 200.0 if seat.seat_class == SeatClass.BUSINESS else 100.0
         available = flight.available_seats_count()
         total = len(flight.seats)
-        occupancy_rate = 1.0 - (available / total)
-        multiplier = 1.0 + (occupancy_rate * 0.5)  # up to 1.5x
+        occupancy_rate = 1.0 - (available / total) if total > 0 else 0
+        multiplier = 1.0 + (occupancy_rate * 0.5)
         return base * multiplier
 
 # ============ OBSERVERS ============
@@ -1010,11 +876,8 @@ class Observer(ABC):
 class ConsoleObserver(Observer):
     def update(self, event: str, booking: Booking):
         timestamp = datetime.now().strftime("%H:%M:%S")
-        print(f"[{timestamp}] {event.upper():12} | "
-              f"Passenger: {booking.passenger.name:15} | "
-              f"Flight: {booking.flight.flight_id:8} | "
-              f"Seat: {booking.seat.seat_id:4} | "
-              f"Price: ${booking.price:.2f}")
+        print(f"[{timestamp}] {event.upper():12} | Passenger: {booking.passenger.name:15} | "
+              f"Flight: {booking.flight.flight_id:8} | Seat: {booking.seat.seat_id:4} | Price: ${booking.price:.2f}")
 
 class EmailNotifier(Observer):
     def update(self, event: str, booking: Booking):
@@ -1043,6 +906,7 @@ class AirlineSystem:
             self.bookings: Dict[str, Booking] = {}
             self.observers: List[Observer] = []
             self.pricing_strategy: PricingStrategy = FixedPricing()
+            self._data_lock = threading.Lock()
             self.initialized = True
     
     @staticmethod
@@ -1050,82 +914,109 @@ class AirlineSystem:
         return AirlineSystem()
     
     def set_pricing_strategy(self, strategy: PricingStrategy):
-        self.pricing_strategy = strategy
+        with self._data_lock:
+            self.pricing_strategy = strategy
     
     def add_observer(self, observer: Observer):
-        self.observers.append(observer)
+        with self._data_lock:
+            self.observers.append(observer)
     
     def notify_observers(self, event: str, booking: Booking):
-        for obs in self.observers:
+        with self._data_lock:
+            observers_copy = list(self.observers)
+        for obs in observers_copy:
             obs.update(event, booking)
     
     def add_flight(self, flight: Flight):
-        self.flights[flight.flight_id] = flight
+        with self._data_lock:
+            self.flights[flight.flight_id] = flight
     
     def register_passenger(self, passenger: Passenger):
-        self.passengers[passenger.passenger_id] = passenger
+        with self._data_lock:
+            self.passengers[passenger.passenger_id] = passenger
     
     def hold_seat(self, passenger_id: str, flight_id: str, seat_id: str, 
                   hold_seconds: int = 300) -> Optional[Booking]:
-        if flight_id not in self.flights:
-            print(f"❌ Flight {flight_id} not found")
-            return None
+        with self._data_lock:
+            if flight_id not in self.flights:
+                print(f"❌ Flight {flight_id} not found")
+                return None
+            
+            flight = self.flights[flight_id]
+            seat = flight.get_seat(seat_id)
+            
+            if not seat or not seat.is_available():
+                print(f"❌ Seat {seat_id} not available")
+                return None
+            
+            passenger = self.passengers.get(passenger_id)
+            if not passenger:
+                print(f"❌ Passenger {passenger_id} not found")
+                return None
+            
+            seat.hold()
+            price = self.pricing_strategy.calculate_price(flight, seat)
+            booking = Booking(f"BK{len(self.bookings)+1}", passenger, flight, seat, price)
+            booking.hold_until = datetime.now() + timedelta(seconds=hold_seconds)
+            self.bookings[booking.booking_id] = booking
+            booking_to_notify = booking
         
-        flight = self.flights[flight_id]
-        seat = flight.get_seat(seat_id)
-        
-        if not seat or not seat.is_available():
-            print(f"❌ Seat {seat_id} not available")
-            return None
-        
-        passenger = self.passengers.get(passenger_id)
-        if not passenger:
-            print(f"❌ Passenger {passenger_id} not found")
-            return None
-        
-        seat.hold()
-        price = self.pricing_strategy.calculate_price(flight, seat)
-        booking = Booking(f"BK{len(self.bookings)+1}", passenger, flight, seat, price)
-        booking.hold_until = datetime.now() + timedelta(seconds=hold_seconds)
-        self.bookings[booking.booking_id] = booking
-        self.notify_observers("held", booking)
+        self.notify_observers("held", booking_to_notify)
         return booking
     
     def confirm_booking(self, booking_id: str) -> bool:
-        booking = self.bookings.get(booking_id)
-        if not booking:
-            print(f"❌ Booking {booking_id} not found")
-            return False
+        with self._data_lock:
+            booking = self.bookings.get(booking_id)
+            if not booking:
+                print(f"❌ Booking {booking_id} not found")
+                return False
+            
+            if booking.status != BookingStatus.HOLD:
+                print(f"❌ Booking not in HOLD status")
+                return False
+            
+            if datetime.now() > booking.hold_until:
+                booking.expire()
+                booking_to_notify = booking
+                expired = True
+            else:
+                booking.confirm()
+                booking_to_notify = booking
+                expired = False
         
-        if booking.status != BookingStatus.HOLD:
-            print(f"❌ Booking not in HOLD status")
-            return False
-        
-        if datetime.now() > booking.hold_until:
-            booking.expire()
-            self.notify_observers("expired", booking)
+        if expired:
+            self.notify_observers("expired", booking_to_notify)
             print(f"❌ Hold expired for booking {booking_id}")
             return False
         
-        booking.confirm()
-        self.notify_observers("confirmed", booking)
+        self.notify_observers("confirmed", booking_to_notify)
         return True
     
     def cancel_booking(self, booking_id: str) -> bool:
-        booking = self.bookings.get(booking_id)
-        if not booking:
-            return False
+        with self._data_lock:
+            booking = self.bookings.get(booking_id)
+            if not booking:
+                return False
+            
+            booking.cancel()
+            booking_to_notify = booking
         
-        booking.cancel()
-        self.notify_observers("cancelled", booking)
+        self.notify_observers("cancelled", booking_to_notify)
         return True
     
     def check_and_expire_holds(self):
         now = datetime.now()
-        for booking in self.bookings.values():
-            if booking.status == BookingStatus.HOLD and booking.hold_until and now > booking.hold_until:
-                booking.expire()
-                self.notify_observers("expired", booking)
+        expired_bookings = []
+        
+        with self._data_lock:
+            for booking in self.bookings.values():
+                if (booking.status == BookingStatus.HOLD and 
+                    booking.hold_until and now > booking.hold_until):
+                    booking.expire()
+                    expired_bookings.append(booking)
+        
+        for booking in expired_bookings:
+            self.notify_observers("expired", booking)
 
 # ============ DEMO ============
 
@@ -1135,15 +1026,15 @@ if __name__ == "__main__":
     print("="*70)
     
     system = AirlineSystem.get_instance()
-    system.observers.clear()
     system.flights.clear()
     system.passengers.clear()
     system.bookings.clear()
+    system.observers.clear()
     
     system.add_observer(ConsoleObserver())
     system.add_observer(EmailNotifier())
     
-    # Create flight with seats
+    # Create flight
     flight = Flight("AA101", "NYC", "LAX", datetime.now() + timedelta(hours=2), "Boeing 737")
     for i in range(1, 6):
         flight.add_seat(Seat(f"{i}A", SeatClass.BUSINESS))
@@ -1176,43 +1067,146 @@ if __name__ == "__main__":
     print(f"\n✅ Demo complete! Available seats: {flight.available_seats_count()}")
 ```
 
+### Thread-Safety Analysis
+
+| Operation | Lock Strategy | Guarantees |
+|-----------|---|---|
+| **hold_seat** | Mutex on data | Only 1 user can hold seat at a time |
+| **confirm_booking** | Mutex on data | Atomic: check HOLD, check expiry, transition |
+| **cancel_booking** | Mutex on data | No double-cancel |
+| **check_and_expire_holds** | Mutex on data | Safe scan, expiry without race condition |
+
+**Concurrency Principles**:
+1. ✅ Locks guard critical sections (check + modify)
+2. ✅ Minimize lock duration (notify outside lock)
+3. ✅ Double-checked locking for Singleton
+4. ✅ No nested locks (prevent deadlock)
+
 ---
 
-## Design Patterns Summary
+## Demo Scenarios
 
-| Pattern | Purpose | Benefit |
-|---------|---------|---------|
-| **Singleton** | AirlineSystem controller | Single state, thread-safe, global access |
-| **Strategy (Pricing)** | Fixed vs Demand-based | Pluggable algorithms, easy to add Surge pricing |
-| **Observer** | Email/SMS/Console notifications | Loose coupling, event-driven |
-| **State** | BookingStatus, SeatStatus | Explicit lifecycle, invalid states prevented |
-| **Factory** | Seat/Flight/Booking creation | Centralized creation logic |
+### Scenario 1: Hold & Confirm
+
+```
+[12:30:45] HELD        | Passenger: John Doe         | Flight: AA101    | Seat: 1A   | Price: $200.00
+📧 Email: john@example.com - Booking confirmed!
+[12:30:46] CONFIRMED   | Passenger: John Doe         | Flight: AA101    | Seat: 1A   | Price: $200.00
+```
+
+### Scenario 2: Hold Expiry
+
+```
+[12:31:00] HELD        | Passenger: Jane Smith       | Flight: AA101    | Seat: 1B   | Price: $100.00
+📧 Email: jane@example.com - Hold expired!
+[12:31:05] EXPIRED     | Passenger: Jane Smith       | Flight: AA101    | Seat: 1B   | Price: $100.00
+```
+
+### Scenario 3: Dynamic Pricing
+
+```
+Current occupancy: 1/10 (10%)
+Price: Economy $100, Business $200 (base)
+
+After 7 bookings (80% occupancy):
+Price: Economy $140 (40% surge), Business $280 (40% surge)
+```
 
 ---
 
-## Interview Tips
+## Interview Q&A
 
-✅ **Start with clarifications**: Single airline? Multi-seat bookings? Cancellations allowed?  
-✅ **Sketch first**: Draw flight layout, entity relationships  
-✅ **Explain patterns**: Singleton ensures consistency, Strategy enables pricing flexibility  
-✅ **Handle edge cases**: Hold expiry, concurrent holds, payment failure  
-✅ **Demo incrementally**: Search → Hold → Confirm → Notify  
-✅ **Discuss trade-offs**: In-memory vs DB, pessimistic vs optimistic locking  
-✅ **Mention monitoring**: Alert thresholds, metrics, health checks  
+### Basic Questions
+
+**Q1: How do you prevent overbooking of a seat?**
+
+A: Atomic status transitions with lock-based concurrency control:
+
+```python
+with self._data_lock:  # Atomic critical section
+    if seat.status != SeatStatus.AVAILABLE:
+        raise SeatNotAvailableError()
+    
+    seat.status = SeatStatus.HOLD  # Atomic transition
+```
+
+**Q2: What's the difference between HOLD and CONFIRMED?**
+
+A: HOLD = temporary 5-min window. CONFIRMED = permanent after payment. Timeline: Browse → Hold → Confirm (or timeout → Expire).
+
+**Q3: How do you handle hold expiry?**
+
+A: Lazy check on confirm + eager background job scanning all HOLD bookings every minute.
+
+**Q4: Why use Strategy pattern for pricing?**
+
+A: Allows swapping pricing algorithms (FixedPricing, DemandBasedPricing) without modifying booking logic.
+
+**Q5: How would you scale to 1M concurrent users and 1M flights/day?**
+
+A: Multi-tier: API Gateway → 1000 API servers → Redis locks → Sharded DB (1000 shards) → Kafka for events.
+
+---
+
+### Intermediate Questions
+
+**Q6: How to handle race condition: 2 users holding same seat simultaneously?**
+
+A: Lock ensures only 1 thread can modify seat status at a time. Lock TTL prevents deadlocks.
+
+**Q7: How to handle payment failure gracefully?**
+
+A: Retry 3x with exponential backoff. On final failure, auto-expire booking and release seat.
+
+**Q8: How to implement seat upgrades (Economy → Business)?**
+
+A: Calculate price difference, charge user, release old seat, book new seat.
+
+**Q9: What metrics would you track?**
+
+A: Hold success rate, confirmation rate, hold expiry rate, overbooking incidents, API latency, cache hit ratio.
+
+**Q10: How to handle regulatory compliance (refund policies)?**
+
+A: Time-based: Full refund if >24h, 50% if >6h, None if <6h. Audit log all refunds.
+
+---
+
+## Scaling Q&A
+
+### Q1: How to prevent overbooking in distributed system?
+
+**Solution**: Pessimistic locking + version control with Redis:
+
+```
+Acquire lock: Redis.SET("lock:FL123:1A", "USER_A", NX, EX=15s)
+Check seat version: DB.GET(seat, version=5)
+Update: DB.UPDATE(...) WHERE version=5 SET version=6, status=HOLD
+Release lock
+```
+
+### Q2: How to cache seat availability without invalidation storms?
+
+**Solution**: Cache with 5-second TTL + versioning. Broadcast version increments to invalidate.
+
+### Q3: How to implement real-time seat updates?
+
+**Solution**: WebSocket + Redis Pub/Sub. Latency: ~100ms (broadcast + network + UI update).
 
 ---
 
 ## Success Checklist
 
-- [ ] Explain 5 design patterns in < 1 minute each
-- [ ] Draw UML class diagram from memory
-- [ ] Walk through booking lifecycle: hold → confirm → notify
+- [ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation
+- [ ] Draw UML class diagram with all relationships
+- [ ] Discuss hold/confirm lifecycle and HOLD → CONFIRMED transitions
+- [ ] Explain how to prevent overbooking with atomic locks
 - [ ] Discuss hold expiry (5-min timeout, auto-release)
-- [ ] Explain how to prevent overbooking
 - [ ] Run complete implementation without errors
 - [ ] Answer 5+ scaling Q&A questions
-- [ ] Discuss trade-offs (locking, pricing, notifications)
+- [ ] Mention thread safety in Singleton, hold_seat, confirm_booking
+- [ ] Discuss trade-offs (in-memory vs DB, pessimistic vs optimistic locking)
 
 ---
 
-**Ready for interview? Let's book some flights! 🛫**
+**Ready for interview? Book some flights! 🛫**
