@@ -179,6 +179,7 @@ class SiteGenerator:
             margin-bottom: 20px;
             padding-bottom: 10px;
             border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+            color: white;
         }}
         
         nav ul {{
@@ -409,7 +410,7 @@ class SiteGenerator:
 <body>
     <div class="wrapper">
         <nav>
-            <h2>🎯 Navigation</h2>
+            <h2>🎯 LLD</h2>
             {nav_html}
         </nav>
         <main>
