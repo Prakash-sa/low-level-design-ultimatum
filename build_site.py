@@ -248,6 +248,10 @@ class SiteGenerator:
             padding-left: 14px;
         }}
         
+        .nav-file > a {{
+            padding-left: 32px;
+        }}
+        
         .nav-folder > a {{
             font-weight: 600;
         }}
@@ -427,12 +431,57 @@ class SiteGenerator:
 // Simple nav collapse/expand
 document.addEventListener('DOMContentLoaded', () => {{
     const toggles = document.querySelectorAll('.nav-toggle');
+    const collapsedKey = 'lldu_nav_collapsed';
+    
+    const loadState = () => {{
+        try {{
+            return JSON.parse(localStorage.getItem(collapsedKey)) || [];
+        }} catch (e) {{
+            return [];
+        }}
+    }};
+    
+    const saveState = (paths) => {{
+        try {{
+            localStorage.setItem(collapsedKey, JSON.stringify(paths));
+        }} catch (e) {{}}
+    }};
+    
+    const collapsedPaths = new Set(loadState());
+    
+    const applyState = (li) => {{
+        const path = li.getAttribute('data-path');
+        const isCollapsed = collapsedPaths.has(path);
+        li.setAttribute('data-collapsed', isCollapsed ? 'true' : 'false');
+        const btn = li.querySelector('.nav-toggle');
+        if (btn) {{
+            btn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+        }}
+    }};
+    
+    document.querySelectorAll('.nav-folder').forEach(applyState);
+    
     toggles.forEach(btn => {{
         btn.addEventListener('click', (event) => {{
             event.preventDefault();
             const li = btn.closest('.nav-folder');
             const collapsed = li.getAttribute('data-collapsed') === 'true';
             li.setAttribute('data-collapsed', collapsed ? 'false' : 'true');
+            btn.setAttribute('aria-expanded', collapsed ? 'true' : 'false');
+            const path = li.getAttribute('data-path');
+            if (collapsed) {{
+                collapsedPaths.delete(path);
+            }} else {{
+                collapsedPaths.add(path);
+            }}
+            saveState([...collapsedPaths]);
+        }});
+        // Keyboard access
+        btn.addEventListener('keydown', (event) => {{
+            if (event.key === 'Enter' || event.key === ' ') {{
+                event.preventDefault();
+                btn.click();
+            }}
         }});
     }});
 }});
@@ -447,9 +496,9 @@ document.addEventListener('DOMContentLoaded', () => {{
                 item_class = "nav-folder" if item["type"] == "folder" else "nav-file"
                 if item["type"] == "folder":
                     html += (
-                        f'<li class="{item_class}" data-collapsed="false">'
+                        f'<li class="{item_class}" data-collapsed="false" data-path="{item["url"]}">'
                         f'<div class="nav-row">'
-                        f'<button class="nav-toggle" aria-label="Toggle {item["name"]}"></button>'
+                        f'<button class="nav-toggle" aria-label="Toggle {item["name"]}" aria-expanded="true"></button>'
                         f'<a href="{item["url"]}">{item["name"]}</a>'
                         f'</div>'
                     )
