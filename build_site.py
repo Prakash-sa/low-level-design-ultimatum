@@ -431,27 +431,28 @@ class SiteGenerator:
 // Simple nav collapse/expand
 document.addEventListener('DOMContentLoaded', () => {{
     const toggles = document.querySelectorAll('.nav-toggle');
-    const collapsedKey = 'lldu_nav_collapsed';
+    const expandedKey = 'lldu_nav_expanded';
     
-    const loadState = () => {{
+    const loadExpanded = () => {{
         try {{
-            return JSON.parse(localStorage.getItem(collapsedKey)) || [];
+            return JSON.parse(localStorage.getItem(expandedKey)) || [];
         }} catch (e) {{
             return [];
         }}
     }};
     
-    const saveState = (paths) => {{
+    const saveExpanded = (paths) => {{
         try {{
-            localStorage.setItem(collapsedKey, JSON.stringify(paths));
+            localStorage.setItem(expandedKey, JSON.stringify(paths));
         }} catch (e) {{}}
     }};
     
-    const collapsedPaths = new Set(loadState());
+    const expandedPaths = new Set(loadExpanded());
     
     const applyState = (li) => {{
         const path = li.getAttribute('data-path');
-        const isCollapsed = collapsedPaths.has(path);
+        const isExpanded = expandedPaths.has(path);
+        const isCollapsed = !isExpanded;
         li.setAttribute('data-collapsed', isCollapsed ? 'true' : 'false');
         const btn = li.querySelector('.nav-toggle');
         if (btn) {{
@@ -465,16 +466,17 @@ document.addEventListener('DOMContentLoaded', () => {{
         btn.addEventListener('click', (event) => {{
             event.preventDefault();
             const li = btn.closest('.nav-folder');
-            const collapsed = li.getAttribute('data-collapsed') === 'true';
-            li.setAttribute('data-collapsed', collapsed ? 'false' : 'true');
-            btn.setAttribute('aria-expanded', collapsed ? 'true' : 'false');
             const path = li.getAttribute('data-path');
-            if (collapsed) {{
-                collapsedPaths.delete(path);
+            const collapsed = li.getAttribute('data-collapsed') === 'true';
+            const newCollapsed = !collapsed;
+            li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+            btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+            if (newCollapsed) {{
+                expandedPaths.delete(path);
             }} else {{
-                collapsedPaths.add(path);
+                expandedPaths.add(path);
             }}
-            saveState([...collapsedPaths]);
+            saveExpanded([...expandedPaths]);
         }});
         // Keyboard access
         btn.addEventListener('keydown', (event) => {{
@@ -496,9 +498,9 @@ document.addEventListener('DOMContentLoaded', () => {{
                 item_class = "nav-folder" if item["type"] == "folder" else "nav-file"
                 if item["type"] == "folder":
                     html += (
-                        f'<li class="{item_class}" data-collapsed="false" data-path="{item["url"]}">'
+                        f'<li class="{item_class}" data-collapsed="true" data-path="{item["url"]}">'
                         f'<div class="nav-row">'
-                        f'<button class="nav-toggle" aria-label="Toggle {item["name"]}" aria-expanded="true"></button>'
+                        f'<button class="nav-toggle" aria-label="Toggle {item["name"]}" aria-expanded="false"></button>'
                         f'<a href="{item["url"]}">{item["name"]}</a>'
                         f'</div>'
                     )
