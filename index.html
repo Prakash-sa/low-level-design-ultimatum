@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Low-Level Design Ultimatum</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+        
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px 20px;
+            text-align: center;
+        }
+        
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .content {
+            padding: 40px;
+        }
+        
+        .section {
+            margin-bottom: 40px;
+        }
+        
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #667eea;
+        }
+        
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        
+        .card {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 20px;
+            transition: all 0.3s ease;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
+            border-color: #667eea;
+        }
+        
+        .card h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        
+        .card p {
+            color: #666;
+            font-size: 0.95em;
+            margin-bottom: 15px;
+        }
+        
+        .card a {
+            display: inline-block;
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+            padding: 5px 0;
+            border-bottom: 2px solid #667eea;
+            transition: all 0.3s ease;
+        }
+        
+        .card a:hover {
+            color: #764ba2;
+            border-color: #764ba2;
+        }
+        
+        .intro-text {
+            background: #f0f4ff;
+            padding: 20px;
+            border-left: 4px solid #667eea;
+            margin-bottom: 30px;
+            border-radius: 4px;
+        }
+        
+        .intro-text h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        
+        footer {
+            background: #f8f9fa;
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            border-top: 1px solid #e9ecef;
+        }
+        
+        .readme-link {
+            display: inline-block;
+            margin-top: 10px;
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+        }
+        
+        .readme-link:hover {
+            background: #764ba2;
+        }
+        
+        @media (max-width: 768px) {
+            header h1 {
+                font-size: 1.8em;
+            }
+            
+            .card-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .content {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎯 Low-Level Design Ultimatum</h1>
+            <p>Master system design patterns and real-world architecture</p>
+        </header>
+        
+        <div class="content">
+            <div class="intro-text">
+                <h3>Welcome!</h3>
+                <p>This comprehensive resource covers low-level design patterns, real-world system implementations, and interview preparation guides for building scalable systems.</p>
+                <a href="README.md" class="readme-link">📖 Read Full Guide</a>
+            </div>
+            
+            <!-- Introduction Section -->
+            <div class="section">
+                <h2>📚 Introduction</h2>
+                <div class="card-grid">
+                    <div class="card">
+                        <h3>OOP Principles</h3>
+                        <p>Learn the fundamental object-oriented programming principles that form the foundation of good system design.</p>
+                        <a href="Introduction/OOP%20Principles.md">View Content →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Class Diagram</h3>
+                        <p>Understand how to read and create class diagrams to visualize your system architecture.</p>
+                        <a href="Introduction/Class%20Diagram.md">View Content →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Interface vs Abstract Class</h3>
+                        <p>Explore the differences and use cases between interfaces and abstract classes.</p>
+                        <a href="Introduction/Interface%20vs%20Abstract%20Class.md">View Content →</a>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Design Patterns Section -->
+            <div class="section">
+                <h2>🏗️ Design Patterns</h2>
+                <div class="card-grid">
+                    <div class="card">
+                        <h3>Creational Patterns</h3>
+                        <p>Patterns for creating objects: Factory, Builder, Singleton, Abstract Factory.</p>
+                        <a href="Design%20Pattern/Creational/">View Patterns →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Structural Patterns</h3>
+                        <p>Patterns for object composition: Adapter, Composite, Decorator, Facade.</p>
+                        <a href="Design%20Pattern/Structural/">View Patterns →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Behavioral Patterns</h3>
+                        <p>Patterns for object interaction: Observer, Strategy, Command, Iterator.</p>
+                        <a href="Design%20Pattern/Behavioral/">View Patterns →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Circuit Breaker</h3>
+                        <p>Learn the Circuit Breaker pattern for building resilient systems.</p>
+                        <a href="Design%20Pattern/Circuit%20Breaker/">View Pattern →</a>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Real-World Examples Section -->
+            <div class="section">
+                <h2>💼 Real-World Examples</h2>
+                <p style="margin-bottom: 20px; color: #666;">Complete implementations with 75-minute guides and interview-ready code:</p>
+                <div class="card-grid">
+                    <div class="card">
+                        <h3>Parking Lot</h3>
+                        <p>Design a parking lot management system with multiple levels and spot management.</p>
+                        <a href="Examples/Parking%20Lot/">View Example →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Airline Management System</h3>
+                        <p>Build a complete airline booking and management platform.</p>
+                        <a href="Examples/Airline%20Management%20System/">View Example →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Amazon Locker System</h3>
+                        <p>Design a system for Amazon pickup lockers with inventory management.</p>
+                        <a href="Examples/Amazon%20Locker%20System/">View Example →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Elevator System</h3>
+                        <p>Implement an intelligent elevator management system for multi-floor buildings.</p>
+                        <a href="Examples/Elevator%20System/">View Example →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Hotel Management System</h3>
+                        <p>Create a comprehensive hotel booking and reservation system.</p>
+                        <a href="Examples/Hotel%20Management%20System/">View Example →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Car Rental System</h3>
+                        <p>Design a car rental platform with inventory and reservation features.</p>
+                        <a href="Examples/Car%20Rental%20System/">View Example →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Ride Sharing (Circinfo)</h3>
+                        <p>Build a ride-sharing application like Uber with matching algorithms.</p>
+                        <a href="Examples/Circinfo%20%28Ride%20Sharing%29/">View Example →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Movie Ticket Booking</h3>
+                        <p>Implement a movie ticket booking system with seat management.</p>
+                        <a href="Examples/Movie%20Ticket%20Booking%20System/">View Example →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Library Management System</h3>
+                        <p>Design a library system with book management and lending features.</p>
+                        <a href="Examples/Library%20Management%20System/">View Example →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Stack Overflow</h3>
+                        <p>Build a Q&A platform similar to Stack Overflow.</p>
+                        <a href="Examples/Stack%20Overflow/">View Example →</a>
+                    </div>
+                    <div class="card">
+                        <h3>LinkedIn</h3>
+                        <p>Design a professional networking platform with connections and feed.</p>
+                        <a href="Examples/LinkedIn/">View Example →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Facebook</h3>
+                        <p>Implement a social media platform with posts, comments, and likes.</p>
+                        <a href="Examples/Facebook/">View Example →</a>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Company Tagged Section -->
+            <div class="section">
+                <h2>🏢 Company Tagged</h2>
+                <div class="card-grid">
+                    <div class="card">
+                        <h3>Amazon Interview Questions</h3>
+                        <p>Collection of real Amazon low-level design interview questions.</p>
+                        <a href="Company%20Tagged/Amazon.md">View Questions →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Uber Interview Questions</h3>
+                        <p>Collection of real Uber low-level design interview questions.</p>
+                        <a href="Company%20Tagged/Uber.md">View Questions →</a>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Additional Resources Section -->
+            <div class="section">
+                <h2>🎓 Additional Resources</h2>
+                <div class="card-grid">
+                    <div class="card">
+                        <h3>ATM System</h3>
+                        <p>Design an ATM machine with transaction management.</p>
+                        <a href="Examples/ATM/">View Example →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Cache System</h3>
+                        <p>Implement a distributed cache with eviction policies.</p>
+                        <a href="Examples/Cache/">View Example →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Chess Game</h3>
+                        <p>Build a chess game with move validation and game state.</p>
+                        <a href="Examples/Chess%20Game/">View Example →</a>
+                    </div>
+                    <div class="card">
+                        <h3>File System</h3>
+                        <p>Design an in-memory file system with directory structure.</p>
+                        <a href="Examples/File%20System/">View Example →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Hit Counter</h3>
+                        <p>Implement an efficient hit counter for tracking API requests.</p>
+                        <a href="Examples/Design%20Hit%20Counter/">View Example →</a>
+                    </div>
+                    <div class="card">
+                        <h3>Text Editor</h3>
+                        <p>Build a text editor with Undo & Redo functionality.</p>
+                        <a href="Examples/Text%20Editor%20with%20Undo%20%26%20Redo/">View Example →</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <footer>
+            <p>Low-Level Design Ultimatum &copy; 2024 | 
+            <a href="https://github.com/Prakash-sa/low-level-design-ultimatum" style="color: #667eea; text-decoration: none;">View on GitHub</a>
+            </p>
+            <p style="font-size: 0.9em; margin-top: 10px;">Last updated: <span id="lastUpdate"></span></p>
+        </footer>
+    </div>
+    
+    <script>
+        // Display last update time
+        const lastUpdate = new Date().toLocaleString();
+        document.getElementById('lastUpdate').textContent = lastUpdate;
+    </script>
+</body>
+</html>
