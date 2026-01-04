@@ -22,6 +22,18 @@ class SiteGenerator:
         self.pages = []
         # Base path where the site will be hosted (GitHub Pages project URL)
         self.base_url = "/low-level-design-ultimatum/"
+        self.allowed_sections = [
+            "Introduction",
+            "Design Pattern",
+            "Examples",
+            "Company Tagged",
+        ]
+        self.section_labels = {
+            "Introduction": "📚 Introduction",
+            "Design Pattern": "🏗️ Design Pattern",
+            "Examples": "💼 Examples",
+            "Company Tagged": "🏢 Company Tagged",
+        }
 
     def is_hidden(self, path):
         """Check if any part of the path is hidden (starts with a dot)"""
@@ -63,6 +75,20 @@ class SiteGenerator:
                 })
         
         return items
+    
+    def build_section_tree(self, name):
+        """Build nav tree for an allowed top-level section"""
+        section_path = self.root_dir / name
+        if not section_path.exists():
+            return None
+        
+        encoded_name = quote(name)
+        return {
+            "name": self.section_labels.get(name, name),
+            "url": f"{self.base_url}{encoded_name}/",
+            "type": "folder",
+            "items": self.build_tree(section_path)
+        }
         
     def ensure_output_dir(self):
         """Create output directory structure"""
@@ -102,13 +128,11 @@ class SiteGenerator:
     
     def get_nav_items(self, current_path=None):
         """Generate navigation items from folder structure (recursive tree)"""
-        nav = [{
-            "name": "🏠 Home",
-            "url": self.base_url,
-            "type": "file",
-            "items": []
-        }]
-        nav.extend(self.build_tree(self.root_dir))
+        nav = []
+        for name in self.allowed_sections:
+            section = self.build_section_tree(name)
+            if section:
+                nav.append(section)
         return nav
     
     def generate_html_wrapper(self, title, content, breadcrumbs, nav_items):
