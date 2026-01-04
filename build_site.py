@@ -1,0 +1,563 @@
+#!/usr/bin/env python3
+"""
+GitHub Pages Static Site Generator
+Converts markdown files to HTML with navigation
+"""
+
+import os
+import sys
+from pathlib import Path
+import markdown
+import json
+from datetime import datetime
+
+class SiteGenerator:
+    def __init__(self, root_dir, output_dir="_site"):
+        self.root_dir = Path(root_dir)
+        self.output_dir = Path(output_dir)
+        self.site_structure = {}
+        self.pages = []
+        
+    def ensure_output_dir(self):
+        """Create output directory structure"""
+        self.output_dir.mkdir(exist_ok=True)
+        
+    def get_breadcrumb(self, file_path):
+        """Generate breadcrumb navigation"""
+        rel_path = file_path.relative_to(self.root_dir)
+        parts = rel_path.parts[:-1]  # Exclude filename
+        
+        breadcrumbs = [{"name": "Home", "url": "/low-level-design-ultimatum/"}]
+        current_url = "/low-level-design-ultimatum/"
+        
+        for part in parts:
+            current_url += f"{part}/"
+            breadcrumbs.append({"name": part, "url": current_url})
+        
+        return breadcrumbs
+    
+    def read_markdown(self, file_path):
+        """Read markdown file"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except Exception as e:
+            print(f"Error reading {file_path}: {e}")
+            return ""
+    
+    def convert_to_html(self, markdown_content):
+        """Convert markdown to HTML"""
+        html_content = markdown.markdown(
+            markdown_content,
+            extensions=['extra', 'codehilite', 'toc']
+        )
+        return html_content
+    
+    def get_nav_items(self, current_path=None):
+        """Generate navigation items from folder structure"""
+        nav_items = []
+        
+        # Add Introduction
+        nav_items.append({
+            "name": "📚 Introduction",
+            "url": "/low-level-design-ultimatum/Introduction/",
+            "items": self.get_folder_items("Introduction")
+        })
+        
+        # Add Design Patterns
+        nav_items.append({
+            "name": "🏗️ Design Patterns",
+            "url": "/low-level-design-ultimatum/Design%20Pattern/",
+            "items": self.get_folder_items("Design Pattern")
+        })
+        
+        # Add Examples
+        nav_items.append({
+            "name": "💼 Examples",
+            "url": "/low-level-design-ultimatum/Examples/",
+            "items": self.get_folder_items("Examples")
+        })
+        
+        # Add Company Tagged
+        nav_items.append({
+            "name": "🏢 Company Tagged",
+            "url": "/low-level-design-ultimatum/Company%20Tagged/",
+            "items": self.get_folder_items("Company Tagged")
+        })
+        
+        return nav_items
+    
+    def get_folder_items(self, folder_name):
+        """Get items from a folder"""
+        items = []
+        folder_path = self.root_dir / folder_name
+        
+        if not folder_path.exists():
+            return items
+        
+        try:
+            for item in sorted(folder_path.iterdir()):
+                if item.name.startswith('.') or item.name == '__pycache__':
+                    continue
+                
+                if item.is_dir():
+                    url = f"/low-level-design-ultimatum/{folder_name}/{item.name}/"
+                    items.append({
+                        "name": item.name,
+                        "url": url,
+                        "type": "folder"
+                    })
+                elif item.suffix == '.md':
+                    url = f"/low-level-design-ultimatum/{folder_name}/{item.name.replace('.md', '.html')}"
+                    items.append({
+                        "name": item.stem,
+                        "url": url,
+                        "type": "file"
+                    })
+        except Exception as e:
+            print(f"Error reading folder {folder_name}: {e}")
+        
+        return items
+    
+    def generate_html_wrapper(self, title, content, breadcrumbs, nav_items):
+        """Generate complete HTML page"""
+        nav_html = self.generate_nav_html(nav_items)
+        breadcrumb_html = self.generate_breadcrumb_html(breadcrumbs)
+        
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title} - Low-Level Design Ultimatum</title>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+        }}
+        
+        .wrapper {{
+            display: flex;
+            min-height: 100vh;
+        }}
+        
+        nav {{
+            width: 280px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            overflow-y: auto;
+            box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+        }}
+        
+        nav h2 {{
+            font-size: 1.2em;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+        }}
+        
+        nav a {{
+            display: block;
+            color: white;
+            text-decoration: none;
+            padding: 8px 12px;
+            margin: 5px 0;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+        }}
+        
+        nav a:hover {{
+            background: rgba(255, 255, 255, 0.2);
+            padding-left: 20px;
+        }}
+        
+        nav .nav-section {{
+            margin-bottom: 25px;
+        }}
+        
+        nav .nav-section-title {{
+            font-weight: 600;
+            padding: 10px 12px;
+            margin: 15px 0 10px 0;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            font-size: 0.95em;
+        }}
+        
+        nav .nav-item {{
+            padding-left: 20px;
+            font-size: 0.9em;
+        }}
+        
+        nav .nav-item.active a {{
+            background: rgba(255, 255, 255, 0.25);
+            font-weight: 600;
+        }}
+        
+        main {{
+            flex: 1;
+            padding: 40px;
+            background: white;
+        }}
+        
+        .breadcrumbs {{
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #e0e0e0;
+        }}
+        
+        .breadcrumbs a {{
+            color: #667eea;
+            text-decoration: none;
+            margin: 0 5px;
+        }}
+        
+        .breadcrumbs a:hover {{
+            text-decoration: underline;
+        }}
+        
+        .breadcrumbs span {{
+            color: #999;
+            margin: 0 5px;
+        }}
+        
+        h1 {{
+            color: #667eea;
+            margin-bottom: 30px;
+            font-size: 2em;
+        }}
+        
+        h2 {{
+            color: #667eea;
+            margin-top: 40px;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+        }}
+        
+        h3 {{
+            color: #764ba2;
+            margin-top: 25px;
+            margin-bottom: 10px;
+        }}
+        
+        code {{
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            color: #d63384;
+        }}
+        
+        pre {{
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 15px 0;
+            line-height: 1.4;
+        }}
+        
+        pre code {{
+            background: none;
+            color: inherit;
+            padding: 0;
+        }}
+        
+        blockquote {{
+            border-left: 4px solid #667eea;
+            padding-left: 15px;
+            margin: 15px 0;
+            color: #666;
+        }}
+        
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }}
+        
+        table th {{
+            background: #f4f4f4;
+            padding: 10px;
+            text-align: left;
+            border-bottom: 2px solid #ddd;
+            font-weight: 600;
+        }}
+        
+        table td {{
+            padding: 10px;
+            border-bottom: 1px solid #ddd;
+        }}
+        
+        a {{
+            color: #667eea;
+            text-decoration: none;
+        }}
+        
+        a:hover {{
+            text-decoration: underline;
+        }}
+        
+        .content {{
+            max-width: 900px;
+        }}
+        
+        .content p {{
+            margin-bottom: 15px;
+        }}
+        
+        .content ul, .content ol {{
+            margin-left: 20px;
+            margin-bottom: 15px;
+        }}
+        
+        .content li {{
+            margin-bottom: 8px;
+        }}
+        
+        @media (max-width: 768px) {{
+            .wrapper {{
+                flex-direction: column;
+            }}
+            
+            nav {{
+                width: 100%;
+                max-height: 300px;
+                border-bottom: 1px solid #ddd;
+            }}
+            
+            main {{
+                padding: 20px;
+            }}
+            
+            h1 {{
+                font-size: 1.5em;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <nav>
+            <h2>🎯 Navigation</h2>
+            {nav_html}
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                {breadcrumb_html}
+            </div>
+            <div class="content">
+                {content}
+            </div>
+            <footer style="margin-top: 60px; padding-top: 20px; border-top: 1px solid #e0e0e0; color: #999; text-align: center; font-size: 0.9em;">
+                <p>Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum" style="color: #667eea;">View on GitHub</a></p>
+            </footer>
+        </main>
+    </div>
+</body>
+</html>"""
+        return html
+    
+    def generate_nav_html(self, nav_items):
+        """Generate navigation HTML"""
+        nav_html = ""
+        for item in nav_items:
+            nav_html += f"""<div class="nav-section">
+    <div class="nav-section-title">{item['name']}</div>"""
+            
+            if item.get('items'):
+                for sub_item in item['items']:
+                    nav_html += f"""
+    <div class="nav-item">
+        <a href="{sub_item['url']}">{sub_item['name']}</a>
+    </div>"""
+            nav_html += "\n</div>\n"
+        
+        return nav_html
+    
+    def generate_breadcrumb_html(self, breadcrumbs):
+        """Generate breadcrumb HTML"""
+        html = '<a href="/">Home</a>'
+        for i, crumb in enumerate(breadcrumbs[1:]):
+            html += f' <span>/</span> <a href="{crumb["url"]}">{crumb["name"]}</a>'
+        return html
+    
+    def process_directory_index(self, folder_path):
+        """Generate index.html for directories"""
+        output_path = self.output_dir / folder_path.relative_to(self.root_dir) / "index.html"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        items = []
+        try:
+            for item in sorted(folder_path.iterdir()):
+                if item.name.startswith('.') or item.name == '__pycache__':
+                    continue
+                
+                rel_path = item.relative_to(self.root_dir)
+                
+                if item.is_dir():
+                    items.append({
+                        "name": item.name,
+                        "type": "folder",
+                        "url": f"/low-level-design-ultimatum/{'/'.join(rel_path.parts)}/"
+                    })
+                elif item.suffix == '.md':
+                    items.append({
+                        "name": item.stem,
+                        "type": "file",
+                        "url": f"/low-level-design-ultimatum/{'/'.join(rel_path.parts[:-1])}/{item.stem}.html"
+                    })
+                elif item.suffix in ['.py']:
+                    items.append({
+                        "name": item.name,
+                        "type": "code",
+                        "url": f"/low-level-design-ultimatum/{'/'.join(rel_path.parts)}"
+                    })
+        except Exception as e:
+            print(f"Error processing directory {folder_path}: {e}")
+        
+        # Generate HTML content
+        content = f"<h1>{folder_path.name}</h1>\n"
+        
+        if items:
+            content += '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px; margin-top: 20px;">\n'
+            
+            for item in items:
+                icon = "📁" if item["type"] == "folder" else "📄" if item["type"] == "file" else "🐍"
+                content += f"""<a href="{item['url']}" style="
+                    display: block;
+                    padding: 15px;
+                    border: 1px solid #e0e0e0;
+                    border-radius: 5px;
+                    text-decoration: none;
+                    color: #333;
+                    transition: all 0.3s ease;
+                " onmouseover="this.style.boxShadow='0 5px 15px rgba(0,0,0,0.1)'; this.style.borderColor='#667eea';" onmouseout="this.style.boxShadow='none'; this.style.borderColor='#e0e0e0';">
+                    <div style="font-size: 1.5em; margin-bottom: 10px;">{icon}</div>
+                    <div style="font-weight: 500;">{item['name']}</div>
+                </a>
+"""
+            
+            content += '</div>\n'
+        else:
+            content += '<p>No items in this directory.</p>\n'
+        
+        title = folder_path.name
+        breadcrumbs = self.get_breadcrumb(folder_path)
+        nav_items = self.get_nav_items()
+        
+        html = self.generate_html_wrapper(title, content, breadcrumbs, nav_items)
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(html)
+        
+        print(f"Generated: {output_path}")
+    
+    def process_markdown_file(self, file_path):
+        """Convert markdown file to HTML"""
+        try:
+            rel_path = file_path.relative_to(self.root_dir)
+            output_path = self.output_dir / rel_path.with_suffix('.html')
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Read and convert markdown
+            markdown_content = self.read_markdown(file_path)
+            html_content = self.convert_to_html(markdown_content)
+            
+            # Extract title from first heading or filename
+            title = rel_path.stem
+            
+            # Generate breadcrumbs and nav
+            breadcrumbs = self.get_breadcrumb(file_path)
+            nav_items = self.get_nav_items(file_path)
+            
+            # Wrap in full HTML
+            full_html = self.generate_html_wrapper(title, html_content, breadcrumbs, nav_items)
+            
+            # Write output
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(full_html)
+            
+            print(f"Generated: {output_path}")
+            
+        except Exception as e:
+            print(f"Error processing {file_path}: {e}")
+    
+    def process_code_file(self, file_path):
+        """Convert code file to HTML"""
+        try:
+            rel_path = file_path.relative_to(self.root_dir)
+            output_path = self.output_dir / rel_path.with_suffix('.html')
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Read code file
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                code_content = f.read()
+            
+            # Wrap in code block
+            html_content = f'<pre><code>{code_content}</code></pre>'
+            
+            title = file_path.name
+            breadcrumbs = self.get_breadcrumb(file_path)
+            nav_items = self.get_nav_items()
+            
+            full_html = self.generate_html_wrapper(title, html_content, breadcrumbs, nav_items)
+            
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(full_html)
+            
+            print(f"Generated: {output_path}")
+            
+        except Exception as e:
+            print(f"Error processing {file_path}: {e}")
+    
+    def generate(self):
+        """Generate entire site"""
+        print("Starting site generation...")
+        self.ensure_output_dir()
+        
+        # Copy index.html
+        index_src = self.root_dir / "index.html"
+        if index_src.exists():
+            index_dst = self.output_dir / "index.html"
+            with open(index_src, 'r') as f:
+                with open(index_dst, 'w') as out:
+                    out.write(f.read())
+            print(f"Copied: {index_dst}")
+        
+        # Process all markdown files
+        for md_file in self.root_dir.rglob('*.md'):
+            if md_file.relative_to(self.root_dir).parts[0] == '.git':
+                continue
+            self.process_markdown_file(md_file)
+        
+        # Process all Python files
+        for py_file in self.root_dir.rglob('*.py'):
+            if py_file.relative_to(self.root_dir).parts[0] == '.git':
+                continue
+            self.process_code_file(py_file)
+        
+        # Generate directory indexes
+        for folder in self.root_dir.rglob('*'):
+            if folder.is_dir() and not folder.name.startswith('.') and folder.name != '__pycache__':
+                if 'git' not in folder.parts:
+                    self.process_directory_index(folder)
+        
+        print("Site generation completed!")
+
+if __name__ == "__main__":
+    root = sys.argv[1] if len(sys.argv) > 1 else "."
+    generator = SiteGenerator(root)
+    generator.generate()

@@ -25,14 +25,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: pip install markdown
+      
       - name: Setup Pages
         uses: actions/configure-pages@v4
       
       - name: Build site
         run: |
-          mkdir -p _site
-          cp -r . _site/
-          find _site -name '.git' -o -name '.github' -o -name '_site' -o -name '.gitignore' | xargs rm -rf
+          python build_site.py .
       
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
