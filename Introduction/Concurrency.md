@@ -613,6 +613,7 @@ if not acquired:
 ### Q3: Explain the difference between Mutex and Semaphore.
 
 **A**:
+
 | Feature | Mutex | Semaphore |
 |---------|-------|-----------|
 | Counter | 1 (binary) | N (counting) |
@@ -695,6 +696,7 @@ except queue.Empty:
 ### Q6: Explain deadlock, livelock, and starvation.
 
 **A**:
+
 | Issue | Definition | Example |
 |-------|-----------|---------|
 | **Deadlock** | Threads blocked forever waiting for each other | T1 waits for T2's lock; T2 waits for T1's lock |
@@ -846,6 +848,7 @@ with ThreadPoolExecutor() as executor:
 ### Q11: What's the difference between threading and async?
 
 **A**:
+
 | Aspect | Threading | Async (Coroutines) |
 |--------|-----------|-------------------|
 | Concurrency | OS-scheduled threads | Cooperative, single-threaded |

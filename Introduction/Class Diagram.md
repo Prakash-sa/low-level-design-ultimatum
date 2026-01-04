@@ -749,8 +749,7 @@ Relationships:
 
 **Q1: What is the difference between association and aggregation?**
 
-<details>
-<summary>📝 Answer</summary>
+**Answer**:
 
 | Aspect | Association | Aggregation |
 |--------|-------------|-------------|
@@ -762,14 +761,11 @@ Relationships:
 
 **Key Point**: Aggregation is a special type of association with "HAS-A" semantics.
 
-</details>
-
 ---
 
 **Q2: When would you use inheritance vs composition?**
 
-<details>
-<summary>📝 Answer</summary>
+**Answer**:
 
 **Use Inheritance (IS-A) when**:
 - There's a true "is-a" relationship (Dog IS-A Animal)
@@ -802,14 +798,11 @@ class Dog:
         self.behavior.eat()
 ```
 
-</details>
-
 ---
 
 **Q3: Explain the difference between composition and aggregation with an example.**
 
-<details>
-<summary>📝 Answer</summary>
+**Answer**:
 
 **Composition** (Strong relationship):
 ```
@@ -831,16 +824,13 @@ Library HAS Books
 - **Composition**: Body composed of organs (organs die if body dies)
 - **Aggregation**: Team has players (players exist even if team dissolves)
 
-</details>
-
 ---
 
 ### Intermediate Level
 
 **Q4: What is the difference between dependency and association?**
 
-<details>
-<summary>📝 Answer</summary>
+**Answer**:
 
 | Aspect | Dependency | Association |
 |--------|-----------|-------------|
@@ -863,14 +853,11 @@ class User:
         self.email = Email()  # Persistent attribute
 ```
 
-</details>
-
 ---
 
 **Q5: How would you model a library management system with class diagrams?**
 
-<details>
-<summary>📝 Answer</summary>
+**Answer**:
 
 ```
                     ┌──────────────┐
@@ -918,14 +905,11 @@ Relationships:
 ✓ Book written by Author (Association)
 ```
 
-</details>
-
 ---
 
 **Q6: Explain the Liskov Substitution Principle with inheritance example.**
 
-<details>
-<summary>📝 Answer</summary>
+**Answer**:
 
 **LSP**: Objects of a superclass should be replaceable with objects of its subclasses without breaking the application.
 
@@ -982,16 +966,13 @@ class Penguin(SwimmingBird):  # Correct inheritance
         return "Swimming"
 ```
 
-</details>
-
 ---
 
 ### Advanced Level
 
 **Q7: Design a class diagram for a ride-sharing application (like Uber).**
 
-<details>
-<summary>📝 Answer</summary>
+**Answer**:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -1051,14 +1032,9 @@ Relationships:
 ✓ Ride tracks pickupLocation & dropoffLocation (Dependency)
 ```
 
-</details>
-
----
-
 **Q8: What are the advantages and disadvantages of deep inheritance hierarchies?**
 
-<details>
-<summary>📝 Answer</summary>
+**Answer**:
 
 **Disadvantages of Deep Hierarchies**:
 - ❌ Hard to understand and maintain
@@ -1091,8 +1067,6 @@ class Dog:
         self.movement = FourLeggedMovement()
         self.diet = CarnivoreeDiet()
 ```
-
-</details>
 
 ---
 

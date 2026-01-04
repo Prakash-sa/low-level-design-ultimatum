@@ -689,6 +689,7 @@ Global System
 ### Q4: What database at scale?
 
 **A**:
+
 | Component | Database | Why |
 |-----------|----------|-----|
 | Slot Inventory | PostgreSQL + Row Locks | Strong consistency, relational |

@@ -495,6 +495,7 @@ for t in threads:
 ### Q1: Mutex vs Semaphore—what's the difference?
 
 **A**:
+
 | Aspect | Mutex | Semaphore |
 |--------|-------|-----------|
 | Counter | 1 (binary) | N (counting) |
@@ -527,6 +528,7 @@ sem.acquire()
 ### Q2: What's the difference between Lock and RLock?
 
 **A**:
+
 | Feature | Lock | RLock |
 |---------|------|-------|
 | Reentrancy | Non-reentrant | Reentrant |
@@ -745,6 +747,7 @@ else:
 ### Q9: Compare blocking vs non-blocking lock acquisition.
 
 **A**:
+
 | Mode | Behavior | Use Case |
 |------|----------|----------|
 | **Blocking** | Wait until lock available | Most common; simplicity |
