@@ -249,19 +249,3 @@ class Impl(Base):
 
 # Impl.create('x') -> works
 ```
-
----
-
-## File location
-
-`/Users/prakashsaini/Desktop/low-level-design-ultimatum/Introduction/INterface vs Abstract Class.md`
-
----
-
-If you want, I can also:
-- add a short diagram (ASCII) comparing nominal vs structural typing,
-- add unit tests demonstrating the runtime errors for instantiating ABCs,
-- or convert this into a slide-friendly README for interview prep.
-
-Which of these would you like next?
-
