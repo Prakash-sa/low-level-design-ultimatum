@@ -191,6 +191,48 @@ class SiteGenerator:
             margin: 4px 0;
         }}
         
+        .nav-row {{
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }}
+        
+        .nav-toggle {{
+            width: 22px;
+            height: 22px;
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }}
+        
+        .nav-toggle:hover {{
+            background: rgba(255, 255, 255, 0.2);
+        }}
+        
+        .nav-folder[data-collapsed="true"] .nav-toggle::after {{
+            content: "▶";
+        }}
+        
+        .nav-folder[data-collapsed="false"] .nav-toggle::after {{
+            content: "▼";
+        }}
+        
+        .nav-folder[data-collapsed="true"] > .nav-children {{
+            display: none;
+        }}
+        
+        .nav-folder > .nav-children {{
+            margin-top: 6px;
+        }}
+        
         nav a {{
             display: block;
             color: white;
@@ -380,7 +422,21 @@ class SiteGenerator:
         </main>
     </div>
 </body>
-</html>"""
+</html>
+<script>
+// Simple nav collapse/expand
+document.addEventListener('DOMContentLoaded', () => {
+    const toggles = document.querySelectorAll('.nav-toggle');
+    toggles.forEach(btn => {
+        btn.addEventListener('click', (event) => {
+            event.preventDefault();
+            const li = btn.closest('.nav-folder');
+            const collapsed = li.getAttribute('data-collapsed') === 'true';
+            li.setAttribute('data-collapsed', collapsed ? 'false' : 'true');
+        });
+    });
+});
+</script>"""
         return html
     
     def generate_nav_html(self, nav_items):
@@ -389,10 +445,18 @@ class SiteGenerator:
             html = "<ul>"
             for item in items:
                 item_class = "nav-folder" if item["type"] == "folder" else "nav-file"
-                html += f'<li class="{item_class}"><a href="{item["url"]}">{item["name"]}</a>'
-                if item.get("items"):
+                if item["type"] == "folder":
+                    html += (
+                        f'<li class="{item_class}" data-collapsed="false">'
+                        f'<div class="nav-row">'
+                        f'<button class="nav-toggle" aria-label="Toggle {item["name"]}"></button>'
+                        f'<a href="{item["url"]}">{item["name"]}</a>'
+                        f'</div>'
+                    )
                     html += f'<div class="nav-children">{render(item["items"])}</div>'
-                html += "</li>"
+                    html += "</li>"
+                else:
+                    html += f'<li class="{item_class}"><a href="{item["url"]}">{item["name"]}</a></li>'
             html += "</ul>"
             return html
         
