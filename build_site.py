@@ -17,6 +17,12 @@ class SiteGenerator:
         self.output_dir = Path(output_dir)
         self.site_structure = {}
         self.pages = []
+        # Base path where the site will be hosted (GitHub Pages project URL)
+        self.base_url = "/low-level-design-ultimatum/"
+
+    def is_hidden(self, path):
+        """Check if any part of the path is hidden (starts with a dot)"""
+        return any(part.startswith('.') for part in path.relative_to(self.root_dir).parts)
         
     def ensure_output_dir(self):
         """Create output directory structure"""
@@ -27,8 +33,8 @@ class SiteGenerator:
         rel_path = file_path.relative_to(self.root_dir)
         parts = rel_path.parts[:-1]  # Exclude filename
         
-        breadcrumbs = [{"name": "Home", "url": "/low-level-design-ultimatum/"}]
-        current_url = "/low-level-design-ultimatum/"
+        breadcrumbs = [{"name": "Home", "url": self.base_url}]
+        current_url = self.base_url
         
         for part in parts:
             current_url += f"{part}/"
@@ -60,28 +66,28 @@ class SiteGenerator:
         # Add Introduction
         nav_items.append({
             "name": "📚 Introduction",
-            "url": "/low-level-design-ultimatum/Introduction/",
+            "url": f"{self.base_url}Introduction/",
             "items": self.get_folder_items("Introduction")
         })
         
         # Add Design Patterns
         nav_items.append({
             "name": "🏗️ Design Patterns",
-            "url": "/low-level-design-ultimatum/Design%20Pattern/",
+            "url": f"{self.base_url}Design%20Pattern/",
             "items": self.get_folder_items("Design Pattern")
         })
         
         # Add Examples
         nav_items.append({
             "name": "💼 Examples",
-            "url": "/low-level-design-ultimatum/Examples/",
+            "url": f"{self.base_url}Examples/",
             "items": self.get_folder_items("Examples")
         })
         
         # Add Company Tagged
         nav_items.append({
             "name": "🏢 Company Tagged",
-            "url": "/low-level-design-ultimatum/Company%20Tagged/",
+            "url": f"{self.base_url}Company%20Tagged/",
             "items": self.get_folder_items("Company Tagged")
         })
         
@@ -101,14 +107,14 @@ class SiteGenerator:
                     continue
                 
                 if item.is_dir():
-                    url = f"/low-level-design-ultimatum/{folder_name}/{item.name}/"
+                    url = f"{self.base_url}{folder_name}/{item.name}/"
                     items.append({
                         "name": item.name,
                         "url": url,
                         "type": "folder"
                     })
                 elif item.suffix == '.md':
-                    url = f"/low-level-design-ultimatum/{folder_name}/{item.name.replace('.md', '.html')}"
+                    url = f"{self.base_url}{folder_name}/{item.name.replace('.md', '.html')}"
                     items.append({
                         "name": item.stem,
                         "url": url,
@@ -389,9 +395,11 @@ class SiteGenerator:
     
     def generate_breadcrumb_html(self, breadcrumbs):
         """Generate breadcrumb HTML"""
-        html = '<a href="/">Home</a>'
-        for i, crumb in enumerate(breadcrumbs[1:]):
-            html += f' <span>/</span> <a href="{crumb["url"]}">{crumb["name"]}</a>'
+        html = ""
+        for i, crumb in enumerate(breadcrumbs):
+            if i > 0:
+                html += ' <span>/</span> '
+            html += f'<a href="{crumb["url"]}">{crumb["name"]}</a>'
         return html
     
     def process_directory_index(self, folder_path):
@@ -411,19 +419,19 @@ class SiteGenerator:
                     items.append({
                         "name": item.name,
                         "type": "folder",
-                        "url": f"/low-level-design-ultimatum/{'/'.join(rel_path.parts)}/"
+                        "url": f"{self.base_url}{'/'.join(rel_path.parts)}/"
                     })
                 elif item.suffix == '.md':
                     items.append({
                         "name": item.stem,
                         "type": "file",
-                        "url": f"/low-level-design-ultimatum/{'/'.join(rel_path.parts[:-1])}/{item.stem}.html"
+                        "url": f"{self.base_url}{'/'.join(rel_path.parts[:-1])}/{item.stem}.html"
                     })
                 elif item.suffix in ['.py']:
                     items.append({
                         "name": item.name,
                         "type": "code",
-                        "url": f"/low-level-design-ultimatum/{'/'.join(rel_path.parts)}"
+                        "url": f"{self.base_url}{'/'.join(rel_path.parts)}"
                     })
         except Exception as e:
             print(f"Error processing directory {folder_path}: {e}")
@@ -528,6 +536,12 @@ class SiteGenerator:
         print("Starting site generation...")
         self.ensure_output_dir()
         
+        # Ensure .nojekyll is present so GitHub Pages serves all files
+        nojekyll_src = self.root_dir / ".nojekyll"
+        if nojekyll_src.exists():
+            nojekyll_dst = self.output_dir / ".nojekyll"
+            nojekyll_dst.write_text(nojekyll_src.read_text(encoding="utf-8"), encoding="utf-8")
+        
         # Copy index.html
         index_src = self.root_dir / "index.html"
         if index_src.exists():
@@ -539,21 +553,22 @@ class SiteGenerator:
         
         # Process all markdown files
         for md_file in self.root_dir.rglob('*.md'):
-            if md_file.relative_to(self.root_dir).parts[0] == '.git':
+            if self.output_dir in md_file.parents or self.is_hidden(md_file):
                 continue
             self.process_markdown_file(md_file)
         
         # Process all Python files
         for py_file in self.root_dir.rglob('*.py'):
-            if py_file.relative_to(self.root_dir).parts[0] == '.git':
+            if self.output_dir in py_file.parents or self.is_hidden(py_file):
                 continue
             self.process_code_file(py_file)
         
         # Generate directory indexes
         for folder in self.root_dir.rglob('*'):
-            if folder.is_dir() and not folder.name.startswith('.') and folder.name != '__pycache__':
-                if 'git' not in folder.parts:
-                    self.process_directory_index(folder)
+            if folder == self.output_dir or self.output_dir in folder.parents:
+                continue
+            if folder.is_dir() and not self.is_hidden(folder) and folder.name != '__pycache__':
+                self.process_directory_index(folder)
         
         print("Site generation completed!")
 
