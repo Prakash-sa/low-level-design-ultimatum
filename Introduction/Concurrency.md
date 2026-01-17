@@ -998,6 +998,644 @@ def low_priority_work():
 
 ---
 
+## � Part 2: Design Discussion
+
+### Step 1: Database Schema
+
+**Common Patterns for Concurrency Control**:
+
+```sql
+-- Example: Bank Account Table
+CREATE TABLE accounts (
+    id INT PRIMARY KEY,
+    balance DECIMAL(10, 2),
+    version INT DEFAULT 1,                    -- For optimistic locking
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    locked_until TIMESTAMP,                   -- For pessimistic locking
+    locked_by VARCHAR(100),                   -- For distributed locking
+    PRIMARY KEY (id)
+);
+
+-- Indexes for efficient queries
+CREATE INDEX idx_locked_until ON accounts(locked_until);
+CREATE INDEX idx_locked_by ON accounts(locked_by);
+
+-- Example: Transaction Log (for audit trail)
+CREATE TABLE transaction_log (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    account_id INT,
+    amount DECIMAL(10, 2),
+    operation VARCHAR(20),                    -- 'DEPOSIT', 'WITHDRAW'
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(20),                       -- 'PENDING', 'COMMITTED', 'ABORTED'
+    FOREIGN KEY (account_id) REFERENCES accounts(id)
+);
+```
+
+---
+
+### Step 2: Approach 1 — Pessimistic Locking with Database
+
+**Concept**: Lock resource BEFORE reading/modifying; prevents conflicts; high contention.
+
+**Workflow**:
+1. Acquire lock (SELECT FOR UPDATE)
+2. Read data
+3. Modify data
+4. Write changes
+5. Release lock (commit transaction)
+
+**Pros**:
+- Prevents conflicts completely
+- Simple logic (no retries needed)
+- Good for high-contention scenarios
+
+**Cons**:
+- Blocks other threads (reduced parallelism)
+- Can cause deadlocks
+- Wastes resources if conflicts rare
+
+**Code Example**:
+
+```python
+import sqlite3
+import threading
+import time
+
+def transfer_with_pessimistic_lock(from_id, to_id, amount):
+    """Transfer money with pessimistic locking"""
+    conn = sqlite3.connect(':memory:')
+    conn.isolation_level = 'DEFERRED'  # Control transaction manually
+    
+    try:
+        cursor = conn.cursor()
+        
+        # Start transaction
+        cursor.execute('BEGIN')
+        
+        # Lock both accounts (exclusive lock)
+        # In SQLite, SELECT ... FOR UPDATE not directly supported
+        # Use exclusive transaction (simulated here)
+        cursor.execute('''
+            SELECT balance FROM accounts 
+            WHERE id = ? 
+        ''', (from_id,))
+        from_balance = cursor.fetchone()[0]
+        
+        cursor.execute('''
+            SELECT balance FROM accounts 
+            WHERE id = ? 
+        ''', (to_id,))
+        to_balance = cursor.fetchone()[0]
+        
+        # Check and update (atomic within transaction)
+        if from_balance >= amount:
+            cursor.execute('''
+                UPDATE accounts SET balance = balance - ? WHERE id = ?
+            ''', (amount, from_id))
+            
+            cursor.execute('''
+                UPDATE accounts SET balance = balance + ? WHERE id = ?
+            ''', (amount, to_id))
+            
+            conn.commit()
+            print(f"Transfer successful: {amount} from {from_id} to {to_id}")
+            return True
+        else:
+            conn.rollback()
+            print(f"Insufficient balance in account {from_id}")
+            return False
+            
+    except Exception as e:
+        conn.rollback()
+        print(f"Transfer failed: {e}")
+        return False
+    finally:
+        conn.close()
+
+# Simulate concurrent transfers
+def test_pessimistic_locking():
+    threads = []
+    for i in range(5):
+        t = threading.Thread(
+            target=transfer_with_pessimistic_lock,
+            args=(1, 2, 10)
+        )
+        threads.append(t)
+        t.start()
+    
+    for t in threads:
+        t.join()
+```
+
+**SQL Example (PostgreSQL)**:
+
+```sql
+-- Session 1: Start transaction and lock
+BEGIN;
+SELECT balance FROM accounts WHERE id = 1 FOR UPDATE;  -- Exclusive lock
+-- Other sessions must wait...
+
+-- Do read/modify
+UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+
+-- Session 1: Commit (release lock)
+COMMIT;
+```
+
+---
+
+### Step 3: Approach 2 — Optimistic Locking
+
+**Concept**: Assume conflicts rare; check version on UPDATE; retry if mismatch; high throughput.
+
+**Workflow**:
+1. Read data (with version)
+2. Modify data locally
+3. On write, check if version matches
+4. If matches, update + increment version
+5. If mismatch, retry from step 1
+
+**Pros**:
+- No locks; high parallelism
+- Good for low-contention scenarios
+- No deadlocks
+
+**Cons**:
+- Retries on conflicts
+- Complex retry logic
+- Bad under high contention
+
+**Code Example**:
+
+```python
+import sqlite3
+import threading
+import time
+
+def transfer_with_optimistic_lock(from_id, to_id, amount, max_retries=3):
+    """Transfer money with optimistic locking"""
+    conn = sqlite3.connect(':memory:')
+    
+    for attempt in range(max_retries):
+        try:
+            cursor = conn.cursor()
+            
+            # Step 1: Read data with version
+            cursor.execute('''
+                SELECT id, balance, version FROM accounts WHERE id = ?
+            ''', (from_id,))
+            from_account = cursor.fetchone()
+            from_id_db, from_balance, from_version = from_account
+            
+            cursor.execute('''
+                SELECT id, balance, version FROM accounts WHERE id = ?
+            ''', (to_id,))
+            to_account = cursor.fetchone()
+            to_id_db, to_balance, to_version = to_account
+            
+            # Step 2: Modify locally
+            if from_balance < amount:
+                print(f"Insufficient balance")
+                return False
+            
+            new_from_balance = from_balance - amount
+            new_to_balance = to_balance + amount
+            
+            # Step 3: Update with version check (optimistic lock)
+            cursor.execute('''
+                UPDATE accounts SET balance = ?, version = version + 1 
+                WHERE id = ? AND version = ?
+            ''', (new_from_balance, from_id, from_version))
+            
+            if cursor.rowcount == 0:
+                # Version mismatch: someone else updated
+                print(f"Attempt {attempt + 1}: Conflict detected, retrying...")
+                conn.rollback()
+                time.sleep(0.01 * (2 ** attempt))  # Exponential backoff
+                continue
+            
+            cursor.execute('''
+                UPDATE accounts SET balance = ?, version = version + 1 
+                WHERE id = ? AND version = ?
+            ''', (new_to_balance, to_id, to_version))
+            
+            if cursor.rowcount == 0:
+                # Version mismatch
+                print(f"Attempt {attempt + 1}: Conflict detected, retrying...")
+                conn.rollback()
+                time.sleep(0.01 * (2 ** attempt))
+                continue
+            
+            conn.commit()
+            print(f"Transfer successful after {attempt + 1} attempt(s)")
+            return True
+            
+        except Exception as e:
+            conn.rollback()
+            print(f"Error: {e}")
+            continue
+    
+    print(f"Transfer failed after {max_retries} attempts")
+    return False
+
+# Test optimistic locking
+def test_optimistic_locking():
+    threads = []
+    for i in range(5):
+        t = threading.Thread(
+            target=transfer_with_optimistic_lock,
+            args=(1, 2, 10)
+        )
+        threads.append(t)
+        t.start()
+    
+    for t in threads:
+        t.join()
+```
+
+**SQL Example**:
+
+```sql
+-- Read data with version
+SELECT balance, version FROM accounts WHERE id = 1;  -- Returns (1000, 5)
+
+-- Modify and update atomically
+UPDATE accounts 
+SET balance = 900, version = 6 
+WHERE id = 1 AND version = 5;  -- Optimistic check
+
+-- If version didn't match, rowcount = 0; retry
+IF @@ROW_COUNT = 0 THEN
+    -- Someone else updated; retry from start
+    ROLLBACK;
+END IF;
+```
+
+---
+
+### Step 4: Approach 3 — Distributed Locking with Redis
+
+**Concept**: Use Redis (in-memory, atomic ops) as distributed lock manager; works across processes/machines.
+
+**Workflow**:
+1. Acquire lock in Redis (SET with NX + EX)
+2. Execute critical section
+3. Release lock (DEL if owner)
+
+**Pros**:
+- Works across multiple servers
+- Atomic operations
+- Simple implementation
+- Moderate performance
+
+**Cons**:
+- External dependency (Redis)
+- Network latency
+- Complex recovery (lock expires, process crashes)
+- Not as fast as local locks
+
+**Code Example**:
+
+```python
+import redis
+import threading
+import time
+import uuid
+
+class DistributedLock:
+    def __init__(self, redis_client, lock_name, timeout=10):
+        self.redis = redis_client
+        self.lock_name = lock_name
+        self.timeout = timeout
+        self.lock_id = str(uuid.uuid4())  # Unique ID to prevent accidental release
+    
+    def acquire(self, blocking=True, timeout=None):
+        """Acquire lock; optionally block"""
+        start = time.time()
+        
+        while True:
+            # SET key value NX EX timeout (atomic)
+            acquired = self.redis.set(
+                self.lock_name, 
+                self.lock_id,
+                nx=True,  # Only if not exists
+                ex=self.timeout  # Expire after timeout (safety)
+            )
+            
+            if acquired:
+                return True
+            
+            if not blocking:
+                return False
+            
+            if timeout and (time.time() - start) > timeout:
+                return False
+            
+            time.sleep(0.01)  # Backoff
+    
+    def release(self):
+        """Release lock only if we own it"""
+        # Lua script for atomic check-and-delete
+        script = '''
+        if redis.call("get", KEYS[1]) == ARGV[1] then
+            return redis.call("del", KEYS[1])
+        else
+            return 0
+        end
+        '''
+        
+        result = self.redis.eval(script, 1, self.lock_name, self.lock_id)
+        return result == 1
+    
+    def __enter__(self):
+        self.acquire()
+        return self
+    
+    def __exit__(self, *args):
+        self.release()
+
+# Example: Distributed account transfer
+def transfer_with_redis_lock(redis_client, from_id, to_id, amount):
+    """Transfer money using Redis distributed lock"""
+    
+    # Acquire locks for both accounts (avoid deadlock: lock in order)
+    lock_from = DistributedLock(redis_client, f"account:{from_id}:lock", timeout=5)
+    lock_to = DistributedLock(redis_client, f"account:{to_id}:lock", timeout=5)
+    
+    try:
+        # Acquire in consistent order to prevent deadlock
+        if from_id < to_id:
+            lock_from.acquire()
+            lock_to.acquire()
+        else:
+            lock_to.acquire()
+            lock_from.acquire()
+        
+        # Critical section
+        from_balance = int(redis_client.get(f"balance:{from_id}") or 0)
+        to_balance = int(redis_client.get(f"balance:{to_id}") or 0)
+        
+        if from_balance >= amount:
+            redis_client.set(f"balance:{from_id}", from_balance - amount)
+            redis_client.set(f"balance:{to_id}", to_balance + amount)
+            print(f"Transfer successful: {amount} from {from_id} to {to_id}")
+            return True
+        else:
+            print(f"Insufficient balance")
+            return False
+    
+    finally:
+        # Release in reverse order
+        if from_id < to_id:
+            lock_to.release()
+            lock_from.release()
+        else:
+            lock_from.release()
+            lock_to.release()
+
+# Test
+if __name__ == "__main__":
+    redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+    
+    # Initialize balances
+    redis_client.set("balance:1", 1000)
+    redis_client.set("balance:2", 500)
+    
+    threads = []
+    for i in range(5):
+        t = threading.Thread(
+            target=transfer_with_redis_lock,
+            args=(redis_client, 1, 2, 10)
+        )
+        threads.append(t)
+        t.start()
+    
+    for t in threads:
+        t.join()
+```
+
+---
+
+### Step 5: Advanced Distributed Locking — Redlock Algorithm
+
+**Concept**: Use multiple Redis instances to guarantee lock safety even if instances fail.
+
+**Problem with Single Redis**: If Redis crashes, lock is lost; another process can acquire same lock = conflict.
+
+**Redlock Solution**: 
+- Require majority (N/2 + 1) Redis instances to agree
+- If majority alive, lock is safe (even if minority dies)
+- Requires ≥3 Redis instances
+
+**Algorithm**:
+
+```
+1. Get current time (milliseconds)
+2. Try to acquire lock on all N Redis instances (with timeout T)
+3. Count successful acquisitions
+4. If acquired on majority (N/2 + 1) instances:
+   - Lock is valid (safe)
+   - Validity = TTL - elapsed_time
+5. Else: Release lock from all instances (unlock)
+```
+
+**Code Example**:
+
+```python
+import redis
+import time
+import uuid
+from threading import Lock
+
+class RedlockManager:
+    def __init__(self, redis_connections, lock_name, timeout=10):
+        """
+        Args:
+            redis_connections: List of Redis client objects (≥3 recommended)
+            lock_name: Name of lock
+            timeout: Lock expiration time (seconds)
+        """
+        self.redis_clients = redis_connections
+        self.lock_name = lock_name
+        self.timeout = timeout
+        self.lock_id = str(uuid.uuid4())
+        self.quorum = (len(redis_connections) // 2) + 1  # Majority
+    
+    def acquire(self, blocking=True, max_retries=3):
+        """Acquire Redlock"""
+        retry = 0
+        
+        while retry < max_retries:
+            acquired_count = 0
+            start_time = time.time()
+            
+            # Try to acquire on all instances
+            for redis_client in self.redis_clients:
+                try:
+                    acquired = redis_client.set(
+                        self.lock_name,
+                        self.lock_id,
+                        nx=True,
+                        ex=self.timeout
+                    )
+                    if acquired:
+                        acquired_count += 1
+                except Exception as e:
+                    # Instance unavailable; skip
+                    pass
+            
+            elapsed = time.time() - start_time
+            
+            # Check if majority acquired
+            if acquired_count >= self.quorum:
+                # Lock is valid
+                # Validity time = TTL - elapsed
+                validity = self.timeout - elapsed
+                print(f"Redlock acquired with {acquired_count}/{len(self.redis_clients)} votes")
+                print(f"Lock validity: {validity:.2f} seconds")
+                return True
+            
+            else:
+                # Failed to acquire on majority; release from acquired
+                self.release()
+                
+                if not blocking:
+                    return False
+                
+                # Exponential backoff
+                backoff = 0.001 * (2 ** retry)
+                time.sleep(backoff)
+                retry += 1
+        
+        print(f"Redlock acquisition failed after {max_retries} retries")
+        return False
+    
+    def release(self):
+        """Release Redlock from all instances"""
+        # Lua script for atomic check-and-delete
+        script = '''
+        if redis.call("get", KEYS[1]) == ARGV[1] then
+            return redis.call("del", KEYS[1])
+        else
+            return 0
+        end
+        '''
+        
+        released_count = 0
+        for redis_client in self.redis_clients:
+            try:
+                result = redis_client.eval(script, 1, self.lock_name, self.lock_id)
+                if result == 1:
+                    released_count += 1
+            except Exception as e:
+                # Instance unavailable
+                pass
+        
+        print(f"Redlock released from {released_count}/{len(self.redis_clients)} instances")
+        return released_count > 0
+    
+    def __enter__(self):
+        self.acquire()
+        return self
+    
+    def __exit__(self, *args):
+        self.release()
+
+# Example: Distributed transfer with Redlock
+def transfer_with_redlock(redlock_managers, from_id, to_id, amount):
+    """Transfer money using Redlock"""
+    
+    # In order to prevent deadlock
+    if from_id < to_id:
+        lock_from = redlock_managers[from_id]
+        lock_to = redlock_managers[to_id]
+        order = [lock_from, lock_to]
+    else:
+        lock_to = redlock_managers[to_id]
+        lock_from = redlock_managers[from_id]
+        order = [lock_to, lock_from]
+    
+    try:
+        # Acquire locks in order
+        for lock in order:
+            if not lock.acquire(max_retries=5):
+                print(f"Failed to acquire lock")
+                return False
+        
+        # Critical section (protected by Redlock on majority)
+        print(f"Transfer: {amount} from account {from_id} to {to_id}")
+        time.sleep(0.1)  # Simulate work
+        return True
+    
+    finally:
+        # Release in reverse order
+        for lock in reversed(order):
+            lock.release()
+
+# Test
+if __name__ == "__main__":
+    # Setup 5 Redis instances (3 is minimum for Redlock)
+    redis_clients = [
+        redis.Redis(host='localhost', port=6379, db=i, decode_responses=True)
+        for i in range(5)
+    ]
+    
+    # Create Redlock managers for different accounts
+    redlock_managers = {
+        1: RedlockManager(redis_clients, "account:1:redlock", timeout=10),
+        2: RedlockManager(redis_clients, "account:2:redlock", timeout=10),
+        3: RedlockManager(redis_clients, "account:3:redlock", timeout=10),
+    }
+    
+    # Concurrent transfers
+    threads = []
+    for i in range(5):
+        t = threading.Thread(
+            target=transfer_with_redlock,
+            args=(redlock_managers, 1, 2, 100)
+        )
+        threads.append(t)
+        t.start()
+    
+    for t in threads:
+        t.join()
+    
+    print("All transfers completed")
+```
+
+**Redlock Characteristics**:
+
+| Aspect | Detail |
+|--------|--------|
+| **Safety** | If lock acquired on majority, guaranteed exclusive access (even if minority fails) |
+| **Availability** | Can tolerate N-1 Redis failures (where N ≥ 3) |
+| **Performance** | Slower than single Redis (multiple writes) |
+| **Complexity** | More complex than single lock |
+| **Use Cases** | Critical operations, distributed systems, multiple data centers |
+
+**Redlock vs Single Redis**:
+
+| Scenario | Single Redis | Redlock |
+|----------|-------------|---------|
+| Redis crashes | Lock lost; conflicts possible | Majority alive; lock safe |
+| Network partition | Minority partition can acquire duplicate locks | Majority partition holds lock; minority blocked |
+| Simple system | Recommended | Overkill |
+| High-availability cluster | Insufficient | Recommended |
+
+---
+
+## Comparison: All Approaches
+
+| Approach | Latency | Throughput | Contention Handling | Complexity | Deadlock Risk | Use Case |
+|----------|---------|-----------|-------------------|-----------|--------------|----------|
+| **Pessimistic Locking** | High | Low | Prevents | Low | High (nested locks) | High-contention, critical sections |
+| **Optimistic Locking** | Low | High | Retries | Medium | None | Low-contention, read-heavy |
+| **Redis Lock** | Medium | Medium | Waits | Medium | Medium (single instance fails) | Distributed, moderate contention |
+| **Redlock** | High | Low | Waits on majority | High | Low (majority guarantees) | High-availability, mission-critical |
+
+---
+
 ## 💡 Key Takeaways
 
 - **GIL limits threading** for CPU-bound work; use multiprocessing or async
@@ -1006,3 +1644,6 @@ def low_priority_work():
 - **Choose appropriate primitives**: Lock for exclusion, Semaphore for pooling, Queue for async
 - **Profile before optimizing**: Measure lock contention, not just CPU
 - **Async for I/O**: Lower overhead than threads for I/O-bound tasks
+- **Pessimistic locking**: Best for high-contention; simple but blocks threads
+- **Optimistic locking**: Best for low-contention; retries on conflicts
+- **Distributed locking**: Use Redis for multi-process/machine systems; Redlock for high-availability
