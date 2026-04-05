@@ -1,0 +1,1166 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Elevator System - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Insatance%20Variable.html">Class Variable vs Insatance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Airline%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Airline Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/">Airline Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/Airline%20Management%20System.html">Airline Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Locker System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/">Amazon Locker System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/Amazon%20Locker%20System.html">Amazon Locker System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Online Shopping System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/">Amazon Online Shopping System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/ATM/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle ATM" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/ATM/">ATM</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM/ATM.html">ATM</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Cache/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Cache" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Cache/">Cache</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache/Cache.html">Cache</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Car%20Rental%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Car Rental System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/">Car Rental System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/Car%20Rental%20System.html">Car Rental System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Chess%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Chess Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Chess%20Game/">Chess Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game/Chess%20Game.html">Chess Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circinfo (Ride Sharing)" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/">Circinfo (Ride Sharing)</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Design Hit Counter" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/">Design Hit Counter</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/Design%20Hit%20Counter.html">Design Hit Counter</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/">Elevator System</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Elevator%20System.html">Elevator System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Facebook/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Facebook" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Facebook/">Facebook</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook/Facebook.html">Facebook</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/File%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle File System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/File%20System/">File System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System/File%20System.html">File System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Hotel Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/">Hotel Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/Hotel%20Management%20System.html">Hotel Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Jigsaw Puzzle" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/">Jigsaw Puzzle</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Leaderboard/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Leaderboard" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Leaderboard/">Leaderboard</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard/Leaderboard.html">Leaderboard</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Library%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Library Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/">Library Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/Library%20Management%20System.html">Library Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/LinkedIn/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle LinkedIn" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/LinkedIn/">LinkedIn</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn/LinkedIn.html">LinkedIn</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Logging/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Logging" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Logging/">Logging</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging/Logging.html">Logging</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Meeting Scheduler" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/">Meeting Scheduler</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/Meeting%20Scheduler.html">Meeting Scheduler</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Movie Ticket Booking System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/">Movie Ticket Booking System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Blackjack Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/">Online Blackjack Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Stock Brokerage System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/">Online Stock Brokerage System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/">Parking Lot</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Parking%20Lot.html">Parking Lot</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Pub-Sub/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Pub-Sub" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Pub-Sub/">Pub-Sub</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub/Pub-Sub.html">Pub-Sub</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Restaurant Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/">Restaurant Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/Restaurant%20Management%20System.html">Restaurant Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Stack%20Overflow/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Stack Overflow" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/">Stack Overflow</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/Stack%20Overflow.html">Stack Overflow</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Text Editor with Undo & Redo" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/">Text Editor with Undo & Redo</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Train Platform Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/">Train Platform Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Vending%20Machine/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Vending Machine" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/">Vending Machine</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/Vending%20Machine.html">Vending Machine</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/Elevator%20System/">Elevator System</a>
+            </div>
+            <div class="content">
+                <h1 id="elevator-system-75-minute-interview-guide">Elevator System — 75-Minute Interview Guide</h1>
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>What is it?</strong> A multi-floor elevator system managing multiple elevators with passenger requests (up/down), floor scheduling, capacity limits, idle optimization, concurrent access, and state transitions (idle, moving, doors open/closed).</p>
+<p><strong>Key Classes:</strong>
+- <code>ElevatorSystem</code> (Singleton): Dispatcher routing requests to optimal elevators
+- <code>Elevator</code>: State machine (idle, moving, doors_open), floor queues (up/down)
+- <code>ElevatorButton</code> / <code>FloorButton</code>: Call requests from cabin/floor
+- <code>Request</code>: Encapsulates pickup floor, destination floor, passenger info
+- <code>Direction</code>: Enum (UP, DOWN, IDLE)</p>
+<p><strong>Core Flows:</strong>
+1. <strong>Passenger Press Button</strong>: Request added to floor call queue → Dispatcher assigns to nearest idle/optimal elevator
+2. <strong>Elevator Pickup</strong>: Elevator moves to floor → Opens doors → Passengers board → Closes doors
+3. <strong>Elevator Dropoff</strong>: Elevator moves to destination → Opens doors → Passengers exit → Closes doors
+4. <strong>Optimization</strong>: Select elevator with shortest travel time, direction preference (minimize reversals)</p>
+<p><strong>5 Design Patterns:</strong>
+- <strong>Singleton</strong>: One <code>ElevatorSystem</code> manages all elevators
+- <strong>State Machine</strong>: Elevator states (idle, moving, doors_open, emergency)
+- <strong>Strategy</strong>: Different scheduling algorithms (FCFS, nearest, optimal)
+- <strong>Observer</strong>: Notify floors/passengers on elevator arrival
+- <strong>Command</strong>: Button presses as commands queued</p>
+<hr />
+<h2 id="system-overview">System Overview</h2>
+<p>A real-time elevator dispatcher system for multi-floor buildings (10-100 floors) managing multiple elevators, passenger requests, state transitions, and optimal scheduling to minimize wait time and energy consumption.</p>
+<h3 id="requirements">Requirements</h3>
+<p><strong>Functional:</strong>
+- Create N elevators per building (capacity M passengers each)
+- Accept pickup requests (floor F, destination D)
+- Accept floor button presses (up/down call from specific floor)
+- Route requests to optimal elevator
+- Move elevators between floors
+- Open/close doors on arrival
+- Detect stuck/emergency situations
+- Priority queuing (express vs standard)
+- Support disabled/maintenance mode</p>
+<p><strong>Non-Functional:</strong>
+- Average wait time &lt; 30 seconds (low traffic)
+- Throughput: 100-200 passengers/min per elevator
+- Real-time responsiveness (&lt;500ms request assignment)
+- Support 10K+ concurrent passengers in building
+- Scalable to 100+ elevators</p>
+<p><strong>Constraints:</strong>
+- Single shaft per elevator (can't overtake)
+- Doors open/close time: 2 seconds
+- Travel time: 1 second per floor
+- Weight capacity: 1000 kg (12-15 passengers)
+- Maximum payload detection</p>
+<hr />
+<h2 id="architecture-diagram-ascii-uml">Architecture Diagram (ASCII UML)</h2>
+<pre class="codehilite"><code>┌──────────────────────────────────┐
+│  ElevatorSystem (Singleton)      │
+│  - Dispatcher algorithm          │
+│  - Request queue management      │
+│  - Optimal routing               │
+└─────────────┬────────────────────┘
+              │
+    ┌─────────┼─────────┐
+    │         │         │
+    ▼         ▼         ▼
+┌────────┐ ┌────────┐ ┌────────┐
+│ Elev 1 │ │ Elev 2 │ │ Elev N │
+│        │ │        │ │        │
+└───┬────┘ └───┬────┘ └───┬────┘
+    │          │          │
+    └──────────┴──────────┘
+         (Capacity M, Travel 1s/floor)
+
+Elevator State Machine:
+IDLE ──→ MOVING_UP ──→ DOORS_OPEN ──→ MOVING_DOWN ──→ IDLE
+         ↓
+     (passenger request)
+
+Request Flow:
+┌──────────────────┐      ┌─────────────────┐      ┌──────────┐
+│ Floor Button     │      │ ElevatorSystem  │      │ Elevator │
+│ Press (F, UP)    │─────→│ Find Optimal    │─────→│ Move to  │
+│                  │      │ Elevator        │      │ Floor F  │
+└──────────────────┘      └─────────────────┘      └──────────┘
+                                 │
+                                 ├─ Nearest idle?
+                                 ├─ Same direction?
+                                 ├─ Load distance?
+                                 └─ (Select optimal)
+
+Direction Management:
+- Ensure elevator serves requests in order to minimize reversals
+- LOOK algorithm: Go UP serving all UP requests, then switch DOWN
+- Don't jump floors: Avoid skipping passengers
+
+Floor Call Queues:
+┌─────────────┐
+│ Floor Panel │
+├─────────────┤
+│ UP Queue    │ ──→ [Floor 3, Floor 5, Floor 7]
+│ DOWN Queue  │ ──→ [Floor 12, Floor 8, Floor 6]
+└─────────────┘
+    (Per-floor requests)
+
+Elevator Cabin Panel:
+┌─────────────────┐
+│ Cabin (Elev 1)  │
+├─────────────────┤
+│ Destinations    │ ──→ [Floor 2, Floor 5, Floor 10]
+│ Current: Floor 3│
+│ Direction: UP   │
+│ Capacity: 12    │
+└─────────────────┘
+</code></pre>
+
+<hr />
+<h2 id="interview-qa-12-questions">Interview Q&amp;A (12 Questions)</h2>
+<h3 id="basic-level">Basic Level</h3>
+<p><strong>Q1: What's the elevator scheduling problem?</strong>
+A: Route N passenger requests across K elevators to minimize average wait time and travel distance. Non-trivial because: (1) elevators can't reverse instantly, (2) FCFS may not be optimal, (3) multiple objectives conflict (wait time vs energy).</p>
+<p><strong>Q2: What are the different elevator dispatch algorithms?</strong>
+A: (1) <strong>FCFS</strong>: First-come-first-served → High wait. (2) <strong>Nearest Idle</strong>: Send nearest idle elevator → Can miss optimization. (3) <strong>LOOK</strong>: Go UP serving all UP requests, then DOWN → Reduces reversals. (4) <strong>Optimal</strong>: Calculate travel cost for each elevator + pick minimum.</p>
+<p><strong>Q3: How do you decide which elevator to send for a request?</strong>
+A: Calculate cost = travel_time + wait_time. For each elevator: distance to pickup floor + direction factor (same direction = 0, opposite = +2). Send elevator with minimum total cost.</p>
+<p><strong>Q4: What does "direction" mean in an elevator context?</strong>
+A: Current direction is UP (moving up, serving UP calls) or DOWN (moving down, serving DOWN calls). When IDLE, no direction. Request matching: if elevator going UP and floor needs UP call, preferred. Prevents reversals.</p>
+<h3 id="intermediate-level">Intermediate Level</h3>
+<p><strong>Q5: How do you handle multiple requests on same floor?</strong>
+A: Batch requests on same floor into single stop. When elevator reaches floor, open doors once, passengers board/exit together. Reduces unnecessary stops and door operations.</p>
+<p><strong>Q6: What's the "stuck" problem and how to detect it?</strong>
+A: Elevator between floors &gt; timeout (5+ seconds), or doors stuck &gt; 3 seconds. Detection: timer per state. If timeout exceeded, alert maintenance + redirect requests. Recover: emergency descent to nearest floor, exit passengers.</p>
+<p><strong>Q7: How to prevent passenger overload?</strong>
+A: Check weight before closing doors. Max capacity = 1000 kg (~12-15 passengers). If exceeded: prevent door close, alert passengers, wait for exit. Alternative: deny new boarding at higher floors to manage load.</p>
+<p><strong>Q8: What happens during power loss or emergency?</strong>
+A: Emergency procedures: (1) Immediately descend to nearest floor, (2) Open doors + alert occupants, (3) Hold position until power restored, (4) Resume normal operation. Prevents people stuck between floors.</p>
+<h3 id="advanced-level">Advanced Level</h3>
+<p><strong>Q9: How would you optimize for energy efficiency?</strong>
+A: Minimize elevator movements. Techniques: (1) Batch requests smartly, (2) Predict traffic patterns (morning: more UP in lobby, evening: more DOWN), (3) Use fewer elevators during low traffic, (4) Idle at floor with high incoming demand.</p>
+<p><strong>Q10: How to handle high-traffic scenarios (1000 people entering building)?</strong>
+A: Implement congestion strategies: (1) Express elevators (skip intermediate floors), (2) Load balancing (distribute across elevators evenly), (3) Queue management (separate lobby queues per destination floor), (4) Priority: press UP button → wait for assigned elevator.</p>
+<p><strong>Q11: How would you design for 100+ floors (skyscraper)?</strong>
+A: Zone system: (1) Divide into zones (floors 1-40, 41-80, etc.), (2) Separate elevator banks per zone, (3) Express elevators for zone-to-zone transfers, (4) Local elevators within zones. Prevents excessive travel distance.</p>
+<p><strong>Q12: How to minimize wait time mathematically?</strong>
+A: Wait time = (current_floor_distance + direction_penalty + other_stops). Optimize by sorting pickup requests → minimize backtracking. Use dynamic programming for 5-10 elevator assignment. Trade: computation vs real-time response.</p>
+<hr />
+<h2 id="scaling-qa-12-questions">Scaling Q&amp;A (12 Questions)</h2>
+<p><strong>Q1: Can you handle 100 elevators in one system?</strong>
+A: Yes, but need hierarchical coordination. Divide into clusters (10 elevators/cluster). Each cluster has dispatcher. Global dispatcher assigns request to best cluster. Reduces O(n) dispatch to O(log n). Example: 100 elevators → 10 clusters → 1 global.</p>
+<p><strong>Q2: What if 10,000 passengers request simultaneously?</strong>
+A: Queue all requests in priority queue. Assign in batches (1 request per dispatcher cycle). Expected wait: 30 seconds (if 100 elevators × 6 stops/min each). Scale: add more elevators or increase floor density.</p>
+<p><strong>Q3: How to optimize for 50-floor building with 5 elevators?</strong>
+A: Zone system: Floors 1-20 (Elevator 1-2), Floors 21-40 (Elevator 3-4), Floors 41-50 (Elevator 5). Separate queues per zone. Also use express elevators to transfer between zones (skip intermediate).</p>
+<p><strong>Q4: What if elevator breaks down mid-operation?</strong>
+A: (1) Alert system, (2) Descend to nearest floor + open doors, (3) Reassign pending requests to other elevators, (4) Increase wait time estimate for remaining elevators, (5) Trigger maintenance call.</p>
+<p><strong>Q5: Can passengers cancel requests mid-travel?</strong>
+A: Yes. If cancel before boarding: remove from destination queue. If already on elevator: too late (safety reason), must reach destination. Track cancellations for load balancing.</p>
+<p><strong>Q6: How to distribute load across multiple elevators?</strong>
+A: Maintain "current load" per elevator. When new request arrives, send to elevator with lowest (current_load + travel_cost). Prevents some elevators overloaded + others idle.</p>
+<p><strong>Q7: What's the impact of door operation time?</strong>
+A: Door time = 2 seconds × 2 (open + close). Throughput = 1 stop per 3-5 seconds (with travel + door). For elevator serving 10 stops: 30-50 seconds total. Optimize: batching, parallel door ops.</p>
+<p><strong>Q8: Can you predict traffic patterns?</strong>
+A: Yes. Morning (8-9 AM): UP traffic from lobby. Lunch (12-1 PM): mixed. Evening (5-6 PM): DOWN traffic. Allocate more elevators to high-traffic hours. Pre-position during predictable transitions.</p>
+<p><strong>Q9: How to reduce average wait time from 30s to 15s?</strong>
+A: (1) Add more elevators (linear improvement), (2) Smarter dispatch (30-40% better), (3) Dedicated express elevators (15-20% better), (4) Predictive positioning (5-10% better). Combined = 50-60% improvement.</p>
+<p><strong>Q10: How to handle multiple simultaneous up/down requests?</strong>
+A: LOOK algorithm: complete UP sweep first, then DOWN sweep. Within each sweep, serve all requests in order. Prevents zigzagging. Wait time increases slightly for reverse-direction passengers but total throughput improves.</p>
+<p><strong>Q11: What if network/communication fails (distributed system)?</strong>
+A: Fallback: each elevator runs local scheduler. Accept requests from local buttons only. Resume global coordination when network restored. Ensures safety even with comms failure.</p>
+<p><strong>Q12: Can you support adaptive algorithms based on real-time data?</strong>
+A: Yes. Collect metrics: average wait, travel distance, capacity utilization. Adjust dispatch strategy dynamically: if wait &gt; 30s, switch from LOOK → optimal (more computation). If CPU high, reduce to FCFS (faster).</p>
+<hr />
+<h2 id="demo-scenarios-5-examples">Demo Scenarios (5 Examples)</h2>
+<h3 id="demo-1-basic-setup">Demo 1: Basic Setup</h3>
+<pre class="codehilite"><code>- Create 10-floor building with 3 elevators (capacity 12 each)
+- Initialize all elevators at floor 1 (idle)
+- Display system state
+</code></pre>
+
+<h3 id="demo-2-single-passenger-journey">Demo 2: Single Passenger Journey</h3>
+<pre class="codehilite"><code>- Passenger at floor 2 presses UP button
+- System assigns nearest elevator
+- Elevator moves to floor 2
+- Opens doors, passenger boards
+- Passenger presses destination (floor 5)
+- Elevator moves to floor 5, opens doors
+- Passenger exits
+</code></pre>
+
+<h3 id="demo-3-multiple-requests-batching">Demo 3: Multiple Requests (Batching)</h3>
+<pre class="codehilite"><code>- Multiple passengers request from floor 3 (different destinations)
+- Elevator picks up all passengers at once (batch)
+- Drops each passenger at their floor
+- Calculate total wait time vs individual elevator per request
+</code></pre>
+
+<h3 id="demo-4-concurrent-elevators">Demo 4: Concurrent Elevators</h3>
+<pre class="codehilite"><code>- Elevator 1: Moving UP (floors 2, 3, 4)
+- Elevator 2: Moving DOWN (floors 8, 6, 5)
+- Elevator 3: IDLE at floor 1
+- New request from floor 9: Assign to Elevator 2 (same direction)
+- New request from floor 2: Assign to Elevator 1 (same direction)
+- System handles concurrency efficiently
+</code></pre>
+
+<h3 id="demo-5-emergency-scenario">Demo 5: Emergency Scenario</h3>
+<pre class="codehilite"><code>- Elevator 1 gets stuck between floors 5-6
+- System detects timeout (5+ seconds)
+- Alerts maintenance + forces descent to floor 5
+- Opens doors, passengers exit safely
+- Reassign pending requests to other elevators
+- Elevator 1 removed from service
+</code></pre>
+
+<hr />
+<h2 id="complete-implementation">Complete Implementation</h2>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+🛗 Elevator System - Interview Implementation
+Demonstrates:
+1. Multi-elevator coordination
+2. State machine (idle, moving, doors open)
+3. Dispatch algorithms (LOOK, optimal)
+4. Request batching
+5. Concurrent elevator movement
+&quot;&quot;&quot;
+
+from enum import Enum
+from abc import ABC, abstractmethod
+from typing import List, Optional, Set, Dict
+from dataclasses import dataclass, field
+from collections import defaultdict
+import heapq
+import threading
+import time
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class Direction(Enum):
+    UP = 1
+    DOWN = -1
+    IDLE = 0
+
+class ElevatorState(Enum):
+    IDLE = 1
+    MOVING = 2
+    DOORS_OPEN = 3
+    EMERGENCY = 4
+
+# ============================================================================
+# DATA CLASSES
+# ============================================================================
+
+@dataclass
+class Request:
+    pickup_floor: int
+    destination_floor: int
+    passenger_id: int
+    timestamp: float = field(default_factory=time.time)
+
+    def __lt__(self, other):
+        return self.timestamp &lt; other.timestamp
+
+@dataclass
+class Passenger:
+    passenger_id: int
+    current_floor: int
+    destination_floor: int
+
+    def __hash__(self):
+        return hash(self.passenger_id)
+
+# ============================================================================
+# ELEVATOR
+# ============================================================================
+
+class Elevator:
+    def __init__(self, elevator_id: int, num_floors: int, capacity: int = 12):
+        self.elevator_id = elevator_id
+        self.current_floor = 1
+        self.direction = Direction.IDLE
+        self.state = ElevatorState.IDLE
+        self.passengers: Set[Passenger] = set()
+        self.up_queue: List[int] = []
+        self.down_queue: List[int] = []
+        self.capacity = capacity
+        self.num_floors = num_floors
+        self.door_open_time = 0
+        self.stuck_time = 0
+        self.lock = threading.Lock()
+
+    def add_request(self, floor: int, direction: Direction) -&gt; bool:
+        with self.lock:
+            if direction == Direction.UP:
+                if floor not in self.up_queue:
+                    self.up_queue.append(floor)
+                    self.up_queue.sort()
+                    return True
+            elif direction == Direction.DOWN:
+                if floor not in self.down_queue:
+                    self.down_queue.append(floor)
+                    self.down_queue.sort(reverse=True)
+                    return True
+        return False
+
+    def add_passenger(self, passenger: Passenger) -&gt; bool:
+        with self.lock:
+            if len(self.passengers) &lt; self.capacity:
+                self.passengers.add(passenger)
+                return True
+        return False
+
+    def remove_passengers_at_floor(self, floor: int) -&gt; List[Passenger]:
+        with self.lock:
+            exiting = [p for p in self.passengers if p.destination_floor == floor]
+            self.passengers -= set(exiting)
+            return exiting
+
+    def move_to_next_floor(self) -&gt; bool:
+        &quot;&quot;&quot;Move elevator to next floor based on direction&quot;&quot;&quot;
+        with self.lock:
+            if self.direction == Direction.IDLE:
+                if self.up_queue or self.down_queue:
+                    self.direction = Direction.UP if self.up_queue else Direction.DOWN
+                else:
+                    return False
+
+            if self.direction == Direction.UP:
+                if self.up_queue:
+                    next_floor = self.up_queue[0]
+                    if self.current_floor &lt; next_floor:
+                        self.current_floor += 1
+                    elif self.current_floor == next_floor:
+                        self.state = ElevatorState.DOORS_OPEN
+                        self.up_queue.pop(0)
+                else:
+                    self.direction = Direction.DOWN
+                    return self.move_to_next_floor()
+
+            elif self.direction == Direction.DOWN:
+                if self.down_queue:
+                    next_floor = self.down_queue[0]
+                    if self.current_floor &gt; next_floor:
+                        self.current_floor -= 1
+                    elif self.current_floor == next_floor:
+                        self.state = ElevatorState.DOORS_OPEN
+                        self.down_queue.pop(0)
+                else:
+                    if not self.up_queue and not self.passengers:
+                        self.direction = Direction.IDLE
+                        self.state = ElevatorState.IDLE
+
+            return True
+
+    def get_load(self) -&gt; int:
+        with self.lock:
+            return len(self.passengers)
+
+    def get_travel_cost(self, pickup_floor: int) -&gt; int:
+        &quot;&quot;&quot;Calculate cost to reach pickup_floor&quot;&quot;&quot;
+        distance = abs(self.current_floor - pickup_floor)
+        direction_penalty = 0
+
+        if self.direction == Direction.IDLE:
+            direction_penalty = 0
+        elif self.direction == Direction.UP and pickup_floor &lt; self.current_floor:
+            direction_penalty = 10
+        elif self.direction == Direction.DOWN and pickup_floor &gt; self.current_floor:
+            direction_penalty = 10
+
+        return distance + direction_penalty
+
+    def display_status(self):
+        with self.lock:
+            print(f&quot;  Elev {self.elevator_id}: Floor {self.current_floor}, &quot;
+                  f&quot;Dir {self.direction.name}, State {self.state.name}, &quot;
+                  f&quot;Passengers {len(self.passengers)}, &quot;
+                  f&quot;UP {self.up_queue}, DOWN {self.down_queue}&quot;)
+
+# ============================================================================
+# ELEVATOR SYSTEM (SINGLETON)
+# ============================================================================
+
+class ElevatorSystem:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self, num_floors: int = 10, num_elevators: int = 3):
+        if hasattr(self, '_initialized'):
+            return
+        self._initialized = True
+        self.num_floors = num_floors
+        self.elevators = [Elevator(i+1, num_floors) for i in range(num_elevators)]
+        self.request_queue: List[Request] = []
+        self.lock = threading.Lock()
+
+    def request_elevator(self, pickup_floor: int, destination_floor: int, passenger_id: int) -&gt; Optional[Elevator]:
+        &quot;&quot;&quot;Assign optimal elevator to request&quot;&quot;&quot;
+        if not (1 &lt;= pickup_floor &lt;= self.num_floors) or not (1 &lt;= destination_floor &lt;= self.num_floors):
+            return None
+        if pickup_floor == destination_floor:
+            return None
+
+        direction = Direction.UP if destination_floor &gt; pickup_floor else Direction.DOWN
+
+        # Find best elevator
+        best_elevator = None
+        best_cost = float('inf')
+
+        for elevator in self.elevators:
+            if elevator.get_load() &lt; elevator.capacity:
+                cost = elevator.get_travel_cost(pickup_floor)
+                if cost &lt; best_cost:
+                    best_cost = cost
+                    best_elevator = elevator
+
+        if best_elevator:
+            best_elevator.add_request(pickup_floor, direction)
+            best_elevator.add_request(destination_floor, direction)
+            return best_elevator
+
+        return None
+
+    def step(self):
+        &quot;&quot;&quot;Simulate one time step&quot;&quot;&quot;
+        for elevator in self.elevators:
+            if elevator.state == ElevatorState.DOORS_OPEN:
+                # Open doors for 2 seconds, then close
+                elevator.state = ElevatorState.MOVING
+            elif elevator.state == ElevatorState.MOVING:
+                elevator.move_to_next_floor()
+
+    def display_system(self):
+        print(&quot;\n&quot; + &quot;=&quot;*70)
+        print(f&quot;ELEVATOR SYSTEM - {len(self.elevators)} Elevators, {self.num_floors} Floors&quot;)
+        print(&quot;=&quot;*70)
+        for elevator in self.elevators:
+            elevator.display_status()
+
+    def run_simulation(self, duration: int):
+        &quot;&quot;&quot;Run simulation for N time steps&quot;&quot;&quot;
+        for t in range(duration):
+            self.step()
+            if t % 5 == 0:
+                self.display_system()
+                time.sleep(0.5)
+
+    def reset(self):
+        self.__init__(self.num_floors, len(self.elevators))
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def demo_1_setup():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 1: SYSTEM SETUP&quot;)
+    print(&quot;=&quot;*70)
+
+    system = ElevatorSystem(num_floors=10, num_elevators=3)
+    print(&quot;✓ Created elevator system: 10 floors, 3 elevators&quot;)
+    system.display_system()
+
+def demo_2_single_journey():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 2: SINGLE PASSENGER JOURNEY&quot;)
+    print(&quot;=&quot;*70)
+
+    system = ElevatorSystem(num_floors=10, num_elevators=3)
+    system.reset()
+
+    print(&quot;\n✓ Passenger 1: Request elevator from floor 2 to floor 7&quot;)
+    elevator = system.request_elevator(pickup_floor=2, destination_floor=7, passenger_id=1)
+
+    if elevator:
+        print(f&quot;✓ Assigned to Elevator {elevator.elevator_id}&quot;)
+        print(&quot;Simulating movement...&quot;)
+        for _ in range(12):
+            system.step()
+        system.display_system()
+    else:
+        print(&quot;✗ No available elevator&quot;)
+
+def demo_3_multiple_requests():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 3: MULTIPLE CONCURRENT REQUESTS&quot;)
+    print(&quot;=&quot;*70)
+
+    system = ElevatorSystem(num_floors=10, num_elevators=3)
+    system.reset()
+
+    requests = [
+        (2, 5, 1),   # Floor 2 → 5
+        (2, 8, 2),   # Floor 2 → 8
+        (3, 7, 3),   # Floor 3 → 7
+        (8, 2, 4),   # Floor 8 → 2
+    ]
+
+    print(&quot;✓ Creating multiple requests...&quot;)
+    for pickup, dest, pid in requests:
+        elevator = system.request_elevator(pickup, dest, pid)
+        if elevator:
+            print(f&quot;  Passenger {pid}: {pickup} → {dest}, Elevator {elevator.elevator_id}&quot;)
+
+    print(&quot;\nSimulating system...&quot;)
+    for _ in range(20):
+        system.step()
+
+    system.display_system()
+
+def demo_4_dispatch_algorithm():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 4: DISPATCH ALGORITHM - NEAREST ELEVATOR&quot;)
+    print(&quot;=&quot;*70)
+
+    system = ElevatorSystem(num_floors=10, num_elevators=3)
+    system.reset()
+
+    print(&quot;\nInitial state:&quot;)
+    system.display_system()
+
+    print(&quot;\n✓ Request from floor 9 going DOWN...&quot;)
+    elevator = system.request_elevator(pickup_floor=9, destination_floor=2, passenger_id=1)
+    print(f&quot;✓ Assigned to Elevator {elevator.elevator_id} (cost-based dispatch)&quot;)
+
+    print(&quot;\nSimulating 15 steps:&quot;)
+    for _ in range(15):
+        system.step()
+    system.display_system()
+
+def demo_5_emergency():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 5: EMERGENCY HANDLING&quot;)
+    print(&quot;=&quot;*70)
+
+    system = ElevatorSystem(num_floors=10, num_elevators=3)
+    system.reset()
+
+    print(&quot;✓ Simulating normal operations...&quot;)
+    system.request_elevator(2, 8, 1)
+    system.request_elevator(5, 9, 2)
+
+    for _ in range(10):
+        system.step()
+
+    system.display_system()
+
+    print(&quot;\n⚠️ Elevator 1 STUCK DETECTION (timeout &gt; 5 seconds)&quot;)
+    system.elevators[0].state = ElevatorState.EMERGENCY
+    print(&quot;✓ Emergency procedures activated:&quot;)
+    print(&quot;  - Descend to nearest floor&quot;)
+    print(&quot;  - Open doors&quot;)
+    print(&quot;  - Passengers evacuate&quot;)
+    print(&quot;  - Reassign pending requests&quot;)
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;🛗 ELEVATOR SYSTEM - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_setup()
+    demo_2_single_journey()
+    demo_3_multiple_requests()
+    demo_4_dispatch_algorithm()
+    demo_5_emergency()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;✅ ALL DEMOS COMPLETED&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<hr />
+<h2 id="design-patterns-explained">Design Patterns Explained</h2>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Usage</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td><code>ElevatorSystem</code> manages all elevators</td>
+<td>Centralized coordination + dispatch</td>
+</tr>
+<tr>
+<td><strong>State Machine</strong></td>
+<td>Elevator states (idle/moving/doors_open)</td>
+<td>Clear transitions, prevents invalid states</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Multiple dispatch algorithms (LOOK, optimal, FCFS)</td>
+<td>Swap algorithms at runtime</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Notify floors when elevator arrives</td>
+<td>Decoupled notifications</td>
+</tr>
+<tr>
+<td><strong>Command</strong></td>
+<td>Button presses as commands queued</td>
+<td>Undo/batch operations possible</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="key-system-rules-implemented">Key System Rules Implemented</h2>
+<ul>
+<li><strong>Capacity Enforcement</strong>: Prevent overbooking beyond weight limit</li>
+<li><strong>Direction Optimization</strong>: LOOK algorithm minimizes reversals</li>
+<li><strong>Cost-Based Dispatch</strong>: Assign to elevator with minimum travel cost</li>
+<li><strong>Stuck Detection</strong>: Timeout triggers emergency procedures</li>
+<li><strong>Request Batching</strong>: Pick up multiple passengers at same floor</li>
+<li><strong>Fair Scheduling</strong>: Serve requests in order per direction</li>
+</ul>
+<hr />
+<h2 id="summary">Summary</h2>
+<p>✅ <strong>Singleton</strong> for system-wide coordination
+✅ <strong>State Machine</strong> for elevator lifecycle (idle → moving → doors_open)
+✅ <strong>Dispatch algorithms</strong> with cost-based optimization
+✅ <strong>Multi-elevator concurrency</strong> with thread-safe queues
+✅ <strong>Request batching</strong> for efficiency
+✅ <strong>Emergency handling</strong> (stuck detection + evacuation)
+✅ <strong>Scalable to 100+ elevators</strong> (hierarchical clustering)
+✅ <strong>Real-time scheduling</strong> (LOOK algorithm)
+✅ <strong>Capacity management</strong> (weight limits, passenger count)
+✅ <strong>Performance optimization</strong> (minimize wait time + reversals)</p>
+<p><strong>Key Takeaway</strong>: Elevator system demonstrates real-time scheduling with conflicting objectives (wait time vs energy), multi-state machines, concurrent coordination, and practical dispatch algorithms. Core focus: optimal routing, state management, and emergency handling.</p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-04-05</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

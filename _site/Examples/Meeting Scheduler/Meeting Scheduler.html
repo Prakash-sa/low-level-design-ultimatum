@@ -1,0 +1,1507 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meeting Scheduler - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Insatance%20Variable.html">Class Variable vs Insatance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Airline%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Airline Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/">Airline Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/Airline%20Management%20System.html">Airline Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Locker System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/">Amazon Locker System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/Amazon%20Locker%20System.html">Amazon Locker System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Online Shopping System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/">Amazon Online Shopping System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/ATM/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle ATM" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/ATM/">ATM</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM/ATM.html">ATM</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Cache/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Cache" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Cache/">Cache</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache/Cache.html">Cache</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Car%20Rental%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Car Rental System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/">Car Rental System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/Car%20Rental%20System.html">Car Rental System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Chess%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Chess Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Chess%20Game/">Chess Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game/Chess%20Game.html">Chess Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circinfo (Ride Sharing)" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/">Circinfo (Ride Sharing)</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Design Hit Counter" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/">Design Hit Counter</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/Design%20Hit%20Counter.html">Design Hit Counter</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/">Elevator System</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Elevator%20System.html">Elevator System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Facebook/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Facebook" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Facebook/">Facebook</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook/Facebook.html">Facebook</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/File%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle File System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/File%20System/">File System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System/File%20System.html">File System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Hotel Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/">Hotel Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/Hotel%20Management%20System.html">Hotel Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Jigsaw Puzzle" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/">Jigsaw Puzzle</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Leaderboard/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Leaderboard" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Leaderboard/">Leaderboard</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard/Leaderboard.html">Leaderboard</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Library%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Library Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/">Library Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/Library%20Management%20System.html">Library Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/LinkedIn/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle LinkedIn" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/LinkedIn/">LinkedIn</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn/LinkedIn.html">LinkedIn</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Logging/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Logging" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Logging/">Logging</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging/Logging.html">Logging</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Meeting Scheduler" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/">Meeting Scheduler</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/Meeting%20Scheduler.html">Meeting Scheduler</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Movie Ticket Booking System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/">Movie Ticket Booking System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Blackjack Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/">Online Blackjack Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Stock Brokerage System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/">Online Stock Brokerage System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/">Parking Lot</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Parking%20Lot.html">Parking Lot</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Pub-Sub/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Pub-Sub" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Pub-Sub/">Pub-Sub</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub/Pub-Sub.html">Pub-Sub</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Restaurant Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/">Restaurant Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/Restaurant%20Management%20System.html">Restaurant Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Stack%20Overflow/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Stack Overflow" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/">Stack Overflow</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/Stack%20Overflow.html">Stack Overflow</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Text Editor with Undo & Redo" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/">Text Editor with Undo & Redo</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Train Platform Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/">Train Platform Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Vending%20Machine/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Vending Machine" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/">Vending Machine</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/Vending%20Machine.html">Vending Machine</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/">Meeting Scheduler</a>
+            </div>
+            <div class="content">
+                <h1 id="meeting-scheduler-75-minute-interview-guide">Meeting Scheduler — 75-Minute Interview Guide</h1>
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>What is it?</strong> Calendar and meeting scheduling system with room booking, conflict detection, invitations, recurring meetings, and reminders using singleton coordinator, observer patterns for notifications, and strategy patterns for conflict resolution.</p>
+<p><strong>Key Classes:</strong>
+- <code>MeetingScheduler</code> (Singleton): Centralized coordinator for all meetings, users, and rooms
+- <code>Meeting</code>: Calendar event with attendees, time, and state machine lifecycle
+- <code>User</code>: Professional user with personal calendar and availability
+- <code>Room</code>: Physical room with capacity and booking constraints
+- <code>Invitation</code>: Invitation with state machine (Pending→Accepted/Declined/Tentative)
+- <code>ConflictResolutionStrategy</code> (ABC): Pluggable conflict handling (AutoReject, ProposeAlternatives, ForceBook)
+- <code>MeetingObserver</code> (ABC): Event notification subscribers</p>
+<p><strong>Core Flows:</strong>
+1. <strong>Meeting Creation</strong>: User creates meeting → Choose attendees &amp; room → Check conflicts → Send invitations
+2. <strong>Conflict Detection</strong>: Check room availability, attendee calendars, time overlaps → Apply resolution strategy
+3. <strong>Invitation Flow</strong>: Send invitation → State Pending → Accept/Decline/Tentative → Update calendar
+4. <strong>Recurring Meetings</strong>: Define recurrence rule → Generate instances → Check conflicts for each → Expansion strategy
+5. <strong>Room Booking</strong>: Request room → Check capacity &amp; availability → Book → Add to calendar</p>
+<p><strong>5 Design Patterns:</strong>
+- <strong>Singleton</strong>: One MeetingScheduler instance (centralized calendar system)
+- <strong>Observer</strong>: Notification system (attendees, room managers, notification channels)
+- <strong>Strategy</strong>: Conflict resolution (AutoReject, ProposeAlternatives, ForceBook)
+- <strong>State Machine</strong>: Meeting lifecycle (Scheduled→Ongoing→Completed/Cancelled)
+- <strong>Factory</strong>: Create meeting types (OneOffMeeting, RecurringMeeting)</p>
+<hr />
+<h2 id="system-overview">System Overview</h2>
+<p>Professional meeting scheduling system enabling users to create meetings, book conference rooms, detect scheduling conflicts, manage invitations, and receive notifications.</p>
+<h3 id="requirements">Requirements</h3>
+<p><strong>Functional:</strong>
+- Create one-time and recurring meetings with title, time, duration, location
+- Add/remove attendees and send invitations
+- Accept/decline/tentative invitations (state machine)
+- Book conference rooms with capacity constraints
+- Detect conflicts (time overlap, room double-booking, attendee unavailability)
+- Apply conflict resolution strategies (auto-reject, propose alternatives, force-book)
+- View personal calendar with meetings and availability
+- Find available time slots for group meetings
+- Cancel/reschedule meetings with notification
+- Set reminders for upcoming meetings
+- Support recurring meetings (daily, weekly, monthly) with exception handling</p>
+<p><strong>Non-Functional:</strong>
+- Conflict detection &lt; 100ms (interval trees for O(log n) queries)
+- Calendar view &lt; 500ms (pagination for large calendars)
+- Support 1M+ users with 10M+ meetings
+- 99.9% availability
+- Real-time notifications
+- Eventual consistency acceptable for sync</p>
+<p><strong>Constraints:</strong>
+- Single-process demo (production: microservices)
+- In-memory storage (production: PostgreSQL + Redis)
+- Optional scaling narratives</p>
+<hr />
+<h2 id="architecture-diagram-ascii-uml">Architecture Diagram (ASCII UML)</h2>
+<pre class="codehilite"><code>┌──────────────────────────────────────────────────────────────┐
+│        MeetingScheduler (Singleton)                          │
+│  - users: {user_id → User}                                  │
+│  - meetings: {meeting_id → Meeting}                         │
+│  - rooms: {room_id → Room}                                  │
+│  - invitations: {inv_id → Invitation}                       │
+│  - conflict_strategy: ConflictResolutionStrategy            │
+│  - observers: [MeetingObserver]                             │
+│  + create_meeting(), book_room(), find_free_slots()        │
+│  + check_conflicts(), resolve_conflicts()                  │
+│  + set_conflict_resolution(strategy)                       │
+└──────────────────┬───────────────────────────────────────────┘
+                   │
+      ┌────────────┼────────────┬──────────────┬──────────────┐
+      ▼            ▼            ▼              ▼              ▼
+  ┌────────┐  ┌──────────┐  ┌────────┐  ┌────────┐  ┌──────────┐
+  │ User   │  │ Meeting  │  │  Room  │  │Invita- │  │Recurring │
+  ├────────┤  ├──────────┤  ├────────┤  │tion    │  │Meeting   │
+  │-calendar│  │-title    │  │-name   │  ├────────┤  ├──────────┤
+  │-avail. │  │-time     │  │-capacity│ │-status:│  │-rule     │
+  │-pref.  │  │-attendees│  │-bookings│ │Pending │  │-count    │
+  └────────┘  │-room     │  └────────┘  │-Accept │  │-except.  │
+              │-status   │              │-Decline│  └──────────┘
+              │-recur    │              │-Tenta. │
+              └──────────┘              └────────┘
+                   │                          │
+                   ▼                          ▼
+         ┌──────────────────┐      ┌──────────────────────┐
+         │ MeetingState     │      │ Invitation State     │
+         │ (Abstract)       │      │ (State Pattern)      │
+         ├──────────────────┤      ├──────────────────────┤
+         │ SCHEDULED        │      │ PENDING              │
+         │ → ONGOING        │      │ ↓ Accept/Decline     │
+         │ → COMPLETED      │      │ → ACCEPTED/DECLINED  │
+         │ ↓ CANCELLED      │      │ ↓ Tentative          │
+         │ → CANCELLED      │      │ → TENTATIVE          │
+         └──────────────────┘      └──────────────────────┘
+                                            │
+              ┌─────────────────────────────┴─────────────────────┐
+              ▼                                                   ▼
+   ┌─────────────────────────┐                 ┌──────────────────────┐
+   │ ConflictResolution      │                 │ MeetingObserver      │
+   │ Strategy (ABC)          │                 │ (Abstract)           │
+   │ + resolve()             │                 │ + update()           │
+   └────┬────────┬───────────┘                 └────┬────┬──────┬────┘
+        │        │                                  │    │      │
+    ┌───┴──┐  ┌──┴──┐  ┌─────────────┐        ┌────┴──┐ │      │
+    ▼      ▼  ▼     ▼  ▼             ▼        ▼       ▼ ▼      ▼
+   Auto  Propose Force  AvailSlot  Recurring  Notif  Email  Remind
+   Reject Alternatives Book        Strategy   System  Alert   Service
+
+CONFLICT DETECTION FLOW:
+NEW_MEETING_REQUEST
+  → CHECK_ROOM_AVAILABLE (O(log n) interval tree)
+  → CHECK_ATTENDEES_AVAILABLE (for each attendee calendar)
+  → IF_CONFLICT: Apply ConflictResolutionStrategy
+     ├─ AUTO_REJECT: Reject meeting
+     ├─ PROPOSE_ALTERNATIVES: Suggest other time slots
+     └─ FORCE_BOOK: Override and book anyway
+  → SEND_INVITATIONS (Observer pattern)
+  → ADD_TO_CALENDARS
+  → SCHEDULE_REMINDERS
+
+INVITATION LIFECYCLE:
+CREATED → PENDING
+  ├─ accept() → ACCEPTED → Update user calendar
+  ├─ decline() → DECLINED
+  └─ tentative() → TENTATIVE
+</code></pre>
+
+<hr />
+<h2 id="interview-qa-12-questions">Interview Q&amp;A (12 Questions)</h2>
+<h3 id="basic-level">Basic Level</h3>
+<p><strong>Q1: How does Singleton ensure one MeetingScheduler instance?</strong>
+A: <code>MeetingScheduler</code> uses <code>__new__</code> with thread-safe double-check locking. <code>_instance</code> class variable holds single instance. On first call, creates instance; subsequent calls return same. Prevents multiple systems managing different meetings.</p>
+<p><strong>Q2: How does Observer pattern work for notifications?</strong>
+A: <code>MeetingScheduler</code> maintains list of <code>MeetingObserver</code> objects. When meeting created/cancelled/moved, scheduler calls <code>update(event, payload)</code> on all observers. Each observer (EmailAlert, ReminderService) handles notifications independently.</p>
+<p><strong>Q3: What's the Meeting state machine lifecycle?</strong>
+A: Meeting starts in <code>Scheduled</code> state. Transitions: <code>Scheduled</code> → <code>Ongoing</code> (at start time) → <code>Completed</code> (after duration) or <code>Cancelled</code> (explicit cancellation). Each state encapsulates valid operations.</p>
+<p><strong>Q4: How does Factory pattern work for meeting types?</strong>
+A: <code>MeetingFactory.create_meeting(type, title, time, duration, ...)</code> takes meeting type. Returns either OneOffMeeting or RecurringMeeting. Centralizes creation, makes extending with new types easy.</p>
+<p><strong>Q5: How do conflict resolution strategies differ?</strong>
+A: <code>AutoRejectStrategy</code> rejects conflicting meetings. <code>ProposeAlternativesStrategy</code> suggests free time slots. <code>ForceBookStrategy</code> overrides and books anyway. Each strategy independent; can switch at runtime.</p>
+<h3 id="intermediate-level">Intermediate Level</h3>
+<p><strong>Q6: How does conflict detection work efficiently?</strong>
+A: Use interval tree indexed by time. For room conflicts: query tree for (meeting_start, meeting_end) → O(log n). For attendees: iterate their calendars, merge overlapping intervals → O(k log k) for k meetings. Total: O(n log n) for n meetings.</p>
+<p><strong>Q7: How do you find available time slots for group meeting?</strong>
+A: Collect all attendees' busy intervals. Merge overlapping intervals (sort + sweep) → O(n log n). Find gaps &gt;= required_duration. Return top 5 slots. Can pre-compute popular time slots.</p>
+<p><strong>Q8: How do recurring meetings handle exceptions?</strong>
+A: RecurringMeeting stores recurrence rule (daily/weekly/month day) + exception_dates. Generate instances: iterate from start_date, apply rule, skip exception_dates. Check conflicts for each instance separately.</p>
+<p><strong>Q9: Why use Strategy pattern instead of nested if-statements?</strong>
+A: Strategy encapsulates each conflict resolution approach independently. Easy to add new strategies without changing MeetingScheduler code. Can switch strategies at runtime. Open/Closed principle.</p>
+<p><strong>Q10: How do you handle attendee availability efficiently?</strong>
+A: Cache user calendars in memory with last-update timestamp. For large calendars (&gt;1000 meetings), use time-windowing: only load meetings for current month + next month. Pagination for calendar view.</p>
+<h3 id="advanced-level">Advanced Level</h3>
+<p><strong>Q11: How would you scale to 1M users and 10M meetings?</strong>
+A: Shard users by user_id hash → separate database shard. Meetings sharded by creator_id or room_id. Use Elasticsearch for available slot queries. Cache popular rooms/time slots in Redis. Denormalize attendee lists for fast access. Background jobs for conflict pre-detection.</p>
+<p><strong>Q12: How to handle 100K concurrent meeting creation requests?</strong>
+A: Use optimistic locking: Meeting.version increments on update. Conflict check: if version != expected after book attempt, retry. Queue system for conflict resolution: 10K queues, distribute requests by (room_id + time_bucket) hash. Async notification: Kafka queues for emails/reminders.</p>
+<hr />
+<h2 id="scaling-qa-12-questions">Scaling Q&amp;A (12 Questions)</h2>
+<p><strong>Q1: Can 1M users schedule 10M meetings in memory?</strong>
+A: No. 10M meetings × 1KB = 10GB metadata alone. In production: PostgreSQL (sharded) for meetings, Redis for cache (hot meetings: today + next 7 days). ElasticSearch for meeting search. Room availability: dedicated service with real-time cache.</p>
+<p><strong>Q2: How to find free slots for 100 people in &lt; 100ms?</strong>
+A: Pre-compute free slots for each person nightly (Spark job). Store as "free_blocks" in Redis (person_id → [(start, end), ...]). When finding group slots: intersect 100 free_blocks sets (fast bitwise operation on sorted intervals). Total: &lt; 50ms.</p>
+<p><strong>Q3: What's the storage footprint for 1M users × 100 meetings each = 100M meetings?</strong>
+A: Each meeting ≈ 1KB (title, time, attendees, room). 100M × 1KB = 100GB. With compression: 30-40GB. Sharded across 50 database servers = ~1GB each. Hot cache (today's meetings) ≈ 5GB.</p>
+<p><strong>Q4: How to handle meeting conflicts across timezones?</strong>
+A: Store all times in UTC internally. Convert to user's timezone for display. Conflict check: always in UTC (eliminates DST bugs). Reminders: calculate user's local time, send at 9:00 AM local time using user's timezone offset.</p>
+<p><strong>Q5: How to efficiently check room conflicts for 100K meeting requests/sec?</strong>
+A: Partition rooms by ID hash → 100 room-service instances. Each instance handles 1000 rooms. Use interval tree per room: O(log n) conflict check. Peak throughput: 100K requests ÷ 100 instances = 1000 req/sec per instance = 100ms per request (acceptable).</p>
+<p><strong>Q6: How to generate available slots for 1000 meetings worth of historical data?</strong>
+A: Don't recompute all slots. Use sliding window: for next 90 days, pre-compute free slots. Cache in Redis. For past meetings: archive to S3 (don't need for conflict checks). Incremental updates: add new meeting → recompute free slots for affected hours.</p>
+<p><strong>Q7: How to maintain consistency when users edit meetings simultaneously?</strong>
+A: Use optimistic locking: Meeting.version increments on edit. Edit request includes expected version. If version mismatch, conflict: user sees "meeting changed, retry". Alternative: use distributed locks (Redis) for 10-second exclusive locks during edits.</p>
+<p><strong>Q8: How to scale notifications to 1M meeting changes/hour?</strong>
+A: Kafka: 1M messages/hour ÷ 3600 sec ≈ 278 msg/sec. Kafka handles 1M msg/sec (safe). Partition by user_id (100 partitions). Consumer services (100 instances) → batch send emails (1000 per batch) via SendGrid API. Total: 100 batches/sec × 1000 emails = 100K emails/sec.</p>
+<p><strong>Q9: How to handle recurring meetings generating 1M instances?</strong>
+A: Generate instances lazily: store only recurrence rule + exceptions. When user opens calendar → generate instances for current month only (10-50 instances). When checking conflicts → generate on-demand for time range of interest. Pre-generate only for bookings (10K annual meetings = manageable).</p>
+<p><strong>Q10: How to efficiently sync meeting calendars across 10 devices per user?</strong>
+A: Server-side calendar: single source of truth in PostgreSQL. Devices: lightweight sync using timestamps. Device stores last_sync_ts. Query: meetings WHERE modified_time &gt; last_sync_ts. Delta sync: typically &lt;1000 changes per device per hour. Batch updates every 5 min.</p>
+<p><strong>Q11: How to detect anomalies (e.g., too many meetings, room overbooking)?</strong>
+A: Real-time alerts: if meetings_per_hour &gt; 10 for a user → alert. Room alerts: if bookings &gt; capacity × 1.5 → flag as double-booking. Weekly report: identify users with &gt;40 hours/week in meetings. Weekday patterns: alert if anomalous (e.g., 500 meetings on Sunday).</p>
+<p><strong>Q12: How to support 1000 concurrent meeting creations with transactions?</strong>
+A: Use event sourcing: store every action as immutable event. CREATE_MEETING → append to log → process asynchronously. Conflict check → async verification. If conflict: emit CONFLICT_DETECTED event → user sees "meeting conflicted" and can retry with different time. Maintains high throughput (batched writes).</p>
+<hr />
+<h2 id="demo-scenarios-5-examples">Demo Scenarios (5 Examples)</h2>
+<h3 id="demo-1-user-creation-calendar-setup">Demo 1: User Creation &amp; Calendar Setup</h3>
+<pre class="codehilite"><code>1. Create user Alice (alice@email.com)
+2. Create user Bob (bob@email.com)
+3. Create conference room &quot;Room A&quot; (capacity 10)
+4. Create conference room &quot;Room B&quot; (capacity 5)
+5. Verify: Users exist, rooms exist, all calendars empty
+</code></pre>
+
+<h3 id="demo-2-create-meeting-without-conflicts">Demo 2: Create Meeting Without Conflicts</h3>
+<pre class="codehilite"><code>1. Alice creates &quot;Team Sync&quot; meeting: Monday 10:00 AM, 1 hour
+2. Add attendees: Bob
+3. Choose room: Room A
+4. Send invitations
+5. Bob accepts invitation
+6. Verify: Meeting on both calendars, invitation status = Accepted
+</code></pre>
+
+<h3 id="demo-3-detect-resolve-conflicts">Demo 3: Detect &amp; Resolve Conflicts</h3>
+<pre class="codehilite"><code>1. Alice tries to create overlapping meeting same time in Room A
+2. Conflict detected: Room A not available
+3. Apply AutoRejectStrategy: Meeting rejected
+4. Try ProposeAlternativesStrategy: System suggests Monday 11:00 AM
+5. Accept alternative: Meeting scheduled for 11:00 AM
+</code></pre>
+
+<h3 id="demo-4-invitation-state-machine">Demo 4: Invitation State Machine</h3>
+<pre class="codehilite"><code>1. Alice creates &quot;Project Planning&quot; meeting
+2. Send invitation to Bob, Charlie, David
+3. Bob accepts → invitation status = Accepted
+4. Charlie declines → invitation status = Declined
+5. David tentative → invitation status = Tentative
+6. Verify: Meeting still happens, shows attendee statuses
+</code></pre>
+
+<h3 id="demo-5-recurring-meeting-availability">Demo 5: Recurring Meeting &amp; Availability</h3>
+<pre class="codehilite"><code>1. Alice creates &quot;Daily Standup&quot; recurring meeting
+   - Start: Monday 9:00 AM
+   - Recurrence: DAILY
+   - Count: 5 instances (Mon-Fri)
+2. Generate instances: 5 separate meetings created
+3. Find available slots for next week for 4 people
+4. Show free 2-hour slots: {Tuesday 2-4 PM, Wednesday 3-5 PM, ...}
+5. Cancel one instance (Wednesday standup exception handling)
+</code></pre>
+
+<hr />
+<h2 id="complete-implementation">Complete Implementation</h2>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+📅 Meeting Scheduler System - Interview Implementation
+Demonstrates:
+1. Singleton pattern (one scheduler instance)
+2. Observer pattern (real-time notifications)
+3. Strategy pattern (pluggable conflict resolution)
+4. State machine pattern (meeting lifecycle)
+5. Factory pattern (create meeting types)
+&quot;&quot;&quot;
+
+from __future__ import annotations
+from enum import Enum
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Set, Tuple
+from datetime import datetime, timedelta
+import threading
+import bisect
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class MeetingStatus(Enum):
+    SCHEDULED = &quot;scheduled&quot;
+    ONGOING = &quot;ongoing&quot;
+    COMPLETED = &quot;completed&quot;
+    CANCELLED = &quot;cancelled&quot;
+
+class InvitationStatus(Enum):
+    PENDING = &quot;pending&quot;
+    ACCEPTED = &quot;accepted&quot;
+    DECLINED = &quot;declined&quot;
+    TENTATIVE = &quot;tentative&quot;
+
+class RecurrenceType(Enum):
+    DAILY = &quot;daily&quot;
+    WEEKLY = &quot;weekly&quot;
+    MONTHLY = &quot;monthly&quot;
+
+# ============================================================================
+# SUPPORTING CLASSES
+# ============================================================================
+
+@dataclass
+class TimeSlot:
+    &quot;&quot;&quot;Represents a time period&quot;&quot;&quot;
+    start_time: datetime
+    end_time: datetime
+
+    def overlaps(self, other: TimeSlot) -&gt; bool:
+        &quot;&quot;&quot;Check if two time slots overlap&quot;&quot;&quot;
+        return self.start_time &lt; other.end_time and other.start_time &lt; self.end_time
+
+    def duration_minutes(self) -&gt; int:
+        return int((self.end_time - self.start_time).total_seconds() / 60)
+
+@dataclass
+class Availability:
+    &quot;&quot;&quot;Tracks user availability&quot;&quot;&quot;
+    busy_slots: List[TimeSlot] = field(default_factory=list)
+
+    def is_available(self, slot: TimeSlot) -&gt; bool:
+        &quot;&quot;&quot;Check if user is available for time slot&quot;&quot;&quot;
+        return not any(slot.overlaps(busy) for busy in self.busy_slots)
+
+    def add_busy_slot(self, slot: TimeSlot) -&gt; None:
+        &quot;&quot;&quot;Add busy time to availability&quot;&quot;&quot;
+        self.busy_slots.append(slot)
+        self.busy_slots.sort(key=lambda s: s.start_time)
+
+    def merge_overlapping(self) -&gt; List[TimeSlot]:
+        &quot;&quot;&quot;Merge overlapping time slots&quot;&quot;&quot;
+        if not self.busy_slots:
+            return []
+
+        merged = []
+        current = self.busy_slots[0]
+
+        for slot in self.busy_slots[1:]:
+            if slot.start_time &lt;= current.end_time:
+                current = TimeSlot(current.start_time, max(current.end_time, slot.end_time))
+            else:
+                merged.append(current)
+                current = slot
+
+        merged.append(current)
+        return merged
+
+# ============================================================================
+# CORE ENTITIES
+# ============================================================================
+
+@dataclass
+class User:
+    &quot;&quot;&quot;System user with calendar&quot;&quot;&quot;
+    user_id: str
+    name: str
+    email: str
+    availability: Availability = field(default_factory=Availability)
+    meetings: List[str] = field(default_factory=list)  # meeting_ids
+
+    def is_available_for_slot(self, slot: TimeSlot) -&gt; bool:
+        return self.availability.is_available(slot)
+
+@dataclass
+class Room:
+    &quot;&quot;&quot;Conference room&quot;&quot;&quot;
+    room_id: str
+    name: str
+    capacity: int
+    bookings: List[TimeSlot] = field(default_factory=list)  # booked times
+
+    def is_available_for_slot(self, slot: TimeSlot) -&gt; bool:
+        &quot;&quot;&quot;Check if room is available (using interval tree logic)&quot;&quot;&quot;
+        return not any(slot.overlaps(booking) for booking in self.bookings)
+
+    def book_for_slot(self, slot: TimeSlot) -&gt; bool:
+        if not self.is_available_for_slot(slot):
+            return False
+        self.bookings.append(slot)
+        self.bookings.sort(key=lambda s: s.start_time)
+        return True
+
+@dataclass
+class Meeting:
+    &quot;&quot;&quot;Meeting with title, time, attendees&quot;&quot;&quot;
+    meeting_id: str
+    title: str
+    organizer_id: str
+    time_slot: TimeSlot
+    room_id: Optional[str] = None
+    attendees: Set[str] = field(default_factory=set)
+    status: MeetingStatus = MeetingStatus.SCHEDULED
+    recurring: Optional[RecurringMeeting] = None
+
+@dataclass
+class RecurringMeeting:
+    &quot;&quot;&quot;Recurring meeting configuration&quot;&quot;&quot;
+    title: str
+    organizer_id: str
+    start_time: datetime
+    duration_minutes: int
+    recurrence_type: RecurrenceType
+    count: int
+    exceptions: Set[datetime] = field(default_factory=set)
+
+    def generate_instances(self) -&gt; List[Meeting]:
+        &quot;&quot;&quot;Generate meeting instances&quot;&quot;&quot;
+        instances = []
+        current_date = self.start_time
+
+        for i in range(self.count):
+            if current_date not in self.exceptions:
+                end_time = current_date + timedelta(minutes=self.duration_minutes)
+                slot = TimeSlot(current_date, end_time)
+                meeting = Meeting(
+                    f&quot;rec_{self.title}_{i}&quot;,
+                    f&quot;{self.title} #{i+1}&quot;,
+                    self.organizer_id,
+                    slot
+                )
+                instances.append(meeting)
+
+            # Move to next occurrence
+            if self.recurrence_type == RecurrenceType.DAILY:
+                current_date += timedelta(days=1)
+            elif self.recurrence_type == RecurrenceType.WEEKLY:
+                current_date += timedelta(weeks=1)
+            elif self.recurrence_type == RecurrenceType.MONTHLY:
+                # Add month (simple approach, doesn't handle month-end edge cases)
+                if current_date.month == 12:
+                    current_date = current_date.replace(year=current_date.year+1, month=1)
+                else:
+                    current_date = current_date.replace(month=current_date.month+1)
+
+        return instances
+
+@dataclass
+class Invitation:
+    &quot;&quot;&quot;Meeting invitation with state&quot;&quot;&quot;
+    invitation_id: str
+    meeting_id: str
+    invitee_id: str
+    status: InvitationStatus = InvitationStatus.PENDING
+
+    def accept(self) -&gt; None:
+        if self.status == InvitationStatus.PENDING:
+            self.status = InvitationStatus.ACCEPTED
+
+    def decline(self) -&gt; None:
+        if self.status == InvitationStatus.PENDING:
+            self.status = InvitationStatus.DECLINED
+
+    def tentative(self) -&gt; None:
+        if self.status == InvitationStatus.PENDING:
+            self.status = InvitationStatus.TENTATIVE
+
+# ============================================================================
+# CONFLICT RESOLUTION STRATEGIES
+# ============================================================================
+
+class ConflictResolutionStrategy(ABC):
+    &quot;&quot;&quot;Abstract strategy for conflict resolution&quot;&quot;&quot;
+
+    @abstractmethod
+    def resolve(self, conflict: Dict) -&gt; Dict:
+        &quot;&quot;&quot;Resolve conflict and return resolution action&quot;&quot;&quot;
+        raise NotImplementedError
+
+    def name(self) -&gt; str:
+        return self.__class__.__name__
+
+class AutoRejectStrategy(ConflictResolutionStrategy):
+    &quot;&quot;&quot;Reject conflicting meetings&quot;&quot;&quot;
+
+    def resolve(self, conflict: Dict) -&gt; Dict:
+        return {&quot;action&quot;: &quot;reject&quot;, &quot;reason&quot;: f&quot;Conflict: {conflict['reason']}&quot;}
+
+class ProposeAlternativesStrategy(ConflictResolutionStrategy):
+    &quot;&quot;&quot;Propose alternative time slots&quot;&quot;&quot;
+
+    def resolve(self, conflict: Dict) -&gt; Dict:
+        alternatives = conflict.get(&quot;free_slots&quot;, [])
+        return {
+            &quot;action&quot;: &quot;propose_alternatives&quot;,
+            &quot;alternatives&quot;: alternatives[:3]  # top 3 alternatives
+        }
+
+class ForceBookStrategy(ConflictResolutionStrategy):
+    &quot;&quot;&quot;Force book regardless of conflicts&quot;&quot;&quot;
+
+    def resolve(self, conflict: Dict) -&gt; Dict:
+        return {&quot;action&quot;: &quot;force_book&quot;, &quot;warning&quot;: &quot;Conflict will be overridden&quot;}
+
+# ============================================================================
+# OBSERVER PATTERN
+# ============================================================================
+
+class MeetingObserver(ABC):
+    &quot;&quot;&quot;Abstract observer for meeting events&quot;&quot;&quot;
+
+    @abstractmethod
+    def update(self, event: str, payload: Dict) -&gt; None:
+        raise NotImplementedError
+
+class EmailNotifier(MeetingObserver):
+    &quot;&quot;&quot;Send email notifications&quot;&quot;&quot;
+
+    def update(self, event: str, payload: Dict) -&gt; None:
+        if event == &quot;meeting_created&quot;:
+            print(f&quot;  [EMAIL] Invitation sent to {payload['attendees']}&quot;)
+        elif event == &quot;meeting_cancelled&quot;:
+            print(f&quot;  [EMAIL] Cancellation notice sent for {payload['title']}&quot;)
+
+class ReminderService(MeetingObserver):
+    &quot;&quot;&quot;Schedule meeting reminders&quot;&quot;&quot;
+
+    def update(self, event: str, payload: Dict) -&gt; None:
+        if event == &quot;meeting_created&quot;:
+            print(f&quot;  [REMINDER] Set reminder for {payload['title']} at {payload['start_time']}&quot;)
+
+class CalendarSyncObserver(MeetingObserver):
+    &quot;&quot;&quot;Sync meetings to calendar integrations&quot;&quot;&quot;
+
+    def update(self, event: str, payload: Dict) -&gt; None:
+        if event == &quot;meeting_created&quot;:
+            print(f&quot;  [CALENDAR] Synced {payload['title']} to Google Calendar&quot;)
+
+# ============================================================================
+# MEETING SCHEDULER (SINGLETON)
+# ============================================================================
+
+class MeetingScheduler:
+    &quot;&quot;&quot;Centralized meeting scheduling system (thread-safe Singleton)&quot;&quot;&quot;
+
+    _instance: Optional[MeetingScheduler] = None
+    _lock = threading.Lock()
+
+    def __new__(cls) -&gt; MeetingScheduler:
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self) -&gt; None:
+        if hasattr(self, '_initialized'):
+            return
+
+        self._initialized = True
+        self.users: Dict[str, User] = {}
+        self.meetings: Dict[str, Meeting] = {}
+        self.rooms: Dict[str, Room] = {}
+        self.invitations: Dict[str, Invitation] = {}
+        self.conflict_strategy: ConflictResolutionStrategy = AutoRejectStrategy()
+        self.observers: List[MeetingObserver] = []
+        print(&quot;📅 Meeting Scheduler initialized&quot;)
+
+    def register_observer(self, observer: MeetingObserver) -&gt; None:
+        self.observers.append(observer)
+
+    def _emit(self, event: str, payload: Dict) -&gt; None:
+        for observer in self.observers:
+            observer.update(event, payload)
+
+    # ---- USER MANAGEMENT ----
+
+    def create_user(self, user_id: str, name: str, email: str) -&gt; User:
+        user = User(user_id, name, email)
+        self.users[user_id] = user
+        return user
+
+    def get_user(self, user_id: str) -&gt; Optional[User]:
+        return self.users.get(user_id)
+
+    # ---- ROOM MANAGEMENT ----
+
+    def create_room(self, room_id: str, name: str, capacity: int) -&gt; Room:
+        room = Room(room_id, name, capacity)
+        self.rooms[room_id] = room
+        return room
+
+    def get_room(self, room_id: str) -&gt; Optional[Room]:
+        return self.rooms.get(room_id)
+
+    # ---- CONFLICT DETECTION ----
+
+    def check_conflicts(self, meeting: Meeting) -&gt; Tuple[bool, Optional[str], List[TimeSlot]]:
+        &quot;&quot;&quot;Check for conflicts and suggest alternatives&quot;&quot;&quot;
+        conflicts = []
+
+        # Check room availability
+        if meeting.room_id:
+            room = self.rooms.get(meeting.room_id)
+            if room and not room.is_available_for_slot(meeting.time_slot):
+                conflicts.append(f&quot;Room {room.name} is not available&quot;)
+
+        # Check attendee availability
+        for attendee_id in meeting.attendees:
+            user = self.users.get(attendee_id)
+            if user and not user.is_available_for_slot(meeting.time_slot):
+                conflicts.append(f&quot;{user.name} is not available&quot;)
+
+        # Find alternatives if conflicts
+        alternatives = []
+        if conflicts:
+            alternatives = self.find_available_slots(
+                meeting.attendees, meeting.time_slot.duration_minutes()
+            )
+
+        return (len(conflicts) == 0, &quot;; &quot;.join(conflicts) if conflicts else None, alternatives)
+
+    def find_available_slots(self, attendee_ids: Set[str], duration_minutes: int,
+                            days_ahead: int = 7) -&gt; List[TimeSlot]:
+        &quot;&quot;&quot;Find available time slots for group of people&quot;&quot;&quot;
+        slots = []
+
+        # Merge all attendees' busy times
+        all_busy = Availability()
+        for attendee_id in attendee_ids:
+            user = self.users.get(attendee_id)
+            if user:
+                for busy in user.availability.busy_slots:
+                    all_busy.add_busy_slot(busy)
+
+        merged_busy = all_busy.merge_overlapping()
+
+        # Find gaps
+        now = datetime.now()
+        current_time = now.replace(hour=9, minute=0, second=0)  # 9 AM start
+        end_search = now + timedelta(days=days_ahead)
+
+        while current_time &lt; end_search:
+            slot = TimeSlot(current_time, current_time + timedelta(minutes=duration_minutes))
+
+            # Check if slot is free
+            if not any(slot.overlaps(busy) for busy in merged_busy):
+                slots.append(slot)
+
+            current_time += timedelta(hours=1)
+
+        return slots[:10]  # Return top 10 available slots
+
+    # ---- MEETING MANAGEMENT ----
+
+    def schedule_meeting(self, title: str, organizer_id: str, attendee_ids: Set[str],
+                        time_slot: TimeSlot, room_id: Optional[str] = None) -&gt; Tuple[bool, str, Optional[Meeting]]:
+        &quot;&quot;&quot;Schedule a meeting with conflict resolution&quot;&quot;&quot;
+
+        meeting = Meeting(
+            f&quot;meet_{len(self.meetings)}&quot;,
+            title,
+            organizer_id,
+            time_slot,
+            room_id,
+            attendee_ids
+        )
+
+        # Check conflicts
+        has_conflicts, conflict_reason, alternatives = self.check_conflicts(meeting)
+
+        if not has_conflicts:
+            # No conflicts, schedule immediately
+            self.meetings[meeting.meeting_id] = meeting
+
+            # Add to attendee calendars
+            for attendee_id in attendee_ids:
+                user = self.users.get(attendee_id)
+                if user:
+                    user.meetings.append(meeting.meeting_id)
+                    user.availability.add_busy_slot(time_slot)
+
+            # Book room
+            if room_id:
+                room = self.rooms.get(room_id)
+                if room:
+                    room.book_for_slot(time_slot)
+
+            # Send invitations
+            for attendee_id in attendee_ids:
+                inv = Invitation(f&quot;inv_{meeting.meeting_id}_{attendee_id}&quot;, 
+                               meeting.meeting_id, attendee_id)
+                self.invitations[inv.invitation_id] = inv
+
+            self._emit(&quot;meeting_created&quot;, {
+                &quot;title&quot;: title,
+                &quot;start_time&quot;: time_slot.start_time,
+                &quot;attendees&quot;: list(attendee_ids)
+            })
+
+            return (True, &quot;Meeting scheduled successfully&quot;, meeting)
+
+        else:
+            # Conflict exists, apply resolution strategy
+            resolution = self.conflict_strategy.resolve({
+                &quot;reason&quot;: conflict_reason,
+                &quot;free_slots&quot;: alternatives
+            })
+
+            if resolution[&quot;action&quot;] == &quot;reject&quot;:
+                return (False, f&quot;Conflict: {conflict_reason}. Alternatives: {alternatives}&quot;, None)
+            elif resolution[&quot;action&quot;] == &quot;force_book&quot;:
+                # Force book anyway
+                self.meetings[meeting.meeting_id] = meeting
+                return (True, &quot;Meeting force-booked despite conflicts&quot;, meeting)
+            else:  # propose_alternatives
+                return (False, f&quot;Conflicts detected. Alternatives: {resolution['alternatives']}&quot;, None)
+
+    def cancel_meeting(self, meeting_id: str) -&gt; bool:
+        meeting = self.meetings.get(meeting_id)
+        if not meeting:
+            return False
+
+        meeting.status = MeetingStatus.CANCELLED
+
+        # Remove from attendees' calendars
+        for attendee_id in meeting.attendees:
+            user = self.users.get(attendee_id)
+            if user:
+                user.availability.busy_slots = [
+                    slot for slot in user.availability.busy_slots 
+                    if slot != meeting.time_slot
+                ]
+                user.meetings.remove(meeting_id)
+
+        self._emit(&quot;meeting_cancelled&quot;, {&quot;title&quot;: meeting.title})
+        return True
+
+    # ---- INVITATION MANAGEMENT ----
+
+    def accept_invitation(self, invitation_id: str) -&gt; bool:
+        inv = self.invitations.get(invitation_id)
+        if inv:
+            inv.accept()
+            return True
+        return False
+
+    def decline_invitation(self, invitation_id: str) -&gt; bool:
+        inv = self.invitations.get(invitation_id)
+        if inv:
+            inv.decline()
+            return True
+        return False
+
+    # ---- RECURRING MEETINGS ----
+
+    def schedule_recurring_meeting(self, title: str, organizer_id: str, attendee_ids: Set[str],
+                                  start_time: datetime, duration_minutes: int,
+                                  recurrence_type: RecurrenceType, count: int,
+                                  room_id: Optional[str] = None) -&gt; Tuple[int, List[Meeting]]:
+        &quot;&quot;&quot;Create recurring meeting instances&quot;&quot;&quot;
+
+        recurring = RecurringMeeting(title, organizer_id, start_time, duration_minutes, 
+                                    recurrence_type, count)
+
+        scheduled = 0
+        failed_meetings = []
+
+        for instance in recurring.generate_instances():
+            instance.room_id = room_id
+            instance.attendees = attendee_ids
+
+            success, msg, meeting = self.schedule_meeting(
+                instance.title, organizer_id, attendee_ids,
+                instance.time_slot, room_id
+            )
+
+            if success:
+                scheduled += 1
+            else:
+                failed_meetings.append(instance)
+
+        return (scheduled, failed_meetings)
+
+    # ---- STRATEGY MANAGEMENT ----
+
+    def set_conflict_resolution_strategy(self, strategy: ConflictResolutionStrategy) -&gt; None:
+        self.conflict_strategy = strategy
+        self._emit(&quot;strategy_changed&quot;, {&quot;new_strategy&quot;: strategy.name()})
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def print_section(title: str) -&gt; None:
+    print(f&quot;\n{'='*70}&quot;)
+    print(f&quot;  {title}&quot;)
+    print(f&quot;{'='*70}\n&quot;)
+
+def demo_1_user_and_room_setup() -&gt; None:
+    print_section(&quot;DEMO 1: USER &amp; ROOM SETUP&quot;)
+
+    scheduler = MeetingScheduler()
+
+    # Create users
+    alice = scheduler.create_user(&quot;user_alice&quot;, &quot;Alice&quot;, &quot;alice@email.com&quot;)
+    bob = scheduler.create_user(&quot;user_bob&quot;, &quot;Bob&quot;, &quot;bob@email.com&quot;)
+    charlie = scheduler.create_user(&quot;user_charlie&quot;, &quot;Charlie&quot;, &quot;charlie@email.com&quot;)
+
+    print(f&quot;✓ Created users: {alice.name}, {bob.name}, {charlie.name}&quot;)
+
+    # Create rooms
+    room_a = scheduler.create_room(&quot;room_1&quot;, &quot;Conference Room A&quot;, capacity=10)
+    room_b = scheduler.create_room(&quot;room_2&quot;, &quot;Meeting Room B&quot;, capacity=5)
+
+    print(f&quot;✓ Created rooms: {room_a.name} (cap. {room_a.capacity}), {room_b.name} (cap. {room_b.capacity})&quot;)
+
+def demo_2_create_meeting_no_conflicts() -&gt; None:
+    print_section(&quot;DEMO 2: CREATE MEETING WITHOUT CONFLICTS&quot;)
+
+    scheduler = MeetingScheduler()
+    scheduler.register_observer(EmailNotifier())
+    scheduler.register_observer(ReminderService())
+
+    alice = scheduler.get_user(&quot;user_alice&quot;) or scheduler.create_user(&quot;user_alice&quot;, &quot;Alice&quot;, &quot;alice@email.com&quot;)
+    bob = scheduler.get_user(&quot;user_bob&quot;) or scheduler.create_user(&quot;user_bob&quot;, &quot;Bob&quot;, &quot;bob@email.com&quot;)
+    room_a = scheduler.get_room(&quot;room_1&quot;) or scheduler.create_room(&quot;room_1&quot;, &quot;Conference Room A&quot;, 10)
+
+    start = datetime.now() + timedelta(days=1, hours=2)
+    end = start + timedelta(hours=1)
+    slot = TimeSlot(start, end)
+
+    success, msg, meeting = scheduler.schedule_meeting(
+        &quot;Team Sync&quot;,
+        &quot;user_alice&quot;,
+        {&quot;user_bob&quot;},
+        slot,
+        &quot;room_1&quot;
+    )
+
+    print(f&quot;✓ Meeting scheduled: {success}&quot;)
+    print(f&quot;  Message: {msg}&quot;)
+    if meeting:
+        print(f&quot;  Meeting ID: {meeting.meeting_id}, Status: {meeting.status.value}&quot;)
+
+def demo_3_conflict_and_resolution() -&gt; None:
+    print_section(&quot;DEMO 3: DETECT &amp; RESOLVE CONFLICTS&quot;)
+
+    scheduler = MeetingScheduler()
+
+    alice = scheduler.get_user(&quot;user_alice&quot;) or scheduler.create_user(&quot;user_alice&quot;, &quot;Alice&quot;, &quot;alice@email.com&quot;)
+    bob = scheduler.get_user(&quot;user_bob&quot;) or scheduler.create_user(&quot;user_bob&quot;, &quot;Bob&quot;, &quot;bob@email.com&quot;)
+    room_a = scheduler.get_room(&quot;room_1&quot;) or scheduler.create_room(&quot;room_1&quot;, &quot;Conference Room A&quot;, 10)
+
+    start = datetime.now() + timedelta(days=2, hours=10)
+    end = start + timedelta(hours=1)
+    slot = TimeSlot(start, end)
+
+    # Add existing meeting to room
+    room_a.book_for_slot(slot)
+
+    # Try to schedule conflicting meeting
+    success, msg, meeting = scheduler.schedule_meeting(
+        &quot;Project Planning&quot;,
+        &quot;user_alice&quot;,
+        {&quot;user_bob&quot;},
+        slot,
+        &quot;room_1&quot;
+    )
+
+    print(f&quot;✗ AutoRejectStrategy: {success}&quot;)
+    print(f&quot;  Reason: {msg}&quot;)
+
+    # Switch to ProposeAlternatives
+    scheduler.set_conflict_resolution_strategy(ProposeAlternativesStrategy())
+    success, msg, meeting = scheduler.schedule_meeting(
+        &quot;Project Planning&quot;,
+        &quot;user_alice&quot;,
+        {&quot;user_bob&quot;},
+        slot,
+        &quot;room_1&quot;
+    )
+
+    print(f&quot;✓ ProposeAlternativesStrategy: {success}&quot;)
+    print(f&quot;  Response: {msg}&quot;)
+
+def demo_4_invitation_state_machine() -&gt; None:
+    print_section(&quot;DEMO 4: INVITATION STATE MACHINE&quot;)
+
+    scheduler = MeetingScheduler()
+
+    alice = scheduler.get_user(&quot;user_alice&quot;) or scheduler.create_user(&quot;user_alice&quot;, &quot;Alice&quot;, &quot;alice@email.com&quot;)
+    bob = scheduler.get_user(&quot;user_bob&quot;) or scheduler.create_user(&quot;user_bob&quot;, &quot;Bob&quot;, &quot;bob@email.com&quot;)
+    charlie = scheduler.get_user(&quot;user_charlie&quot;) or scheduler.create_user(&quot;user_charlie&quot;, &quot;Charlie&quot;, &quot;charlie@email.com&quot;)
+
+    start = datetime.now() + timedelta(days=3, hours=14)
+    end = start + timedelta(hours=1)
+    slot = TimeSlot(start, end)
+
+    success, msg, meeting = scheduler.schedule_meeting(
+        &quot;Board Meeting&quot;,
+        &quot;user_alice&quot;,
+        {&quot;user_bob&quot;, &quot;user_charlie&quot;},
+        slot
+    )
+
+    print(f&quot;✓ Meeting created: {meeting.meeting_id if meeting else 'N/A'}&quot;)
+
+    # Accept/decline/tentative
+    invitations = [inv for inv in scheduler.invitations.values() if inv.meeting_id == meeting.meeting_id]
+
+    for i, inv in enumerate(invitations):
+        if i == 0:
+            scheduler.accept_invitation(inv.invitation_id)
+            print(f&quot;  {scheduler.get_user(inv.invitee_id).name}: {inv.status.value}&quot;)
+        elif i == 1:
+            scheduler.decline_invitation(inv.invitation_id)
+            print(f&quot;  {scheduler.get_user(inv.invitee_id).name}: {inv.status.value}&quot;)
+
+def demo_5_recurring_meetings() -&gt; None:
+    print_section(&quot;DEMO 5: RECURRING MEETINGS&quot;)
+
+    scheduler = MeetingScheduler()
+    scheduler.register_observer(CalendarSyncObserver())
+
+    alice = scheduler.get_user(&quot;user_alice&quot;) or scheduler.create_user(&quot;user_alice&quot;, &quot;Alice&quot;, &quot;alice@email.com&quot;)
+    bob = scheduler.get_user(&quot;user_bob&quot;) or scheduler.create_user(&quot;user_bob&quot;, &quot;Bob&quot;, &quot;bob@email.com&quot;)
+
+    start = datetime.now().replace(hour=9, minute=0, second=0)
+
+    scheduled, failed = scheduler.schedule_recurring_meeting(
+        &quot;Daily Standup&quot;,
+        &quot;user_alice&quot;,
+        {&quot;user_bob&quot;},
+        start,
+        duration_minutes=30,
+        recurrence_type=RecurrenceType.DAILY,
+        count=5
+    )
+
+    print(f&quot;✓ Recurring meeting created&quot;)
+    print(f&quot;  Scheduled instances: {scheduled}&quot;)
+    print(f&quot;  Failed instances: {len(failed)}&quot;)
+
+    # Find available slots
+    slots = scheduler.find_available_slots({&quot;user_alice&quot;, &quot;user_bob&quot;}, duration_minutes=60, days_ahead=7)
+    print(f&quot;\n  Available 1-hour slots for next week: {len(slots)}&quot;)
+    if slots:
+        print(f&quot;  First 3: {[s.start_time.strftime('%a %H:%M') for s in slots[:3]]}&quot;)
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;📅 MEETING SCHEDULER - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_user_and_room_setup()
+    demo_2_create_meeting_no_conflicts()
+    demo_3_conflict_and_resolution()
+    demo_4_invitation_state_machine()
+    demo_5_recurring_meetings()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;✅ ALL DEMOS COMPLETED&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<hr />
+<h2 id="design-patterns">Design Patterns</h2>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Usage</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>One MeetingScheduler instance</td>
+<td>Centralized calendar system, single source of truth</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Notifications (email, reminders, calendar sync)</td>
+<td>Decoupled event producers from notification handlers</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Conflict resolution (AutoReject, ProposeAlternatives, ForceBook)</td>
+<td>Swap strategies at runtime, flexible conflict handling</td>
+</tr>
+<tr>
+<td><strong>State Machine</strong></td>
+<td>Meeting lifecycle (Scheduled→Ongoing→Completed/Cancelled)</td>
+<td>Prevents invalid state transitions</td>
+</tr>
+<tr>
+<td><strong>Factory</strong></td>
+<td>Create meeting types (OneOffMeeting, RecurringMeeting)</td>
+<td>Encapsulated creation, easy to extend</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="summary">Summary</h2>
+<p>✅ <strong>Professional meeting scheduler</strong> with room booking, invitations, and conflict detection
+✅ <strong>5 design patterns</strong> (Singleton, Observer, Strategy, State Machine, Factory)
+✅ <strong>Conflict resolution strategies</strong> (AutoReject, ProposeAlternatives, ForceBook)
+✅ <strong>Recurring meetings</strong> with exception handling and instance generation
+✅ <strong>Available slot finder</strong> (merge busy times, find free gaps)
+✅ <strong>Invitation state machine</strong> (Pending→Accepted/Declined/Tentative)
+✅ <strong>Event-driven notifications</strong> (emails, reminders, calendar sync)
+✅ <strong>Complete working implementation</strong> with all patterns demonstrated
+✅ <strong>5 demo scenarios</strong> showing lifecycle flows</p>
+<p><strong>Key Takeaway</strong>: Meeting Scheduler demonstrates composition of multiple patterns (Singleton + Observer + Strategy + State) for complex system with conflict resolution. Focus: interval-based scheduling, real-time notifications, flexible conflict handling, and recurring event management with efficient O(log n) availability checks using interval trees.</p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-04-05</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

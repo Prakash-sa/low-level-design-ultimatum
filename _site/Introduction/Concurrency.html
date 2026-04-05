@@ -1,0 +1,2206 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Concurrency - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Insatance%20Variable.html">Class Variable vs Insatance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Airline%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Airline Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/">Airline Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/Airline%20Management%20System.html">Airline Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Locker System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/">Amazon Locker System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/Amazon%20Locker%20System.html">Amazon Locker System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Online Shopping System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/">Amazon Online Shopping System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/ATM/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle ATM" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/ATM/">ATM</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM/ATM.html">ATM</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Cache/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Cache" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Cache/">Cache</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache/Cache.html">Cache</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Car%20Rental%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Car Rental System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/">Car Rental System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/Car%20Rental%20System.html">Car Rental System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Chess%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Chess Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Chess%20Game/">Chess Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game/Chess%20Game.html">Chess Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circinfo (Ride Sharing)" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/">Circinfo (Ride Sharing)</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Design Hit Counter" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/">Design Hit Counter</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/Design%20Hit%20Counter.html">Design Hit Counter</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/">Elevator System</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Elevator%20System.html">Elevator System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Facebook/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Facebook" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Facebook/">Facebook</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook/Facebook.html">Facebook</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/File%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle File System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/File%20System/">File System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System/File%20System.html">File System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Hotel Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/">Hotel Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/Hotel%20Management%20System.html">Hotel Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Jigsaw Puzzle" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/">Jigsaw Puzzle</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Leaderboard/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Leaderboard" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Leaderboard/">Leaderboard</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard/Leaderboard.html">Leaderboard</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Library%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Library Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/">Library Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/Library%20Management%20System.html">Library Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/LinkedIn/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle LinkedIn" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/LinkedIn/">LinkedIn</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn/LinkedIn.html">LinkedIn</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Logging/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Logging" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Logging/">Logging</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging/Logging.html">Logging</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Meeting Scheduler" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/">Meeting Scheduler</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/Meeting%20Scheduler.html">Meeting Scheduler</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Movie Ticket Booking System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/">Movie Ticket Booking System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Blackjack Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/">Online Blackjack Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Stock Brokerage System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/">Online Stock Brokerage System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/">Parking Lot</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Parking%20Lot.html">Parking Lot</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Pub-Sub/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Pub-Sub" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Pub-Sub/">Pub-Sub</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub/Pub-Sub.html">Pub-Sub</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Restaurant Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/">Restaurant Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/Restaurant%20Management%20System.html">Restaurant Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Stack%20Overflow/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Stack Overflow" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/">Stack Overflow</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/Stack%20Overflow.html">Stack Overflow</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Text Editor with Undo & Redo" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/">Text Editor with Undo & Redo</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Train Platform Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/">Train Platform Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Vending%20Machine/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Vending Machine" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/">Vending Machine</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/Vending%20Machine.html">Vending Machine</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Introduction/">Introduction</a>
+            </div>
+            <div class="content">
+                <h1 id="concurrency-in-python">Concurrency in Python</h1>
+<p>Concurrency allows multiple tasks to execute seemingly simultaneously, improving performance and responsiveness. This guide covers synchronization primitives, patterns, and best practices.</p>
+<hr />
+<h2 id="overview">📋 Overview</h2>
+<p><strong>Concurrency Models</strong>:
+- <strong>Threading</strong>: Multiple threads in same process, shared memory, OS-scheduled
+- <strong>Async/Await</strong>: Single-threaded, cooperative multitasking via event loop
+- <strong>Multiprocessing</strong>: Separate processes, isolated memory, true parallelism</p>
+<p><strong>Python's GIL</strong> (Global Interpreter Lock):
+- Only one thread executes Python bytecode at a time
+- Affects CPU-bound work; I/O operations release the GIL
+- Async/await and multiprocessing bypass this</p>
+<hr />
+<h2 id="synchronization-primitives">🔒 Synchronization Primitives</h2>
+<h3 id="mutex-lock">Mutex / Lock</h3>
+<p><strong>Purpose</strong>: Mutually exclusive lock. Only one thread holds it at a time. Protects critical sections from race conditions.</p>
+<p><strong>Key Concepts</strong>:
+- Acquire: Thread locks; others wait
+- Release: Thread unlocks; one waiter gets lock
+- Reentrant Lock: Same thread can acquire multiple times (must release same number)</p>
+<p><strong>Code Example</strong>:</p>
+<pre class="codehilite"><code class="language-python">import threading
+
+balance = 0
+lock = threading.Lock()
+
+def increment():
+    global balance
+    with lock:  # Acquire lock (blocking if unavailable)
+        temp = balance
+        temp += 1
+        balance = temp
+        # Implicit release on exit
+
+# Without lock, race condition possible:
+# Thread 1: read (0) -&gt; increment (1)
+# Thread 2: read (0) -&gt; increment (1)  &lt;- Lost update!
+# Result: balance = 1 (should be 2)
+
+threads = [threading.Thread(target=increment) for _ in range(100)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+
+print(balance)  # With lock: 100, Without: Random (usually &lt; 100)
+</code></pre>
+
+<p><strong>Performance</strong>:
+- Contention: High lock contention = threads waiting = worse performance
+- Granularity: Fine-grained locks (more locks) = more overhead; coarse-grained (fewer locks) = less parallelism</p>
+<hr />
+<h3 id="semaphore">Semaphore</h3>
+<p><strong>Purpose</strong>: Controls access to resource with counter. Allows up to N threads simultaneously.</p>
+<p><strong>Key Concepts</strong>:
+- Binary semaphore: Counter = 1 (similar to Mutex, but different semantics)
+- Counting semaphore: Counter = N (N threads can proceed)
+- acquire() (or <code>with sem</code>): Decrements counter; blocks if 0
+- release(): Increments counter; wakes one waiting thread</p>
+<p><strong>Code Example</strong>:</p>
+<pre class="codehilite"><code class="language-python">import threading
+import time
+
+# Limit to 3 concurrent database connections
+db_connections = threading.Semaphore(3)
+
+def access_db(thread_id):
+    print(f&quot;Thread {thread_id} waiting for connection...&quot;)
+    with db_connections:  # Acquire semaphore
+        print(f&quot;Thread {thread_id} connected&quot;)
+        time.sleep(1)  # Simulate DB work
+    print(f&quot;Thread {thread_id} released connection&quot;)
+
+threads = [threading.Thread(target=access_db, args=(i,)) for i in range(10)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+
+# Output shows max 3 threads accessing simultaneously
+</code></pre>
+
+<p><strong>Use Cases</strong>:
+- Resource pooling (database connections, thread pools)
+- Rate limiting
+- Producer-consumer buffer coordination</p>
+<hr />
+<h3 id="condition-variable">Condition Variable</h3>
+<p><strong>Purpose</strong>: Thread waits for a condition to be true; another thread signals when condition is met.</p>
+<p><strong>Key Concepts</strong>:
+- wait(): Release lock, wait for notification, reacquire lock
+- notify(): Wake one waiting thread
+- notify_all(): Wake all waiting threads</p>
+<p><strong>Code Example</strong>:</p>
+<pre class="codehilite"><code class="language-python">import threading
+
+queue = []
+cond = threading.Condition()
+
+def producer():
+    for i in range(5):
+        with cond:
+            queue.append(i)
+            print(f&quot;Produced {i}&quot;)
+            cond.notify()  # Wake consumer
+
+def consumer():
+    while True:
+        with cond:
+            cond.wait()  # Wait for notification
+            if queue:
+                item = queue.pop(0)
+                print(f&quot;Consumed {item}&quot;)
+
+p = threading.Thread(target=producer, daemon=True)
+c = threading.Thread(target=consumer, daemon=True)
+p.start()
+c.start()
+p.join()
+</code></pre>
+
+<hr />
+<h2 id="concurrency-patterns">🎯 Concurrency Patterns</h2>
+<h3 id="producer-consumer">Producer-Consumer</h3>
+<p><strong>Purpose</strong>: Decouple producer (creates data) from consumer (processes data) using shared buffer.</p>
+<p><strong>Benefits</strong>:
+- Producers don't wait for consumers
+- Consumers don't wait for producers (if buffer has data)
+- Buffer smooths out speed differences</p>
+<p><strong>Code Example</strong>:</p>
+<pre class="codehilite"><code class="language-python">import queue
+import threading
+import time
+
+q = queue.Queue(maxsize=10)  # Bounded buffer
+
+def producer():
+    for i in range(20):
+        print(f&quot;Producing {i}&quot;)
+        q.put(i)  # Blocks if queue is full
+        time.sleep(0.1)
+
+def consumer():
+    while True:
+        item = q.get()  # Blocks if queue is empty
+        if item is None:  # Sentinel value to stop
+            break
+        print(f&quot;Consuming {item}&quot;)
+        time.sleep(0.2)
+        q.task_done()  # Signal item processing complete
+
+p = threading.Thread(target=producer)
+c = threading.Thread(target=consumer)
+
+p.start()
+c.start()
+
+p.join()
+q.put(None)  # Signal consumer to stop
+c.join()
+</code></pre>
+
+<p><strong>Thread-Safe Queue Operations</strong>:
+- <code>put()</code>: Add item (blocks if full)
+- <code>get()</code>: Remove and return item (blocks if empty)
+- <code>put_nowait()</code>: Add without blocking; raises <code>Full</code> if full
+- <code>get_nowait()</code>: Get without blocking; raises <code>Empty</code> if empty
+- <code>task_done()</code>: Signal consumer finished processing
+- <code>join()</code>: Block until all items processed</p>
+<hr />
+<h3 id="read-write-lock">Read-Write Lock</h3>
+<p><strong>Purpose</strong>: Allows multiple readers OR one writer (but not both). Optimized for read-heavy workloads.</p>
+<p><strong>Key Concepts</strong>:
+- Multiple readers can hold lock simultaneously
+- Writer acquires exclusive lock (no readers, no other writers)
+- Readers have priority OR writers have priority (fairness trade-off)</p>
+<p><strong>Code Example</strong>:</p>
+<pre class="codehilite"><code class="language-python">import threading
+
+class ReadWriteLock:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._read_count = 0
+        self._read_ready = threading.Condition(self._lock)
+
+    def acquire_read(self):
+        self._lock.acquire()
+        self._read_count += 1
+        self._lock.release()
+
+    def release_read(self):
+        self._lock.acquire()
+        self._read_count -= 1
+        if self._read_count == 0:
+            self._read_ready.notify_all()
+        self._lock.release()
+
+    def acquire_write(self):
+        self._lock.acquire()
+        while self._read_count &gt; 0:
+            self._read_ready.wait()
+
+    def release_write(self):
+        self._lock.release()
+
+# Usage
+rwlock = ReadWriteLock()
+
+def reader(thread_id):
+    for _ in range(5):
+        rwlock.acquire_read()
+        print(f&quot;Reader {thread_id} reading&quot;)
+        # Read shared resource
+        rwlock.release_read()
+
+def writer(thread_id):
+    for _ in range(3):
+        rwlock.acquire_write()
+        print(f&quot;Writer {thread_id} writing&quot;)
+        # Write shared resource
+        rwlock.release_write()
+</code></pre>
+
+<hr />
+<h3 id="thread-pool">Thread Pool</h3>
+<p><strong>Purpose</strong>: Reuses worker threads to execute tasks, avoiding overhead of creating threads for every task.</p>
+<p><strong>Benefits</strong>:
+- Avoids thread creation/destruction overhead
+- Limits concurrent thread count
+- Queues excess tasks automatically
+- Better resource utilization</p>
+<p><strong>Code Example</strong>:</p>
+<pre class="codehilite"><code class="language-python">from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+
+def slow_task(n):
+    time.sleep(1)
+    return n * n
+
+# Use context manager for auto cleanup
+with ThreadPoolExecutor(max_workers=4) as executor:
+    # Submit tasks
+    futures = [executor.submit(slow_task, i) for i in range(10)]
+
+    # Retrieve results
+    for future in as_completed(futures):
+        result = future.result()
+        print(f&quot;Result: {result}&quot;)
+
+# Alternative: map (maintains order)
+with ThreadPoolExecutor(max_workers=4) as executor:
+    results = list(executor.map(slow_task, range(10)))
+    print(results)
+</code></pre>
+
+<p><strong>Common Patterns</strong>:</p>
+<pre class="codehilite"><code class="language-python"># Submit once, get results later
+executor = ThreadPoolExecutor(max_workers=4)
+future = executor.submit(func, arg)
+result = future.result(timeout=10)  # Blocks; raises TimeoutError
+
+# Map with timeout
+futures = executor.map(func, iterable, timeout=5)
+
+# as_completed: process as results arrive
+for future in as_completed(futures, timeout=30):
+    try:
+        result = future.result()
+    except Exception as e:
+        print(f&quot;Task failed: {e}&quot;)
+</code></pre>
+
+<hr />
+<h2 id="anti-patterns-pitfalls">⚠️ Anti-Patterns &amp; Pitfalls</h2>
+<h3 id="deadlock">Deadlock</h3>
+<p><strong>Definition</strong>: Two or more threads blocked forever, each waiting for resource held by the other.</p>
+<p><strong>Example</strong>:</p>
+<pre class="codehilite"><code class="language-python">import threading
+
+lock_a = threading.Lock()
+lock_b = threading.Lock()
+
+def thread_1_work():
+    with lock_a:
+        print(&quot;Thread 1 acquired A&quot;)
+        # Simulate some work
+        import time
+        time.sleep(0.1)
+        with lock_b:  # Deadlock if Thread 2 holds B
+            print(&quot;Thread 1 acquired B&quot;)
+
+def thread_2_work():
+    with lock_b:
+        print(&quot;Thread 2 acquired B&quot;)
+        import time
+        time.sleep(0.1)
+        with lock_a:  # Deadlock if Thread 1 holds A
+            print(&quot;Thread 2 acquired A&quot;)
+
+# Can deadlock:
+# T1: acquire(A) -&gt; wait(B)
+# T2: acquire(B) -&gt; wait(A)
+# FREEZE!
+
+t1 = threading.Thread(target=thread_1_work)
+t2 = threading.Thread(target=thread_2_work)
+t1.start()
+t2.start()
+# t1.join() # May hang forever
+</code></pre>
+
+<p><strong>Prevention Strategies</strong>:
+1. <strong>Resource Ordering</strong>: Always acquire locks in same order
+2. <strong>Timeouts</strong>: Acquire with timeout; retry or fail gracefully
+3. <strong>Avoid Nested Locks</strong>: Minimize number of locks held simultaneously
+4. <strong>Lock Hierarchy</strong>: Define priority; lower priority waits for higher</p>
+<p><strong>Fixed Example</strong>:</p>
+<pre class="codehilite"><code class="language-python"># Always acquire A before B
+def thread_1_work():
+    with lock_a:
+        with lock_b:
+            print(&quot;Thread 1 has both locks&quot;)
+
+def thread_2_work():
+    with lock_a:  # Same order!
+        with lock_b:
+            print(&quot;Thread 2 has both locks&quot;)
+</code></pre>
+
+<hr />
+<h3 id="race-condition">Race Condition</h3>
+<p><strong>Definition</strong>: Outcome depends on timing of thread execution; unpredictable result.</p>
+<p><strong>Example</strong>:</p>
+<pre class="codehilite"><code class="language-python"># NOT thread-safe
+counter = 0
+
+def increment():
+    global counter
+    # Three steps: read, increment, write
+    temp = counter      # Read
+    temp = temp + 1     # Increment
+    counter = temp      # Write
+    # Race: Two threads can both read 0, both write 1
+
+def decrement():
+    global counter
+    temp = counter
+    temp = temp - 1
+    counter = temp
+
+# Interleaving:
+# T1: read(0) -&gt; T2: read(0) -&gt; T1: write(1) -&gt; T2: write(-1)
+# Result: -1 (should be 0)
+</code></pre>
+
+<p><strong>Fix</strong>:</p>
+<pre class="codehilite"><code class="language-python">import threading
+counter = 0
+lock = threading.Lock()
+
+def increment():
+    global counter
+    with lock:
+        counter += 1  # Atomic within lock
+
+def decrement():
+    global counter
+    with lock:
+        counter -= 1
+</code></pre>
+
+<hr />
+<h3 id="busy-waiting">Busy Waiting</h3>
+<p><strong>Anti-Pattern</strong>: Thread repeatedly polls in a loop instead of waiting for notification.</p>
+<pre class="codehilite"><code class="language-python"># BAD: Busy waiting
+def consumer():
+    while not queue:  # Wastes CPU spinning
+        time.sleep(0.001)
+    item = queue.pop()
+
+# GOOD: Use condition variable or queue
+def consumer():
+    with queue_lock:
+        cond.wait()  # Sleep until notified
+        item = queue.pop()
+</code></pre>
+
+<hr />
+<h3 id="lock-contention">Lock Contention</h3>
+<p><strong>Issue</strong>: Too many threads competing for same lock = poor performance.</p>
+<p><strong>Symptoms</strong>:
+- Threads spend more time waiting than working
+- Adding threads makes things slower (Amdahl's Law)
+- High CPU usage but low throughput</p>
+<p><strong>Solutions</strong>:
+1. <strong>Fine-grained locks</strong>: Separate locks for different data structures
+2. <strong>Lock-free data structures</strong>: Use atomics, compare-and-swap
+3. <strong>Partitioning</strong>: Divide data; each partition has own lock
+4. <strong>Reduce lock duration</strong>: Minimize critical section</p>
+<hr />
+<h2 id="advanced-concepts">🔧 Advanced Concepts</h2>
+<h3 id="atomic-variables">Atomic Variables</h3>
+<p><strong>Purpose</strong>: Thread-safe single variable operations without explicit locking.</p>
+<p><strong>Note</strong>: Python integers are atomic for single operations due to GIL, but multi-step logic requires locks.</p>
+<pre class="codehilite"><code class="language-python">import threading
+
+# Python: Single operations on built-in types are atomic due to GIL
+counter = 0
+lock = threading.Lock()
+
+# Atomic (GIL protects)
+counter = 1
+
+# NOT atomic (multiple steps)
+counter += 1  # Actually: read, add, write
+
+# Better: Use Lock
+with lock:
+    counter += 1
+
+# Alternative: queue.Queue is thread-safe
+from queue import Queue
+q = Queue()
+q.put(1)  # Atomic
+item = q.get()  # Atomic
+</code></pre>
+
+<p><strong>Languages with true atomic variables</strong> (Java, C++):</p>
+<pre class="codehilite"><code class="language-java">// Java
+AtomicInteger counter = new AtomicInteger(0);
+counter.incrementAndGet();  // Atomic, lock-free
+</code></pre>
+
+<hr />
+<h3 id="future-promise">Future / Promise</h3>
+<p><strong>Purpose</strong>: Placeholder for result that will be available in future.</p>
+<p><strong>States</strong>:
+- Pending: Operation in progress
+- Resolved: Operation succeeded, result available
+- Rejected: Operation failed, exception set</p>
+<p><strong>Code Example</strong>:</p>
+<pre class="codehilite"><code class="language-python">from concurrent.futures import ThreadPoolExecutor, Future
+import time
+
+executor = ThreadPoolExecutor(max_workers=2)
+
+def slow_computation(n):
+    time.sleep(2)
+    if n &lt; 0:
+        raise ValueError(&quot;Negative number&quot;)
+    return n * n
+
+# Submit task, get Future immediately
+future = executor.submit(slow_computation, 5)
+
+# Do other work while computation runs
+print(&quot;Computation started...&quot;)
+print(&quot;Doing other work...&quot;)
+
+# Later: get result (blocks if not ready)
+try:
+    result = future.result(timeout=3)
+    print(f&quot;Result: {result}&quot;)
+except TimeoutError:
+    print(&quot;Computation took too long&quot;)
+except Exception as e:
+    print(f&quot;Computation failed: {e}&quot;)
+
+executor.shutdown()
+</code></pre>
+
+<p><strong>Future Methods</strong>:
+- <code>result(timeout=None)</code>: Block and get result; raise exception if failed
+- <code>done()</code>: Check if computation finished
+- <code>cancel()</code>: Try to cancel (fails if already running)
+- <code>add_done_callback(fn)</code>: Execute callback when done</p>
+<hr />
+<h2 id="interview-qa">🤔 Interview Q&amp;A</h2>
+<h3 id="q1-whats-the-difference-between-lock-and-rlock">Q1: What's the difference between Lock and RLock?</h3>
+<p><strong>A</strong>: 
+- <strong>Lock</strong>: Once acquired, cannot be acquired again by same thread (deadlock if attempted)
+- <strong>RLock</strong> (Reentrant): Same thread can acquire multiple times; must release same number
+- Use RLock for recursive functions or nested lock scenarios</p>
+<pre class="codehilite"><code class="language-python">import threading
+
+lock = threading.Lock()
+rlock = threading.RLock()
+
+def recursive_lock_func(n):
+    with lock:  # Will deadlock on recursion!
+        if n &gt; 0:
+            recursive_lock_func(n - 1)
+
+def recursive_rlock_func(n):
+    with rlock:  # OK: same thread acquires multiple times
+        if n &gt; 0:
+            recursive_rlock_func(n - 1)
+</code></pre>
+
+<hr />
+<h3 id="q2-how-do-you-prevent-deadlock">Q2: How do you prevent deadlock?</h3>
+<p><strong>A</strong>: Four main strategies:</p>
+<ol>
+<li><strong>Resource Ordering</strong>: Always acquire locks in same order</li>
+</ol>
+<pre class="codehilite"><code class="language-python">def safe_transfer():
+    if account_a.id &lt; account_b.id:
+        with account_a.lock:
+            with account_b.lock:
+                pass
+    else:
+        with account_b.lock:
+            with account_a.lock:
+                pass
+</code></pre>
+
+<ol>
+<li><strong>Timeout</strong>: Acquire with timeout, retry or fail</li>
+</ol>
+<pre class="codehilite"><code class="language-python">acquired = lock.acquire(timeout=1.0)
+if not acquired:
+    print(&quot;Could not acquire lock, retrying...&quot;)
+    # Retry or fail gracefully
+</code></pre>
+
+<ol>
+<li><strong>Avoid Circular Wait</strong>: Prevent cycles in lock acquisition</li>
+<li><strong>Hold Minimal Locks</strong>: Release locks ASAP; don't nest if possible</li>
+</ol>
+<hr />
+<h3 id="q3-explain-the-difference-between-mutex-and-semaphore">Q3: Explain the difference between Mutex and Semaphore.</h3>
+<p><strong>A</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>Mutex</th>
+<th>Semaphore</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Counter</td>
+<td>1 (binary)</td>
+<td>N (counting)</td>
+</tr>
+<tr>
+<td>Holder</td>
+<td>Only acquirer can release</td>
+<td>Any thread can release</td>
+</tr>
+<tr>
+<td>Use Case</td>
+<td>Mutual exclusion</td>
+<td>Resource pooling, signaling</td>
+</tr>
+<tr>
+<td>Threads</td>
+<td>1 at a time</td>
+<td>Up to N simultaneously</td>
+</tr>
+</tbody>
+</table>
+<pre class="codehilite"><code class="language-python"># Mutex: Only one thread accesses resource
+with mutex:
+    # Critical section
+
+# Semaphore: Up to 3 threads access resource
+sem = threading.Semaphore(3)
+with sem:
+    # Up to 3 threads here simultaneously
+</code></pre>
+
+<hr />
+<h3 id="q4-what-is-a-race-condition-how-do-you-fix-it">Q4: What is a race condition? How do you fix it?</h3>
+<p><strong>A</strong>: Race condition occurs when outcome depends on thread timing; result unpredictable.</p>
+<p><strong>Example</strong>:</p>
+<pre class="codehilite"><code class="language-python"># Race condition:
+balance = 100
+
+def withdraw(amount):
+    global balance
+    if balance &gt;= amount:  # Check
+        time.sleep(0.01)   # Race: other thread can read here
+        balance -= amount  # Update
+        return True
+    return False
+
+# T1: check(100 &gt;= 50) -&gt; T2: check(100 &gt;= 60) -&gt; T1: balance=50 -&gt; T2: balance=40
+# Both withdraw succeed! Balance went negative.
+</code></pre>
+
+<p><strong>Fixes</strong>:
+1. <strong>Lock critical section</strong>:</p>
+<pre class="codehilite"><code class="language-python">with lock:
+    if balance &gt;= amount:
+        balance -= amount
+        return True
+</code></pre>
+
+<ol>
+<li><strong>Atomic operations</strong>: Use thread-safe data structures (Queue, etc.)</li>
+<li><strong>Compare-and-swap</strong>: Atomic read-modify-write</li>
+</ol>
+<hr />
+<h3 id="q5-whats-the-difference-between-blocking-and-non-blocking-operations">Q5: What's the difference between blocking and non-blocking operations?</h3>
+<p><strong>A</strong>:
+- <strong>Blocking</strong>: Operation waits until result available (sleeps thread)
+- <strong>Non-blocking</strong>: Operation returns immediately; may return "not ready" or success/failure</p>
+<pre class="codehilite"><code class="language-python"># Blocking
+queue = queue.Queue()
+item = queue.get()  # Blocks if empty
+
+# Non-blocking
+try:
+    item = queue.get_nowait()  # Raises Empty if no item
+except queue.Empty:
+    print(&quot;Queue is empty&quot;)
+</code></pre>
+
+<p><strong>Trade-offs</strong>:
+- Blocking: Simpler, wastes no CPU if waiting
+- Non-blocking: Must poll, requires more complex logic, but responsive</p>
+<hr />
+<h3 id="q6-explain-deadlock-livelock-and-starvation">Q6: Explain deadlock, livelock, and starvation.</h3>
+<p><strong>A</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Issue</th>
+<th>Definition</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Deadlock</strong></td>
+<td>Threads blocked forever waiting for each other</td>
+<td>T1 waits for T2's lock; T2 waits for T1's lock</td>
+</tr>
+<tr>
+<td><strong>Livelock</strong></td>
+<td>Threads active but making no progress; responding to each other</td>
+<td>T1 &amp; T2 keep releasing/reacquiring; never proceed</td>
+</tr>
+<tr>
+<td><strong>Starvation</strong></td>
+<td>Some thread never gets resource</td>
+<td>Low-priority thread never runs; high-priority starves it</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Livelock Example</strong>:</p>
+<pre class="codehilite"><code class="language-python"># Both threads try, fail, retry endlessly
+def thread_1():
+    while True:
+        if try_acquire(lock_a):
+            if not try_acquire(lock_b):
+                release(lock_a)  # Back off and retry
+                time.sleep(random)
+
+def thread_2():
+    # Same logic; can keep backing off together
+</code></pre>
+
+<p><strong>Prevention</strong>:
+- Deadlock: Resource ordering, timeouts
+- Livelock: Add randomized backoff, prioritize threads
+- Starvation: Fair scheduling, priority queues</p>
+<hr />
+<h3 id="q7-whats-the-purpose-of-a-thread-pool-when-would-you-use-one">Q7: What's the purpose of a thread pool? When would you use one?</h3>
+<p><strong>A</strong>: Thread pool reuses worker threads to execute tasks, avoiding creation/destruction overhead.</p>
+<p><strong>Benefits</strong>:
+- Reduced latency (threads already created)
+- Resource limits (bounded thread count)
+- Automatic task queueing
+- Better CPU cache locality</p>
+<p><strong>When to use</strong>:
+- Server handling many short-lived tasks
+- I/O-bound work (network, files)
+- Desktop app with many small jobs</p>
+<pre class="codehilite"><code class="language-python"># Bad: Create thread per task
+for task in tasks:
+    t = threading.Thread(target=do_task, args=(task,))
+    t.start()
+
+# Good: Reuse thread pool
+with ThreadPoolExecutor(max_workers=10) as executor:
+    executor.map(do_task, tasks)
+</code></pre>
+
+<hr />
+<h3 id="q8-how-does-a-condition-variable-work">Q8: How does a Condition Variable work?</h3>
+<p><strong>A</strong>: Condition Variable allows thread to wait for specific condition to be true.</p>
+<p><strong>States</strong>:
+- Wait: Thread releases lock, sleeps until notified
+- Notify: Wake sleeping thread; it reacquires lock
+- Spurious wakeup: Thread wakes without notification (loop to recheck)</p>
+<p><strong>Pattern</strong>:</p>
+<pre class="codehilite"><code class="language-python">cond = threading.Condition()
+
+# Consumer
+with cond:
+    while not condition:  # Loop in case of spurious wakeup
+        cond.wait()  # Release lock, sleep
+    # Condition is true, have lock
+    process_data()
+
+# Producer
+with cond:
+    create_data()
+    condition = True
+    cond.notify_all()  # Wake consumers
+</code></pre>
+
+<hr />
+<h3 id="q9-what-is-a-futurepromise-when-do-you-use-it">Q9: What is a Future/Promise? When do you use it?</h3>
+<p><strong>A</strong>: Future is placeholder for result available in future; lets you do work while computation proceeds.</p>
+<p><strong>Use cases</strong>:
+- Async operations (DB queries, HTTP requests)
+- Batch processing with thread pool
+- Concurrent task execution</p>
+<pre class="codehilite"><code class="language-python">from concurrent.futures import ThreadPoolExecutor
+
+executor = ThreadPoolExecutor()
+
+# Fire and forget with future
+future = executor.submit(slow_func, args)
+
+# Do other work
+do_other_work()
+
+# Get result when ready
+result = future.result()  # Blocks if not done
+
+# Callbacks
+future.add_done_callback(lambda f: print(f&quot;Done: {f.result()}&quot;))
+</code></pre>
+
+<hr />
+<h3 id="q10-how-do-you-handle-thread-exceptions">Q10: How do you handle thread exceptions?</h3>
+<p><strong>A</strong>: Exceptions in threads don't crash main thread; must handle explicitly.</p>
+<pre class="codehilite"><code class="language-python">import threading
+
+def buggy_task():
+    raise ValueError(&quot;Something went wrong&quot;)
+
+# Exception disappears silently
+t = threading.Thread(target=buggy_task)
+t.start()
+t.join()  # No exception raised!
+
+# Fix: Catch and handle
+def safe_task():
+    try:
+        buggy_task()
+    except Exception as e:
+        print(f&quot;Task failed: {e}&quot;)
+        # Log, retry, or signal error
+
+# Or use ThreadPoolExecutor (captures exceptions in Future)
+from concurrent.futures import ThreadPoolExecutor
+with ThreadPoolExecutor() as executor:
+    future = executor.submit(buggy_task)
+    try:
+        result = future.result()
+    except Exception as e:
+        print(f&quot;Task failed: {e}&quot;)
+</code></pre>
+
+<hr />
+<h3 id="q11-whats-the-difference-between-threading-and-async">Q11: What's the difference between threading and async?</h3>
+<p><strong>A</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>Threading</th>
+<th>Async (Coroutines)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Concurrency</td>
+<td>OS-scheduled threads</td>
+<td>Cooperative, single-threaded</td>
+</tr>
+<tr>
+<td>GIL Impact</td>
+<td>Affected (CPU-bound blocked)</td>
+<td>Bypasses GIL</td>
+</tr>
+<tr>
+<td>Context Switch</td>
+<td>OS manages (implicit)</td>
+<td>Application decides (explicit <code>await</code>)</td>
+</tr>
+<tr>
+<td>Memory</td>
+<td>~1MB per thread</td>
+<td>~50KB per coroutine</td>
+</tr>
+<tr>
+<td>Debugging</td>
+<td>Hard (interleaving)</td>
+<td>Easier (controlled execution)</td>
+</tr>
+<tr>
+<td>Learning Curve</td>
+<td>Easier</td>
+<td>Steeper</td>
+</tr>
+</tbody>
+</table>
+<pre class="codehilite"><code class="language-python"># Threading
+import threading
+def fetch():
+    data = requests.get(url)  # Blocks thread
+    return data
+
+t = threading.Thread(target=fetch)
+t.start()
+
+# Async
+import asyncio
+async def fetch():
+    data = await httpx.get(url)  # Yields to event loop
+    return data
+
+asyncio.run(fetch())
+</code></pre>
+
+<hr />
+<h3 id="q12-how-would-you-implement-a-thread-safe-counter">Q12: How would you implement a thread-safe counter?</h3>
+<p><strong>A</strong>: Multiple approaches with trade-offs:</p>
+<pre class="codehilite"><code class="language-python">import threading
+from queue import Queue
+
+# 1. Simple Lock
+class CounterV1:
+    def __init__(self):
+        self.count = 0
+        self.lock = threading.Lock()
+
+    def increment(self):
+        with self.lock:
+            self.count += 1
+
+    def get(self):
+        with self.lock:
+            return self.count
+
+# 2. Fine-grained: One lock per bucket (reduces contention)
+class CounterV2:
+    def __init__(self, buckets=16):
+        self.buckets = [{'count': 0, 'lock': threading.Lock()} for _ in range(buckets)]
+
+    def increment(self, thread_id):
+        bucket = self.buckets[thread_id % len(self.buckets)]
+        with bucket['lock']:
+            bucket['count'] += 1
+
+    def get(self):
+        total = 0
+        for bucket in self.buckets:
+            with bucket['lock']:
+                total += bucket['count']
+        return total
+
+# 3. Atomic (using Queue—thread-safe by design)
+class CounterV3:
+    def __init__(self):
+        self.q = Queue(maxsize=1)
+        self.q.put(0)
+
+    def increment(self):
+        val = self.q.get()
+        self.q.put(val + 1)
+
+    def get(self):
+        val = self.q.get()
+        self.q.put(val)
+        return val
+</code></pre>
+
+<p><strong>Performance Comparison</strong>:
+- V1: Simple, fair contention
+- V2: Low contention (better for many threads)
+- V3: Simpler API, good for simple use cases</p>
+<hr />
+<h3 id="q13-what-causes-starvation-in-thread-scheduling">Q13: What causes starvation in thread scheduling?</h3>
+<p><strong>A</strong>: Starvation occurs when low-priority thread never gets CPU time due to high-priority threads.</p>
+<p><strong>Causes</strong>:
+- High-priority threads always ready (spin in loop)
+- Unfair lock implementation (writer preference)
+- Interrupt-heavy system</p>
+<p><strong>Example</strong>:</p>
+<pre class="codehilite"><code class="language-python"># If high-priority thread never waits, low-priority starves
+def high_priority_work():
+    while True:
+        do_critical_work()  # Always runs, never yields
+
+def low_priority_work():
+    while True:
+        do_background_work()  # May never run
+</code></pre>
+
+<p><strong>Prevention</strong>:
+- Fair scheduling policies
+- Priority inversion prevention (boost priority of threads waiting on low-priority holders)
+- Timeouts to ensure forward progress</p>
+<hr />
+<h2 id="best-practices">✅ Best Practices</h2>
+<ol>
+<li><strong>Minimize Lock Duration</strong>: Hold locks as short as possible</li>
+<li><strong>Avoid Nested Locks</strong>: Or use consistent ordering</li>
+<li><strong>Prefer Higher-Level Abstractions</strong>: Use Queue, ThreadPoolExecutor over raw locks</li>
+<li><strong>Test Concurrency</strong>: Use tools like ThreadSanitizer, Helgrind</li>
+<li><strong>Document Thread Safety</strong>: Clearly state which methods are thread-safe</li>
+<li><strong>Use Immutability</strong>: Immutable objects need no locks</li>
+<li><strong>Avoid Busy Waiting</strong>: Use events, conditions, queues instead</li>
+<li><strong>Profile Lock Contention</strong>: Identify hotspots; consider lock-free structures</li>
+</ol>
+<hr />
+<h2 id="summary-table">📚 Summary Table</h2>
+<table>
+<thead>
+<tr>
+<th>Concept</th>
+<th>Purpose</th>
+<th>When to Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Lock</strong></td>
+<td>Mutual exclusion</td>
+<td>Protecting shared data</td>
+</tr>
+<tr>
+<td><strong>RLock</strong></td>
+<td>Reentrant lock</td>
+<td>Recursive functions, nested locking</td>
+</tr>
+<tr>
+<td><strong>Semaphore</strong></td>
+<td>N-way access</td>
+<td>Resource pooling, rate limiting</td>
+</tr>
+<tr>
+<td><strong>Condition</strong></td>
+<td>Wait for condition</td>
+<td>Producer-consumer, thread coordination</td>
+</tr>
+<tr>
+<td><strong>Event</strong></td>
+<td>One-time signal</td>
+<td>Startup barriers, shutdown signals</td>
+</tr>
+<tr>
+<td><strong>Queue</strong></td>
+<td>Thread-safe buffer</td>
+<td>Producer-consumer, task distribution</td>
+</tr>
+<tr>
+<td><strong>Thread Pool</strong></td>
+<td>Reuse workers</td>
+<td>High throughput task execution</td>
+</tr>
+<tr>
+<td><strong>Future</strong></td>
+<td>Async result</td>
+<td>Fire-and-forget operations</td>
+</tr>
+<tr>
+<td><strong>Read-Write Lock</strong></td>
+<td>Many readers, one writer</td>
+<td>Read-heavy workloads</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="part-2-design-discussion">� Part 2: Design Discussion</h2>
+<h3 id="step-1-database-schema">Step 1: Database Schema</h3>
+<p><strong>Common Patterns for Concurrency Control</strong>:</p>
+<pre class="codehilite"><code class="language-sql">-- Example: Bank Account Table
+CREATE TABLE accounts (
+    id INT PRIMARY KEY,
+    balance DECIMAL(10, 2),
+    version INT DEFAULT 1,                    -- For optimistic locking
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    locked_until TIMESTAMP,                   -- For pessimistic locking
+    locked_by VARCHAR(100),                   -- For distributed locking
+    PRIMARY KEY (id)
+);
+
+-- Indexes for efficient queries
+CREATE INDEX idx_locked_until ON accounts(locked_until);
+CREATE INDEX idx_locked_by ON accounts(locked_by);
+
+-- Example: Transaction Log (for audit trail)
+CREATE TABLE transaction_log (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    account_id INT,
+    amount DECIMAL(10, 2),
+    operation VARCHAR(20),                    -- 'DEPOSIT', 'WITHDRAW'
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(20),                       -- 'PENDING', 'COMMITTED', 'ABORTED'
+    FOREIGN KEY (account_id) REFERENCES accounts(id)
+);
+</code></pre>
+
+<hr />
+<h3 id="step-2-approach-1-pessimistic-locking-with-database">Step 2: Approach 1 — Pessimistic Locking with Database</h3>
+<p><strong>Concept</strong>: Lock resource BEFORE reading/modifying; prevents conflicts; high contention.</p>
+<p><strong>Workflow</strong>:
+1. Acquire lock (SELECT FOR UPDATE)
+2. Read data
+3. Modify data
+4. Write changes
+5. Release lock (commit transaction)</p>
+<p><strong>Pros</strong>:
+- Prevents conflicts completely
+- Simple logic (no retries needed)
+- Good for high-contention scenarios</p>
+<p><strong>Cons</strong>:
+- Blocks other threads (reduced parallelism)
+- Can cause deadlocks
+- Wastes resources if conflicts rare</p>
+<p><strong>Code Example</strong>:</p>
+<pre class="codehilite"><code class="language-python">import sqlite3
+import threading
+import time
+
+def transfer_with_pessimistic_lock(from_id, to_id, amount):
+    &quot;&quot;&quot;Transfer money with pessimistic locking&quot;&quot;&quot;
+    conn = sqlite3.connect(':memory:')
+    conn.isolation_level = 'DEFERRED'  # Control transaction manually
+
+    try:
+        cursor = conn.cursor()
+
+        # Start transaction
+        cursor.execute('BEGIN')
+
+        # Lock both accounts (exclusive lock)
+        # In SQLite, SELECT ... FOR UPDATE not directly supported
+        # Use exclusive transaction (simulated here)
+        cursor.execute('''
+            SELECT balance FROM accounts 
+            WHERE id = ? 
+        ''', (from_id,))
+        from_balance = cursor.fetchone()[0]
+
+        cursor.execute('''
+            SELECT balance FROM accounts 
+            WHERE id = ? 
+        ''', (to_id,))
+        to_balance = cursor.fetchone()[0]
+
+        # Check and update (atomic within transaction)
+        if from_balance &gt;= amount:
+            cursor.execute('''
+                UPDATE accounts SET balance = balance - ? WHERE id = ?
+            ''', (amount, from_id))
+
+            cursor.execute('''
+                UPDATE accounts SET balance = balance + ? WHERE id = ?
+            ''', (amount, to_id))
+
+            conn.commit()
+            print(f&quot;Transfer successful: {amount} from {from_id} to {to_id}&quot;)
+            return True
+        else:
+            conn.rollback()
+            print(f&quot;Insufficient balance in account {from_id}&quot;)
+            return False
+
+    except Exception as e:
+        conn.rollback()
+        print(f&quot;Transfer failed: {e}&quot;)
+        return False
+    finally:
+        conn.close()
+
+# Simulate concurrent transfers
+def test_pessimistic_locking():
+    threads = []
+    for i in range(5):
+        t = threading.Thread(
+            target=transfer_with_pessimistic_lock,
+            args=(1, 2, 10)
+        )
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join()
+</code></pre>
+
+<p><strong>SQL Example (PostgreSQL)</strong>:</p>
+<pre class="codehilite"><code class="language-sql">-- Session 1: Start transaction and lock
+BEGIN;
+SELECT balance FROM accounts WHERE id = 1 FOR UPDATE;  -- Exclusive lock
+-- Other sessions must wait...
+
+-- Do read/modify
+UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+
+-- Session 1: Commit (release lock)
+COMMIT;
+</code></pre>
+
+<hr />
+<h3 id="step-3-approach-2-optimistic-locking">Step 3: Approach 2 — Optimistic Locking</h3>
+<p><strong>Concept</strong>: Assume conflicts rare; check version on UPDATE; retry if mismatch; high throughput.</p>
+<p><strong>Workflow</strong>:
+1. Read data (with version)
+2. Modify data locally
+3. On write, check if version matches
+4. If matches, update + increment version
+5. If mismatch, retry from step 1</p>
+<p><strong>Pros</strong>:
+- No locks; high parallelism
+- Good for low-contention scenarios
+- No deadlocks</p>
+<p><strong>Cons</strong>:
+- Retries on conflicts
+- Complex retry logic
+- Bad under high contention</p>
+<p><strong>Code Example</strong>:</p>
+<pre class="codehilite"><code class="language-python">import sqlite3
+import threading
+import time
+
+def transfer_with_optimistic_lock(from_id, to_id, amount, max_retries=3):
+    &quot;&quot;&quot;Transfer money with optimistic locking&quot;&quot;&quot;
+    conn = sqlite3.connect(':memory:')
+
+    for attempt in range(max_retries):
+        try:
+            cursor = conn.cursor()
+
+            # Step 1: Read data with version
+            cursor.execute('''
+                SELECT id, balance, version FROM accounts WHERE id = ?
+            ''', (from_id,))
+            from_account = cursor.fetchone()
+            from_id_db, from_balance, from_version = from_account
+
+            cursor.execute('''
+                SELECT id, balance, version FROM accounts WHERE id = ?
+            ''', (to_id,))
+            to_account = cursor.fetchone()
+            to_id_db, to_balance, to_version = to_account
+
+            # Step 2: Modify locally
+            if from_balance &lt; amount:
+                print(f&quot;Insufficient balance&quot;)
+                return False
+
+            new_from_balance = from_balance - amount
+            new_to_balance = to_balance + amount
+
+            # Step 3: Update with version check (optimistic lock)
+            cursor.execute('''
+                UPDATE accounts SET balance = ?, version = version + 1 
+                WHERE id = ? AND version = ?
+            ''', (new_from_balance, from_id, from_version))
+
+            if cursor.rowcount == 0:
+                # Version mismatch: someone else updated
+                print(f&quot;Attempt {attempt + 1}: Conflict detected, retrying...&quot;)
+                conn.rollback()
+                time.sleep(0.01 * (2 ** attempt))  # Exponential backoff
+                continue
+
+            cursor.execute('''
+                UPDATE accounts SET balance = ?, version = version + 1 
+                WHERE id = ? AND version = ?
+            ''', (new_to_balance, to_id, to_version))
+
+            if cursor.rowcount == 0:
+                # Version mismatch
+                print(f&quot;Attempt {attempt + 1}: Conflict detected, retrying...&quot;)
+                conn.rollback()
+                time.sleep(0.01 * (2 ** attempt))
+                continue
+
+            conn.commit()
+            print(f&quot;Transfer successful after {attempt + 1} attempt(s)&quot;)
+            return True
+
+        except Exception as e:
+            conn.rollback()
+            print(f&quot;Error: {e}&quot;)
+            continue
+
+    print(f&quot;Transfer failed after {max_retries} attempts&quot;)
+    return False
+
+# Test optimistic locking
+def test_optimistic_locking():
+    threads = []
+    for i in range(5):
+        t = threading.Thread(
+            target=transfer_with_optimistic_lock,
+            args=(1, 2, 10)
+        )
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join()
+</code></pre>
+
+<p><strong>SQL Example</strong>:</p>
+<pre class="codehilite"><code class="language-sql">-- Read data with version
+SELECT balance, version FROM accounts WHERE id = 1;  -- Returns (1000, 5)
+
+-- Modify and update atomically
+UPDATE accounts 
+SET balance = 900, version = 6 
+WHERE id = 1 AND version = 5;  -- Optimistic check
+
+-- If version didn't match, rowcount = 0; retry
+IF @@ROW_COUNT = 0 THEN
+    -- Someone else updated; retry from start
+    ROLLBACK;
+END IF;
+</code></pre>
+
+<hr />
+<h3 id="step-4-approach-3-distributed-locking-with-redis">Step 4: Approach 3 — Distributed Locking with Redis</h3>
+<p><strong>Concept</strong>: Use Redis (in-memory, atomic ops) as distributed lock manager; works across processes/machines.</p>
+<p><strong>Workflow</strong>:
+1. Acquire lock in Redis (SET with NX + EX)
+2. Execute critical section
+3. Release lock (DEL if owner)</p>
+<p><strong>Pros</strong>:
+- Works across multiple servers
+- Atomic operations
+- Simple implementation
+- Moderate performance</p>
+<p><strong>Cons</strong>:
+- External dependency (Redis)
+- Network latency
+- Complex recovery (lock expires, process crashes)
+- Not as fast as local locks</p>
+<p><strong>Code Example</strong>:</p>
+<pre class="codehilite"><code class="language-python">import redis
+import threading
+import time
+import uuid
+
+class DistributedLock:
+    def __init__(self, redis_client, lock_name, timeout=10):
+        self.redis = redis_client
+        self.lock_name = lock_name
+        self.timeout = timeout
+        self.lock_id = str(uuid.uuid4())  # Unique ID to prevent accidental release
+
+    def acquire(self, blocking=True, timeout=None):
+        &quot;&quot;&quot;Acquire lock; optionally block&quot;&quot;&quot;
+        start = time.time()
+
+        while True:
+            # SET key value NX EX timeout (atomic)
+            acquired = self.redis.set(
+                self.lock_name, 
+                self.lock_id,
+                nx=True,  # Only if not exists
+                ex=self.timeout  # Expire after timeout (safety)
+            )
+
+            if acquired:
+                return True
+
+            if not blocking:
+                return False
+
+            if timeout and (time.time() - start) &gt; timeout:
+                return False
+
+            time.sleep(0.01)  # Backoff
+
+    def release(self):
+        &quot;&quot;&quot;Release lock only if we own it&quot;&quot;&quot;
+        # Lua script for atomic check-and-delete
+        script = '''
+        if redis.call(&quot;get&quot;, KEYS[1]) == ARGV[1] then
+            return redis.call(&quot;del&quot;, KEYS[1])
+        else
+            return 0
+        end
+        '''
+
+        result = self.redis.eval(script, 1, self.lock_name, self.lock_id)
+        return result == 1
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *args):
+        self.release()
+
+# Example: Distributed account transfer
+def transfer_with_redis_lock(redis_client, from_id, to_id, amount):
+    &quot;&quot;&quot;Transfer money using Redis distributed lock&quot;&quot;&quot;
+
+    # Acquire locks for both accounts (avoid deadlock: lock in order)
+    lock_from = DistributedLock(redis_client, f&quot;account:{from_id}:lock&quot;, timeout=5)
+    lock_to = DistributedLock(redis_client, f&quot;account:{to_id}:lock&quot;, timeout=5)
+
+    try:
+        # Acquire in consistent order to prevent deadlock
+        if from_id &lt; to_id:
+            lock_from.acquire()
+            lock_to.acquire()
+        else:
+            lock_to.acquire()
+            lock_from.acquire()
+
+        # Critical section
+        from_balance = int(redis_client.get(f&quot;balance:{from_id}&quot;) or 0)
+        to_balance = int(redis_client.get(f&quot;balance:{to_id}&quot;) or 0)
+
+        if from_balance &gt;= amount:
+            redis_client.set(f&quot;balance:{from_id}&quot;, from_balance - amount)
+            redis_client.set(f&quot;balance:{to_id}&quot;, to_balance + amount)
+            print(f&quot;Transfer successful: {amount} from {from_id} to {to_id}&quot;)
+            return True
+        else:
+            print(f&quot;Insufficient balance&quot;)
+            return False
+
+    finally:
+        # Release in reverse order
+        if from_id &lt; to_id:
+            lock_to.release()
+            lock_from.release()
+        else:
+            lock_from.release()
+            lock_to.release()
+
+# Test
+if __name__ == &quot;__main__&quot;:
+    redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+
+    # Initialize balances
+    redis_client.set(&quot;balance:1&quot;, 1000)
+    redis_client.set(&quot;balance:2&quot;, 500)
+
+    threads = []
+    for i in range(5):
+        t = threading.Thread(
+            target=transfer_with_redis_lock,
+            args=(redis_client, 1, 2, 10)
+        )
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join()
+</code></pre>
+
+<hr />
+<h3 id="step-5-advanced-distributed-locking-redlock-algorithm">Step 5: Advanced Distributed Locking — Redlock Algorithm</h3>
+<p><strong>Concept</strong>: Use multiple Redis instances to guarantee lock safety even if instances fail.</p>
+<p><strong>Problem with Single Redis</strong>: If Redis crashes, lock is lost; another process can acquire same lock = conflict.</p>
+<p><strong>Redlock Solution</strong>: 
+- Require majority (N/2 + 1) Redis instances to agree
+- If majority alive, lock is safe (even if minority dies)
+- Requires ≥3 Redis instances</p>
+<p><strong>Algorithm</strong>:</p>
+<pre class="codehilite"><code>1. Get current time (milliseconds)
+2. Try to acquire lock on all N Redis instances (with timeout T)
+3. Count successful acquisitions
+4. If acquired on majority (N/2 + 1) instances:
+   - Lock is valid (safe)
+   - Validity = TTL - elapsed_time
+5. Else: Release lock from all instances (unlock)
+</code></pre>
+
+<p><strong>Code Example</strong>:</p>
+<pre class="codehilite"><code class="language-python">import redis
+import time
+import uuid
+from threading import Lock
+
+class RedlockManager:
+    def __init__(self, redis_connections, lock_name, timeout=10):
+        &quot;&quot;&quot;
+        Args:
+            redis_connections: List of Redis client objects (≥3 recommended)
+            lock_name: Name of lock
+            timeout: Lock expiration time (seconds)
+        &quot;&quot;&quot;
+        self.redis_clients = redis_connections
+        self.lock_name = lock_name
+        self.timeout = timeout
+        self.lock_id = str(uuid.uuid4())
+        self.quorum = (len(redis_connections) // 2) + 1  # Majority
+
+    def acquire(self, blocking=True, max_retries=3):
+        &quot;&quot;&quot;Acquire Redlock&quot;&quot;&quot;
+        retry = 0
+
+        while retry &lt; max_retries:
+            acquired_count = 0
+            start_time = time.time()
+
+            # Try to acquire on all instances
+            for redis_client in self.redis_clients:
+                try:
+                    acquired = redis_client.set(
+                        self.lock_name,
+                        self.lock_id,
+                        nx=True,
+                        ex=self.timeout
+                    )
+                    if acquired:
+                        acquired_count += 1
+                except Exception as e:
+                    # Instance unavailable; skip
+                    pass
+
+            elapsed = time.time() - start_time
+
+            # Check if majority acquired
+            if acquired_count &gt;= self.quorum:
+                # Lock is valid
+                # Validity time = TTL - elapsed
+                validity = self.timeout - elapsed
+                print(f&quot;Redlock acquired with {acquired_count}/{len(self.redis_clients)} votes&quot;)
+                print(f&quot;Lock validity: {validity:.2f} seconds&quot;)
+                return True
+
+            else:
+                # Failed to acquire on majority; release from acquired
+                self.release()
+
+                if not blocking:
+                    return False
+
+                # Exponential backoff
+                backoff = 0.001 * (2 ** retry)
+                time.sleep(backoff)
+                retry += 1
+
+        print(f&quot;Redlock acquisition failed after {max_retries} retries&quot;)
+        return False
+
+    def release(self):
+        &quot;&quot;&quot;Release Redlock from all instances&quot;&quot;&quot;
+        # Lua script for atomic check-and-delete
+        script = '''
+        if redis.call(&quot;get&quot;, KEYS[1]) == ARGV[1] then
+            return redis.call(&quot;del&quot;, KEYS[1])
+        else
+            return 0
+        end
+        '''
+
+        released_count = 0
+        for redis_client in self.redis_clients:
+            try:
+                result = redis_client.eval(script, 1, self.lock_name, self.lock_id)
+                if result == 1:
+                    released_count += 1
+            except Exception as e:
+                # Instance unavailable
+                pass
+
+        print(f&quot;Redlock released from {released_count}/{len(self.redis_clients)} instances&quot;)
+        return released_count &gt; 0
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *args):
+        self.release()
+
+# Example: Distributed transfer with Redlock
+def transfer_with_redlock(redlock_managers, from_id, to_id, amount):
+    &quot;&quot;&quot;Transfer money using Redlock&quot;&quot;&quot;
+
+    # In order to prevent deadlock
+    if from_id &lt; to_id:
+        lock_from = redlock_managers[from_id]
+        lock_to = redlock_managers[to_id]
+        order = [lock_from, lock_to]
+    else:
+        lock_to = redlock_managers[to_id]
+        lock_from = redlock_managers[from_id]
+        order = [lock_to, lock_from]
+
+    try:
+        # Acquire locks in order
+        for lock in order:
+            if not lock.acquire(max_retries=5):
+                print(f&quot;Failed to acquire lock&quot;)
+                return False
+
+        # Critical section (protected by Redlock on majority)
+        print(f&quot;Transfer: {amount} from account {from_id} to {to_id}&quot;)
+        time.sleep(0.1)  # Simulate work
+        return True
+
+    finally:
+        # Release in reverse order
+        for lock in reversed(order):
+            lock.release()
+
+# Test
+if __name__ == &quot;__main__&quot;:
+    # Setup 5 Redis instances (3 is minimum for Redlock)
+    redis_clients = [
+        redis.Redis(host='localhost', port=6379, db=i, decode_responses=True)
+        for i in range(5)
+    ]
+
+    # Create Redlock managers for different accounts
+    redlock_managers = {
+        1: RedlockManager(redis_clients, &quot;account:1:redlock&quot;, timeout=10),
+        2: RedlockManager(redis_clients, &quot;account:2:redlock&quot;, timeout=10),
+        3: RedlockManager(redis_clients, &quot;account:3:redlock&quot;, timeout=10),
+    }
+
+    # Concurrent transfers
+    threads = []
+    for i in range(5):
+        t = threading.Thread(
+            target=transfer_with_redlock,
+            args=(redlock_managers, 1, 2, 100)
+        )
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join()
+
+    print(&quot;All transfers completed&quot;)
+</code></pre>
+
+<p><strong>Redlock Characteristics</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Safety</strong></td>
+<td>If lock acquired on majority, guaranteed exclusive access (even if minority fails)</td>
+</tr>
+<tr>
+<td><strong>Availability</strong></td>
+<td>Can tolerate N-1 Redis failures (where N ≥ 3)</td>
+</tr>
+<tr>
+<td><strong>Performance</strong></td>
+<td>Slower than single Redis (multiple writes)</td>
+</tr>
+<tr>
+<td><strong>Complexity</strong></td>
+<td>More complex than single lock</td>
+</tr>
+<tr>
+<td><strong>Use Cases</strong></td>
+<td>Critical operations, distributed systems, multiple data centers</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Redlock vs Single Redis</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Single Redis</th>
+<th>Redlock</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Redis crashes</td>
+<td>Lock lost; conflicts possible</td>
+<td>Majority alive; lock safe</td>
+</tr>
+<tr>
+<td>Network partition</td>
+<td>Minority partition can acquire duplicate locks</td>
+<td>Majority partition holds lock; minority blocked</td>
+</tr>
+<tr>
+<td>Simple system</td>
+<td>Recommended</td>
+<td>Overkill</td>
+</tr>
+<tr>
+<td>High-availability cluster</td>
+<td>Insufficient</td>
+<td>Recommended</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="comparison-all-approaches">Comparison: All Approaches</h2>
+<table>
+<thead>
+<tr>
+<th>Approach</th>
+<th>Latency</th>
+<th>Throughput</th>
+<th>Contention Handling</th>
+<th>Complexity</th>
+<th>Deadlock Risk</th>
+<th>Use Case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Pessimistic Locking</strong></td>
+<td>High</td>
+<td>Low</td>
+<td>Prevents</td>
+<td>Low</td>
+<td>High (nested locks)</td>
+<td>High-contention, critical sections</td>
+</tr>
+<tr>
+<td><strong>Optimistic Locking</strong></td>
+<td>Low</td>
+<td>High</td>
+<td>Retries</td>
+<td>Medium</td>
+<td>None</td>
+<td>Low-contention, read-heavy</td>
+</tr>
+<tr>
+<td><strong>Redis Lock</strong></td>
+<td>Medium</td>
+<td>Medium</td>
+<td>Waits</td>
+<td>Medium</td>
+<td>Medium (single instance fails)</td>
+<td>Distributed, moderate contention</td>
+</tr>
+<tr>
+<td><strong>Redlock</strong></td>
+<td>High</td>
+<td>Low</td>
+<td>Waits on majority</td>
+<td>High</td>
+<td>Low (majority guarantees)</td>
+<td>High-availability, mission-critical</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="key-takeaways">💡 Key Takeaways</h2>
+<ul>
+<li><strong>GIL limits threading</strong> for CPU-bound work; use multiprocessing or async</li>
+<li><strong>Deadlock</strong>: Resource ordering + timeouts prevent it</li>
+<li><strong>Race conditions</strong>: Locks or atomic operations protect against it</li>
+<li><strong>Choose appropriate primitives</strong>: Lock for exclusion, Semaphore for pooling, Queue for async</li>
+<li><strong>Profile before optimizing</strong>: Measure lock contention, not just CPU</li>
+<li><strong>Async for I/O</strong>: Lower overhead than threads for I/O-bound tasks</li>
+<li><strong>Pessimistic locking</strong>: Best for high-contention; simple but blocks threads</li>
+<li><strong>Optimistic locking</strong>: Best for low-contention; retries on conflicts</li>
+<li><strong>Distributed locking</strong>: Use Redis for multi-process/machine systems; Redlock for high-availability</li>
+</ul>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-04-05</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

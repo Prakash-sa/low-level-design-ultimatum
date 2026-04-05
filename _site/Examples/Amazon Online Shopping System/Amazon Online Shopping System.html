@@ -1,0 +1,1552 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Amazon Online Shopping System - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Insatance%20Variable.html">Class Variable vs Insatance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Airline%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Airline Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/">Airline Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/Airline%20Management%20System.html">Airline Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Locker System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/">Amazon Locker System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/Amazon%20Locker%20System.html">Amazon Locker System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Online Shopping System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/">Amazon Online Shopping System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/ATM/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle ATM" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/ATM/">ATM</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM/ATM.html">ATM</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Cache/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Cache" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Cache/">Cache</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache/Cache.html">Cache</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Car%20Rental%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Car Rental System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/">Car Rental System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/Car%20Rental%20System.html">Car Rental System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Chess%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Chess Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Chess%20Game/">Chess Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game/Chess%20Game.html">Chess Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circinfo (Ride Sharing)" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/">Circinfo (Ride Sharing)</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Design Hit Counter" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/">Design Hit Counter</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/Design%20Hit%20Counter.html">Design Hit Counter</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/">Elevator System</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Elevator%20System.html">Elevator System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Facebook/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Facebook" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Facebook/">Facebook</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook/Facebook.html">Facebook</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/File%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle File System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/File%20System/">File System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System/File%20System.html">File System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Hotel Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/">Hotel Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/Hotel%20Management%20System.html">Hotel Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Jigsaw Puzzle" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/">Jigsaw Puzzle</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Leaderboard/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Leaderboard" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Leaderboard/">Leaderboard</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard/Leaderboard.html">Leaderboard</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Library%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Library Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/">Library Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/Library%20Management%20System.html">Library Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/LinkedIn/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle LinkedIn" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/LinkedIn/">LinkedIn</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn/LinkedIn.html">LinkedIn</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Logging/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Logging" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Logging/">Logging</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging/Logging.html">Logging</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Meeting Scheduler" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/">Meeting Scheduler</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/Meeting%20Scheduler.html">Meeting Scheduler</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Movie Ticket Booking System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/">Movie Ticket Booking System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Blackjack Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/">Online Blackjack Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Stock Brokerage System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/">Online Stock Brokerage System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/">Parking Lot</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Parking%20Lot.html">Parking Lot</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Pub-Sub/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Pub-Sub" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Pub-Sub/">Pub-Sub</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub/Pub-Sub.html">Pub-Sub</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Restaurant Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/">Restaurant Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/Restaurant%20Management%20System.html">Restaurant Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Stack%20Overflow/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Stack Overflow" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/">Stack Overflow</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/Stack%20Overflow.html">Stack Overflow</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Text Editor with Undo & Redo" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/">Text Editor with Undo & Redo</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Train Platform Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/">Train Platform Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Vending%20Machine/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Vending Machine" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/">Vending Machine</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/Vending%20Machine.html">Vending Machine</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/">Amazon Online Shopping System</a>
+            </div>
+            <div class="content">
+                <h1 id="amazon-online-shopping-system-complete-design-guide">Amazon Online Shopping System — Complete Design Guide</h1>
+<blockquote>
+<p>E-commerce platform for browsing, cart management, checkout, order tracking, and notifications.</p>
+</blockquote>
+<p><strong>Scale</strong>: 100K+ concurrent users, 1M+ products, 24/7 uptime, peak: 10K TPS<br />
+<strong>Duration</strong>: 75-minute interview guide<br />
+<strong>Focus</strong>: Inventory management, cart operations, checkout flow, state transitions</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#system-overview">System Overview</a></li>
+<li><a href="#requirements--scope">Requirements &amp; Scope</a></li>
+<li><a href="#architecture--design-patterns">Architecture &amp; Design Patterns</a></li>
+<li><a href="#core-entities--uml-diagram">Core Entities &amp; UML Diagram</a></li>
+<li><a href="#implementation-guide">Implementation Guide</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#demo--running">Demo &amp; Running</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>Users browse products → add to cart (no inventory deduction) → checkout (reserve inventory atomically) → place order → receive notifications → track shipment.</p>
+<h3 id="key-design-patterns">Key Design Patterns</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Why</th>
+<th>Used For</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>Single consistent state</td>
+<td>ShoppingSystem (thread-safe)</td>
+</tr>
+<tr>
+<td><strong>Strategy (Pricing)</strong></td>
+<td>Pluggable algorithms</td>
+<td>Regular/Bulk/Membership pricing</td>
+</tr>
+<tr>
+<td><strong>Strategy (Search)</strong></td>
+<td>Chainable filters</td>
+<td>Category/Price/Rating filters</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Decouple notifications</td>
+<td>Email/SMS/Push notifiers</td>
+</tr>
+<tr>
+<td><strong>State</strong></td>
+<td>Valid transitions</td>
+<td>Order lifecycle (PENDING → SHIPPED)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="critical-interview-points">Critical Interview Points</h3>
+<ul>
+<li>✅ How to prevent double-booking? → Atomic inventory reservation at checkout</li>
+<li>✅ Cart vs Order state? → Cart: temporary items, Order: confirmed purchase</li>
+<li>✅ Thread-safety? → Singleton with threading.Lock for all operations</li>
+<li>✅ Scaling? → Multiple locations, distributed locks (Redis), async notifications</li>
+</ul>
+<hr />
+<h2 id="system-overview">System Overview</h2>
+<h3 id="core-problem">Core Problem</h3>
+<pre class="codehilite"><code>Customer browses products
+        ↓
+ADD TO CART (no inventory deduction, just collecting items)
+        ↓
+CHECKOUT (atomic: reserve inventory, create order, lock items)
+        ↓
+If reservation succeeds → Create order, send notifications
+If reservation fails → Release everything, cart unchanged
+        ↓
+ORDER LIFECYCLE (PENDING → CONFIRMED → SHIPPED → DELIVERED)
+        ↓
+Track shipment, send status updates
+</code></pre>
+
+<h3 id="key-constraints">Key Constraints</h3>
+<ul>
+<li><strong>Concurrency</strong>: 100K+ simultaneous users browsing/adding/checking out</li>
+<li><strong>Inventory</strong>: No double-selling (atomic reservation)</li>
+<li><strong>Search</strong>: 1M+ products, fast filtering (category/price/rating)</li>
+<li><strong>State</strong>: Clear order transitions, no invalid state changes</li>
+</ul>
+<hr />
+<h2 id="requirements-scope">Requirements &amp; Scope</h2>
+<h3 id="functional-requirements">Functional Requirements</h3>
+<p>✅ Browse &amp; search products (category, price, rating filters)<br />
+✅ Add/remove items from shopping cart<br />
+✅ Apply different pricing strategies (regular, bulk, membership)<br />
+✅ Checkout with atomic inventory reservation<br />
+✅ Track order lifecycle (PENDING → DELIVERED)<br />
+✅ Receive notifications (email, SMS, push)<br />
+✅ Cancel orders (only before shipment)  </p>
+<h3 id="non-functional-requirements">Non-Functional Requirements</h3>
+<p>✅ Support 100K+ concurrent users<br />
+✅ &lt;100ms search response time<br />
+✅ &lt;500ms checkout response time<br />
+✅ 99.9% uptime<br />
+✅ Accurate inventory tracking  </p>
+<h3 id="out-of-scope">Out of Scope</h3>
+<p>❌ Payment processing (assume external gateway)<br />
+❌ Returns/refunds<br />
+❌ Customer app frontend<br />
+❌ Seller portal  </p>
+<hr />
+<h2 id="architecture-design-patterns">Architecture &amp; Design Patterns</h2>
+<h3 id="1-singleton-pattern-thread-safe">1. Singleton Pattern (Thread-Safe)</h3>
+<p><strong>Problem</strong>: 100K users accessing shopping system concurrently → race conditions on inventory</p>
+<p><strong>Solution</strong>: Single ShoppingSystem instance with thread locks</p>
+<pre class="codehilite"><code class="language-python">class ShoppingSystem:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+</code></pre>
+
+<p><strong>Why It Matters</strong>: 
+- All users share same inventory (single source of truth)
+- Lock ensures only one user can reserve at a time
+- Prevents over-selling last item</p>
+<hr />
+<h3 id="2-strategy-pattern-pricing">2. Strategy Pattern (Pricing)</h3>
+<p><strong>Problem</strong>: Different pricing models (regular, bulk discount 10% for 5+, membership 15% off) need different logic</p>
+<p><strong>Solution</strong>: Pluggable pricing strategies</p>
+<pre class="codehilite"><code class="language-python">class PricingStrategy(ABC):
+    @abstractmethod
+    def calculate_price(self, base_price, quantity):
+        pass
+
+class BulkPricing(PricingStrategy):
+    def calculate_price(self, base_price, qty):
+        return base_price * qty * 0.9 if qty &gt;= 5 else base_price * qty
+
+# Switch at checkout
+system.set_pricing_strategy(BulkPricing())
+total = strategy.calculate_price(100, 5)  # $450 (10% off)
+</code></pre>
+
+<p><strong>Interview Benefit</strong>: Easy to add new strategies (seasonal, regional) without modifying checkout</p>
+<hr />
+<h3 id="3-strategy-pattern-search-filters">3. Strategy Pattern (Search Filters)</h3>
+<p><strong>Problem</strong>: Search by category + price + rating simultaneously without nested loops</p>
+<p><strong>Solution</strong>: Chainable filter strategies</p>
+<pre class="codehilite"><code class="language-python">class SearchFilter(ABC):
+    @abstractmethod
+    def filter(self, products):
+        pass
+
+# Chain filters
+filters = [
+    CategoryFilter(ProductCategory.ELECTRONICS),
+    PriceFilter(500, 1500),
+    RatingFilter(4.0)
+]
+results = system.search_products(filters)  # Electronics, $500-1500, 4+ stars
+</code></pre>
+
+<p><strong>Interview Benefit</strong>: Each filter independent, composable, no coupling</p>
+<hr />
+<h3 id="4-observer-pattern-notifications">4. Observer Pattern (Notifications)</h3>
+<p><strong>Problem</strong>: System shouldn't know about Email/SMS/Push implementation details</p>
+<p><strong>Solution</strong>: Abstract Observer interface, pluggable notifiers</p>
+<pre class="codehilite"><code class="language-python">class OrderObserver(ABC):
+    @abstractmethod
+    def notify(self, event, order):
+        pass
+
+class EmailNotifier(OrderObserver):
+    def notify(self, event, order):
+        # Send email
+        pass
+
+# Add notifiers
+system.add_observer(EmailNotifier())
+system.add_observer(SMSNotifier())
+
+# All fire on event
+system.notify_all(&quot;ORDER_PLACED&quot;, order)
+</code></pre>
+
+<p><strong>Interview Benefit</strong>: Add Slack notifier without touching core system</p>
+<hr />
+<h3 id="5-state-pattern-order-lifecycle">5. State Pattern (Order Lifecycle)</h3>
+<p><strong>Problem</strong>: Orders have valid transitions (PENDING → SHIPPED) and invalid ones (DELIVERED → PENDING)</p>
+<p><strong>Solution</strong>: Enum-based state with validation</p>
+<pre class="codehilite"><code class="language-python">class OrderStatus(Enum):
+    PENDING = &quot;pending&quot;
+    CONFIRMED = &quot;confirmed&quot;
+    SHIPPED = &quot;shipped&quot;
+    DELIVERED = &quot;delivered&quot;
+    CANCELLED = &quot;cancelled&quot;
+
+class Order:
+    def ship(self, tracking):
+        if self.status != OrderStatus.CONFIRMED:
+            raise InvalidTransition()
+        self.status = OrderStatus.SHIPPED
+</code></pre>
+
+<p><strong>Interview Benefit</strong>: Prevents invalid state transitions at compile time</p>
+<hr />
+<h2 id="core-entities-uml-diagram">Core Entities &amp; UML Diagram</h2>
+<h3 id="class-diagram">Class Diagram</h3>
+<pre class="codehilite"><code>┌─────────────────────────────────────────────────────────────────┐
+│                  SHOPPING SYSTEM                                │
+│                  (Singleton)                                    │
+└─────────────────────────────────────────────────────────────────┘
+                           │
+           ┌───────────────┼───────────────┐
+           │               │               │
+           ▼               ▼               ▼
+        ┌──────────┐   ┌──────────┐   ┌────────────┐
+        │ Product  │   │  User    │   │  Order     │
+        │ (1M+)    │   │(100K+)   │   │(tracking)  │
+        ├──────────┤   ├──────────┤   ├────────────┤
+        │ - name   │   │ - email  │   │ - status   │
+        │ - price  │   │ - phone  │   │ - items[]  │
+        │ - qty    │   │ - orders │   │ - total    │
+        │ - reserve│   └──────────┘   │ - confirm()│
+        │ - release│        │         │ - ship()   │
+        └──────────┘        │         │ - cancel() │
+             │              │         └────────────┘
+             │ HAS-A        │ CREATES       │
+             │              │              │ CONTAINS
+             ▼              ▼              ▼
+        ┌─────────────────────────────────────┐
+        │       ShoppingCart                  │
+        │  • items[] (CartItem)               │
+        │  • add_item()                       │
+        │  • remove_item()                    │
+        │  • checkout() → Order               │
+        └─────────────────────────────────────┘
+                    │
+                    │ CONTAINS (1..*)
+                    │
+                    ▼
+        ┌─────────────────────────────────────┐
+        │       CartItem                      │
+        │  • product (Product)                │
+        │  • quantity                         │
+        │  • status (ADDED/RESERVED)          │
+        │  • reserve()                        │
+        │  • release()                        │
+        └─────────────────────────────────────┘
+
+
+STRATEGY PATTERNS:
+
+┌──────────────────────────────────────────────────┐
+│    PricingStrategy (Abstract)                    │
+│  • calculate_price(base_price, qty)              │
+├──────────────────────────────────────────────────┤
+│  ├─ RegularPricing (no discount)                 │
+│  ├─ BulkPricing (10% off for 5+)                │
+│  └─ MembershipPricing (15% off)                 │
+└──────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────┐
+│    SearchFilter (Abstract)                       │
+│  • filter(products) → List[Product]              │
+├──────────────────────────────────────────────────┤
+│  ├─ CategoryFilter                               │
+│  ├─ PriceFilter                                  │
+│  └─ RatingFilter                                 │
+└──────────────────────────────────────────────────┘
+
+
+OBSERVER PATTERN:
+
+┌──────────────────────────────────────────────────┐
+│    OrderObserver (Abstract)                      │
+│  • notify(event, order)                          │
+├──────────────────────────────────────────────────┤
+│  ├─ EmailNotifier                                │
+│  ├─ SMSNotifier                                  │
+│  └─ PushNotifier                                 │
+└──────────────────────────────────────────────────┘
+
+
+ENUMERATIONS:
+
+┌────────────────────────────┐
+│ ProductCategory (Enum)     │
+├────────────────────────────┤
+│ • ELECTRONICS              │
+│ • BOOKS                    │
+│ • CLOTHING                 │
+│ • HOME                     │
+│ • SPORTS                   │
+└────────────────────────────┘
+
+┌────────────────────────────┐
+│ OrderStatus (Enum)         │
+├────────────────────────────┤
+│ • PENDING                  │
+│ • CONFIRMED                │
+│ • SHIPPED                  │
+│ • DELIVERED                │
+│ • CANCELLED                │
+└────────────────────────────┘
+
+┌────────────────────────────┐
+│ CartItemStatus (Enum)      │
+├────────────────────────────┤
+│ • ADDED                    │
+│ • RESERVED                 │
+│ • PURCHASED                │
+│ • REMOVED                  │
+└────────────────────────────┘
+</code></pre>
+
+<h3 id="entity-relationships">Entity Relationships</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Relationship</th>
+<th>Count</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Product</td>
+<td>HAS-A Inventory</td>
+<td>1</td>
+<td>Catalog with stock tracking</td>
+</tr>
+<tr>
+<td>ShoppingCart</td>
+<td>HAS-A CartItem</td>
+<td>0..*</td>
+<td>User's temporary collection</td>
+</tr>
+<tr>
+<td>CartItem</td>
+<td>REFERENCES Product</td>
+<td>1</td>
+<td>Product + quantity in cart</td>
+</tr>
+<tr>
+<td>Order</td>
+<td>CONTAINS CartItem</td>
+<td>1..*</td>
+<td>Confirmed purchase items</td>
+</tr>
+<tr>
+<td>Order</td>
+<td>OWNED-BY User</td>
+<td>1..1</td>
+<td>Purchase history</td>
+</tr>
+<tr>
+<td>User</td>
+<td>HAS-A ShoppingCart</td>
+<td>1</td>
+<td>Per-user cart</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="implementation-guide">Implementation Guide</h2>
+<h3 id="step-1-core-entities">Step 1: Core Entities</h3>
+<pre class="codehilite"><code class="language-python">from enum import Enum
+from datetime import datetime, timedelta
+import uuid
+import threading
+from abc import ABC, abstractmethod
+from typing import List, Dict, Optional
+
+class ProductCategory(Enum):
+    ELECTRONICS = &quot;electronics&quot;
+    BOOKS = &quot;books&quot;
+    CLOTHING = &quot;clothing&quot;
+    HOME = &quot;home&quot;
+    SPORTS = &quot;sports&quot;
+
+class OrderStatus(Enum):
+    PENDING = &quot;pending&quot;
+    CONFIRMED = &quot;confirmed&quot;
+    SHIPPED = &quot;shipped&quot;
+    DELIVERED = &quot;delivered&quot;
+    CANCELLED = &quot;cancelled&quot;
+
+class CartItemStatus(Enum):
+    ADDED = &quot;added&quot;
+    RESERVED = &quot;reserved&quot;
+    PURCHASED = &quot;purchased&quot;
+    REMOVED = &quot;removed&quot;
+
+class Product:
+    def __init__(self, product_id, name, category, price, quantity):
+        self.product_id = product_id
+        self.name = name
+        self.category = category
+        self.price = price
+        self.quantity_available = quantity
+        self.rating = 0.0
+        self.reviews = []
+
+    def is_available(self, qty):
+        return self.quantity_available &gt;= qty
+
+    def reserve(self, qty):
+        if self.is_available(qty):
+            self.quantity_available -= qty
+            return True
+        return False
+
+    def release(self, qty):
+        self.quantity_available += qty
+
+class CartItem:
+    def __init__(self, product, quantity):
+        self.product = product
+        self.quantity = quantity
+        self.status = CartItemStatus.ADDED
+
+    def get_total_price(self):
+        return self.product.price * self.quantity
+
+    def reserve(self):
+        if self.product.reserve(self.quantity):
+            self.status = CartItemStatus.RESERVED
+            return True
+        return False
+
+    def release(self):
+        self.product.release(self.quantity)
+        self.status = CartItemStatus.REMOVED
+
+class ShoppingCart:
+    def __init__(self, user_id):
+        self.cart_id = str(uuid.uuid4())[:8]
+        self.user_id = user_id
+        self.items = {}
+
+    def add_item(self, product, quantity):
+        if not product.is_available(quantity):
+            return False
+        if product.product_id in self.items:
+            self.items[product.product_id].quantity += quantity
+        else:
+            self.items[product.product_id] = CartItem(product, quantity)
+        return True
+
+    def remove_item(self, product_id):
+        if product_id in self.items:
+            del self.items[product_id]
+            return True
+        return False
+
+    def get_total_price(self):
+        return sum(item.get_total_price() for item in self.items.values())
+
+    def clear(self):
+        for item in self.items.values():
+            item.release()
+        self.items.clear()
+
+class Order:
+    def __init__(self, order_id, user_id, items, total_price):
+        self.order_id = order_id
+        self.user_id = user_id
+        self.items = items
+        self.total_price = total_price
+        self.status = OrderStatus.PENDING
+        self.created_at = datetime.now()
+        self.tracking_number = None
+
+    def confirm(self):
+        if self.status == OrderStatus.PENDING:
+            self.status = OrderStatus.CONFIRMED
+            return True
+        return False
+
+    def ship(self, tracking_number):
+        if self.status == OrderStatus.CONFIRMED:
+            self.status = OrderStatus.SHIPPED
+            self.tracking_number = tracking_number
+            return True
+        return False
+
+    def deliver(self):
+        if self.status == OrderStatus.SHIPPED:
+            self.status = OrderStatus.DELIVERED
+            return True
+        return False
+
+    def cancel(self):
+        if self.status in [OrderStatus.PENDING, OrderStatus.CONFIRMED]:
+            for item in self.items.values():
+                item.release()
+            self.status = OrderStatus.CANCELLED
+            return True
+        return False
+
+class User:
+    def __init__(self, user_id, name, email, phone):
+        self.user_id = user_id
+        self.name = name
+        self.email = email
+        self.phone = phone
+        self.orders = []
+</code></pre>
+
+<h3 id="step-2-strategies-observers">Step 2: Strategies &amp; Observers</h3>
+<pre class="codehilite"><code class="language-python">class PricingStrategy(ABC):
+    @abstractmethod
+    def calculate_price(self, base_price, quantity):
+        pass
+
+class RegularPricing(PricingStrategy):
+    def calculate_price(self, base_price, quantity):
+        return base_price * quantity
+
+class BulkPricing(PricingStrategy):
+    def calculate_price(self, base_price, quantity):
+        if quantity &gt;= 5:
+            return base_price * quantity * 0.9
+        return base_price * quantity
+
+class MembershipPricing(PricingStrategy):
+    def calculate_price(self, base_price, quantity):
+        return base_price * quantity * 0.85
+
+class SearchFilter(ABC):
+    @abstractmethod
+    def filter(self, products):
+        pass
+
+class CategoryFilter(SearchFilter):
+    def __init__(self, category):
+        self.category = category
+
+    def filter(self, products):
+        return [p for p in products if p.category == self.category]
+
+class PriceFilter(SearchFilter):
+    def __init__(self, min_price, max_price):
+        self.min_price = min_price
+        self.max_price = max_price
+
+    def filter(self, products):
+        return [p for p in products if self.min_price &lt;= p.price &lt;= self.max_price]
+
+class OrderObserver(ABC):
+    @abstractmethod
+    def notify(self, event, order):
+        pass
+
+class EmailNotifier(OrderObserver):
+    def notify(self, event, order):
+        print(f&quot;📧 Email: Order {order.order_id} - {event}&quot;)
+
+class SMSNotifier(OrderObserver):
+    def notify(self, event, order):
+        print(f&quot;📱 SMS: Order {order.order_id} - {event}&quot;)
+</code></pre>
+
+<h3 id="step-3-singleton-controller">Step 3: Singleton Controller</h3>
+<pre class="codehilite"><code class="language-python">class ShoppingSystem:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance.products = {}
+                    cls._instance.users = {}
+                    cls._instance.carts = {}
+                    cls._instance.orders = {}
+                    cls._instance.observers = []
+                    cls._instance.pricing_strategy = RegularPricing()
+        return cls._instance
+
+    def add_product(self, name, category, price, quantity):
+        product_id = str(uuid.uuid4())[:8]
+        product = Product(product_id, name, category, price, quantity)
+        self.products[product_id] = product
+        return product
+
+    def register_user(self, name, email, phone):
+        user_id = str(uuid.uuid4())[:8]
+        user = User(user_id, name, email, phone)
+        self.users[user_id] = user
+        return user
+
+    def search_products(self, filters):
+        results = list(self.products.values())
+        for filter_strategy in filters:
+            results = filter_strategy.filter(results)
+        return results
+
+    def add_to_cart(self, user_id, product_id, quantity):
+        cart = self.carts.setdefault(user_id, ShoppingCart(user_id))
+        product = self.products.get(product_id)
+        return cart.add_item(product, quantity) if product else False
+
+    def checkout(self, user_id):
+        with self._lock:
+            cart = self.carts.get(user_id)
+            if not cart or not cart.items:
+                return None
+
+            # Reserve all items
+            for item in cart.items.values():
+                if not item.reserve():
+                    for reserved_item in cart.items.values():
+                        reserved_item.release()
+                    return None
+
+            # Create order
+            order_id = str(uuid.uuid4())[:8]
+            total = 0
+            for item in cart.items.values():
+                total += self.pricing_strategy.calculate_price(
+                    item.product.price, item.quantity
+                )
+
+            order = Order(order_id, user_id, dict(cart.items), total)
+            self.orders[order_id] = order
+            self.notify_all(&quot;ORDER_PLACED&quot;, order)
+            cart.clear()
+            del self.carts[user_id]
+            return order
+
+    def add_observer(self, observer):
+        self.observers.append(observer)
+
+    def notify_all(self, event, order):
+        for observer in self.observers:
+            observer.notify(event, order)
+
+    def set_pricing_strategy(self, strategy):
+        self.pricing_strategy = strategy
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="q1-how-do-you-prevent-double-booking-during-concurrent-checkouts">Q1: How do you prevent double-booking during concurrent checkouts?</h3>
+<p><strong>A</strong>: Atomic reservation at checkout:
+1. Lock acquired (Singleton with threading.Lock)
+2. For each cart item, attempt to reserve inventory
+3. If ANY reservation fails, rollback all and return error
+4. Lock released after entire operation</p>
+<p>If 2 users both have last item in cart and checkout simultaneously, only 1 succeeds in reserving it. Other gets "out of stock" error.</p>
+<hr />
+<h3 id="q2-whats-the-difference-between-adding-to-cart-and-checkout">Q2: What's the difference between adding to cart and checkout?</h3>
+<p><strong>A</strong>: 
+- <strong>Add to Cart</strong>: No inventory change, just check availability. Item stays in cart even if stock changes.
+- <strong>Checkout</strong>: Atomic operation. Reserve inventory, create order, remove from cart.</p>
+<p>This prevents showing "out of stock" after user adds to cart.</p>
+<hr />
+<h3 id="q3-why-use-strategy-pattern-for-pricing">Q3: Why use Strategy pattern for pricing?</h3>
+<p><strong>A</strong>: Different pricing models (regular, bulk 10%, membership 15%) can coexist. Add seasonal pricing without modifying checkout logic. Switch strategies at runtime.</p>
+<hr />
+<h3 id="q4-how-do-search-filters-work">Q4: How do search filters work?</h3>
+<p><strong>A</strong>: Each filter is independent strategy. CategoryFilter reduces products to category. PriceFilter narrows by price. RatingFilter filters by rating. Chain them: 1M products → 10K electronics → 2K under $1500 → 500 rated 4+.</p>
+<hr />
+<h3 id="q5-how-do-notifications-decouple-from-orders">Q5: How do notifications decouple from orders?</h3>
+<p><strong>A</strong>: Observer pattern. Order doesn't know about EmailNotifier, SMSNotifier. Just fires <code>notify_all("ORDER_PLACED", order)</code>. Each observer handles independently. Add SlackNotifier = add observer.</p>
+<hr />
+<h3 id="q6-how-to-handle-item-going-out-of-stock-while-in-cart">Q6: How to handle item going out of stock while in cart?</h3>
+<p><strong>A</strong>: Check availability at checkout. If item unavailable, entire checkout fails. Cart unchanged. User gets "Item X out of stock" message. User can remove item and retry.</p>
+<hr />
+<h3 id="q7-how-to-prevent-customers-from-gaming-bulk-pricing">Q7: How to prevent customers from gaming bulk pricing?</h3>
+<p><strong>A</strong>: Enforce bulk pricing only for same product in single checkout. Split across multiple orders? Each order calculated separately. Track by order_id, not customer.</p>
+<hr />
+<h3 id="q8-what-if-customer-loses-internet-during-checkout">Q8: What if customer loses internet during checkout?</h3>
+<p><strong>A</strong>: Checkout is atomic operation inside lock. Either entire order succeeds or entire order fails. No partial orders. If client loses connection mid-checkout, server finishes operation, returns success/error.</p>
+<hr />
+<h3 id="q9-how-to-handle-abandoned-carts">Q9: How to handle abandoned carts?</h3>
+<p><strong>A</strong>: Background job clears carts older than 24 hours. Release reserved items back to inventory. Email customer: "Your cart is expiring".</p>
+<hr />
+<h3 id="q10-how-do-you-track-order-history">Q10: How do you track order history?</h3>
+<p><strong>A</strong>: User object maintains orders[] list. When order created, append to user.orders. Query user.orders for history. Add created_at timestamp for sorting.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<h3 id="q1-how-would-you-scale-to-100k-concurrent-users-and-1m-products">Q1: How would you scale to 100K+ concurrent users and 1M+ products?</h3>
+<p><strong>A</strong>: Multi-tier architecture:</p>
+<p><strong>Tier 1: Product Catalog</strong>
+- Partition by category (sharding)
+- Search index (Elasticsearch) for fast filtering
+- Cache popular products in memory (Redis)
+- Read replicas for inventory checks</p>
+<p><strong>Tier 2: Carts &amp; Checkout</strong>
+- ShoppingSystem replica per region
+- Session affinity (user always hits same replica)
+- Redis for distributed locks (not just threading.Lock)
+- Queue checkout operations if peak load</p>
+<p><strong>Tier 3: Orders</strong>
+- Distributed database (PostgreSQL with sharding)
+- Shard by user_id or order_id
+- Replication for backup</p>
+<pre class="codehilite"><code>Load Balancer
+    ├─ ShoppingSystem Replica 1 (25K users)
+    ├─ ShoppingSystem Replica 2 (25K users)
+    ├─ ShoppingSystem Replica 3 (25K users)
+    └─ ShoppingSystem Replica 4 (25K users)
+    ↓
+Shared Product DB (read replicas)
+Shared Order DB (sharded by region)
+Redis (distributed locks, caching)
+</code></pre>
+
+<hr />
+<h3 id="q2-how-to-prevent-double-booking-across-multiple-replicas">Q2: How to prevent double-booking across multiple replicas?</h3>
+<p><strong>A</strong>: </p>
+<p><strong>Problem</strong>: Each ShoppingSystem replica has own threading.Lock. Two users on different replicas can reserve same item.</p>
+<p><strong>Solution</strong>: Distributed lock (Redis)</p>
+<pre class="codehilite"><code class="language-python"># Instead of threading.Lock
+def checkout(self, user_id):
+    with redis_lock.acquire(f&quot;inventory-{product_id}&quot;, timeout=5):
+        # Reserve inventory
+        # Create order
+        pass
+</code></pre>
+
+<p>Only 1 replica can checkout per product at a time. Prevents double-booking globally.</p>
+<hr />
+<h3 id="q3-how-to-sync-product-inventory-across-replicas">Q3: How to sync product inventory across replicas?</h3>
+<p><strong>A</strong>: </p>
+<p><strong>Option 1: Pessimistic Locking</strong>
+- All inventory stored in central DB
+- Check before reserve: <code>SELECT quantity FROM products WHERE id=X FOR UPDATE</code>
+- Update: <code>UPDATE products SET quantity=quantity-Y WHERE id=X</code>
+- Consistent but slower (network latency)</p>
+<p><strong>Option 2: Optimistic Locking</strong>
+- Products cached in each replica with version number
+- Checkout: read version, attempt update if version matches
+- If version mismatch: retry with new version
+- Fast but eventual consistency</p>
+<p><strong>Option 3: Event Sourcing</strong>
+- All checkout events logged to Kafka
+- Events replayed to update inventory
+- Eventually consistent, audit trail</p>
+<p>Most common: <strong>Pessimistic for critical inventory, Optimistic for caching</strong></p>
+<hr />
+<h3 id="q4-how-would-you-handle-peak-traffic-holiday-sales-10k-tps">Q4: How would you handle peak traffic (holiday sales 10K TPS)?</h3>
+<p><strong>A</strong>:</p>
+<p><strong>Before Peak</strong>:
+- Auto-scale ShoppingSystem replicas (Kubernetes)
+- Pre-warm product cache
+- Increase DB connection pool</p>
+<p><strong>During Peak</strong>:
+1. <strong>Shedding</strong>: Queue checkouts if latency &gt; 1000ms
+2. <strong>Async</strong>: Process orders asynchronously (in-memory queue)
+3. <strong>Caching</strong>: Cache product searches (1-minute TTL)
+4. <strong>Notifications</strong>: Queue notifications (don't block checkout)</p>
+<pre class="codehilite"><code>Checkout Request
+    ↓
+Lock acquired
+    ↓
+Reserve inventory (fast)
+    ↓
+Create order
+    ↓
+Release lock
+    ↓
+Queue notification event (async)
+    ↓
+Return success immediately
+</code></pre>
+
+<p>Actual email/SMS sent in background worker.</p>
+<hr />
+<h3 id="q5-how-to-scale-notifications-to-1m-ordersday">Q5: How to scale notifications to 1M+ orders/day?</h3>
+<p><strong>A</strong>:</p>
+<pre class="codehilite"><code>Order Event → Kafka Topic
+    ├─ Worker 1: Email notifier (100 msgs/sec)
+    ├─ Worker 2: Email notifier (100 msgs/sec)
+    ├─ Worker 3: SMS notifier (50 msgs/sec)
+    └─ Worker 4: Push notifier (50 msgs/sec)
+    ↓
+Batch 100 notifications
+    ↓
+SendGrid/Twilio/Firebase
+    ↓
+99.9% delivery within 30s
+</code></pre>
+
+<p>Benefits: Parallel processing, batch efficiency, fault isolation, auto-retry on failure.</p>
+<hr />
+<h3 id="q6-how-to-handle-product-search-across-1m-items">Q6: How to handle product search across 1M+ items?</h3>
+<p><strong>A</strong>:</p>
+<p><strong>Problem</strong>: Filter 1M products by category/price/rating on every search = O(n) = slow</p>
+<p><strong>Solution</strong>: Search Index (Elasticsearch)</p>
+<pre class="codehilite"><code>Elasticsearch Cluster
+    ├─ Index 1: Electronics (100K docs)
+    ├─ Index 2: Books (200K docs)
+    ├─ Index 3: Clothing (300K docs)
+    └─ Index 4: Home (400K docs)
+
+Query: category=ELECTRONICS AND price:[500,1500] AND rating:[4,5]
+    ↓
+ES returns matching docs in &lt;100ms (vs 1000ms with array filtering)
+</code></pre>
+
+<p>Each shard handles subset of products. Parallel search. Fast.</p>
+<hr />
+<h3 id="q7-how-to-handle-cart-expiry-and-cleanup">Q7: How to handle cart expiry and cleanup?</h3>
+<p><strong>A</strong>:</p>
+<p><strong>Problem</strong>: Carts accumulate indefinitely, memory grows unbounded</p>
+<p><strong>Solution</strong>: TTL-based cleanup</p>
+<pre class="codehilite"><code class="language-python"># Background job (runs every hour)
+def cleanup_abandoned_carts():
+    for user_id, cart in carts.items():
+        age = datetime.now() - cart.created_at
+        if age &gt; timedelta(days=1):
+            cart.clear()  # Release items back
+            del carts[user_id]
+            notify_user(user_id, &quot;Cart expired&quot;)
+</code></pre>
+
+<p>Alternative: Redis with TTL auto-expiry (carts auto-deleted after 24h).</p>
+<hr />
+<h3 id="q8-how-to-ensure-999-uptime-for-checkout">Q8: How to ensure 99.9% uptime for checkout?</h3>
+<p><strong>A</strong>:</p>
+<p><strong>Redundancy</strong>:</p>
+<pre class="codehilite"><code>Primary Region
+    ├─ ShoppingSystem A (active)
+    ├─ ShoppingSystem B (warm standby)
+    ├─ DB Primary + 2 replicas
+
+Secondary Region (failover)
+    ├─ ShoppingSystem C (cold standby)
+    ├─ DB replica
+</code></pre>
+
+<p><strong>Health Checks</strong> (every 10s):
+- Response time &gt; 500ms → degrade service
+- Error rate &gt; 1% → alert
+- DB unavailable → failover to replica</p>
+<p><strong>Graceful Degradation</strong>:
+- If primary region fails → switch to secondary
+- 1-2 minute RTO (Recovery Time Objective)
+- No data loss (replicated to secondary)</p>
+<hr />
+<h3 id="q9-how-to-perform-rolling-updates-without-downtime">Q9: How to perform rolling updates without downtime?</h3>
+<p><strong>A</strong>:</p>
+<p><strong>Blue-Green Deployment</strong>:</p>
+<p>Week 1: Deploy v2 to "blue" environment (isolated)
+Week 2-3: Migrate traffic 10% → 25% → 50% → 100%
+Week 4: All traffic on blue, decommission green</p>
+<p>During migration: Monitor error rates, latency. Rollback if issues.</p>
+<hr />
+<h3 id="q10-how-to-partition-products-across-multiple-regions">Q10: How to partition products across multiple regions?</h3>
+<p><strong>A</strong>:</p>
+<p><strong>Shard by Category</strong> (geographic-agnostic):</p>
+<pre class="codehilite"><code>Shard 1: ELECTRONICS (100K products)
+    ├─ US warehouse
+    ├─ EU warehouse
+    ├─ APAC warehouse
+
+Shard 2: BOOKS (200K products)
+    ├─ US warehouse
+    ├─ EU warehouse
+    ├─ APAC warehouse
+</code></pre>
+
+<p>Each shard replicated across 3 regions. Fast access from any region.</p>
+<p><strong>Shard by Geography</strong> (if product availability differs):</p>
+<pre class="codehilite"><code>US Shard: Products available in US (800K)
+EU Shard: Products available in EU (600K)
+APAC Shard: Products available in APAC (400K)
+</code></pre>
+
+<p>User searches only their region's shard. Fast, no cross-region latency.</p>
+<hr />
+<h3 id="q11-how-to-handle-payment-failures-during-checkout">Q11: How to handle payment failures during checkout?</h3>
+<p><strong>A</strong>:</p>
+<p><strong>Assumption</strong>: Payment is external service (not in scope).</p>
+<p>But if order created BEFORE payment confirmed:</p>
+<pre class="codehilite"><code>1. Create order (status=PENDING)
+2. Call payment service
+3. If success: set status=CONFIRMED
+4. If failure: set status=CANCELLED, release inventory
+
+# Background job monitors PENDING orders
+# If PENDING &gt; 30 min: assume payment timeout, auto-cancel
+</code></pre>
+
+<hr />
+<h3 id="q12-how-to-test-checkout-at-scale-100k-tps">Q12: How to test checkout at scale (100K TPS)?</h3>
+<p><strong>A</strong>:</p>
+<p><strong>Load Test</strong>:</p>
+<pre class="codehilite"><code class="language-bash">wrk -t12 -c100000 -d60s \
+  --script=checkout.lua \
+  &quot;https://api.shop.com/checkout&quot;
+
+Monitor:
+- Response time p99 &lt; 500ms
+- Error rate &lt; 0.1%
+- Inventory consistency
+</code></pre>
+
+<p><strong>Chaos Test</strong>:
+1. Kill random replica → system should failover
+2. Add 100ms latency to DB → measure degradation
+3. Partition network for 30s → test recovery
+4. Spike: 10K → 50K TPS → test auto-scaling</p>
+<p><strong>Verify</strong>:
+- No double-selling
+- No lost orders
+- No orphaned carts
+- Payment consistency</p>
+<hr />
+<h2 id="demo-running">Demo &amp; Running</h2>
+<h3 id="quick-demo">Quick Demo</h3>
+<pre class="codehilite"><code class="language-python">#!/usr/bin/env python3
+
+def run_demo():
+    print(&quot;=&quot; * 70)
+    print(&quot;AMAZON SHOPPING SYSTEM - INTERACTIVE DEMO&quot;)
+    print(&quot;=&quot; * 70)
+
+    # Setup
+    system = ShoppingSystem()
+    system.add_observer(EmailNotifier())
+    system.add_observer(SMSNotifier())
+
+    p1 = system.add_product(&quot;Laptop&quot;, ProductCategory.ELECTRONICS, 999.99, 5)
+    p2 = system.add_product(&quot;Book&quot;, ProductCategory.BOOKS, 49.99, 20)
+    p3 = system.add_product(&quot;T-Shirt&quot;, ProductCategory.CLOTHING, 19.99, 100)
+
+    user1 = system.register_user(&quot;Alice&quot;, &quot;alice@email.com&quot;, &quot;555-1234&quot;)
+    user2 = system.register_user(&quot;Bob&quot;, &quot;bob@email.com&quot;, &quot;555-5678&quot;)
+
+    print(&quot;\n✅ Catalog created&quot;)
+    print(f&quot;   Products: {len(system.products)}&quot;)
+    print(f&quot;   Users: {len(system.users)}&quot;)
+
+    # Search
+    print(&quot;\n✅ Demo 2: Search&quot;)
+    filters = [CategoryFilter(ProductCategory.ELECTRONICS)]
+    results = system.search_products(filters)
+    print(f&quot;   Electronics found: {len(results)}&quot;)
+
+    # Add to cart
+    print(&quot;\n✅ Demo 3: Add to cart&quot;)
+    system.add_to_cart(user1.user_id, p1.product_id, 1)
+    system.add_to_cart(user1.user_id, p2.product_id, 2)
+    cart = system.carts[user1.user_id]
+    print(f&quot;   Cart items: {len(cart.items)}&quot;)
+    print(f&quot;   Cart total: ${cart.get_total_price():.2f}&quot;)
+
+    # Checkout with pricing
+    print(&quot;\n✅ Demo 4: Regular pricing&quot;)
+    order1 = system.checkout(user1.user_id)
+    if order1:
+        print(f&quot;   Order: {order1.order_id}&quot;)
+        print(f&quot;   Total: ${order1.total_price:.2f}&quot;)
+
+    # Bulk pricing
+    print(&quot;\n✅ Demo 5: Bulk pricing (10% off for 5+)&quot;)
+    system.set_pricing_strategy(BulkPricing())
+    for _ in range(5):
+        system.add_to_cart(user2.user_id, p3.product_id, 1)
+    order2 = system.checkout(user2.user_id)
+    if order2:
+        print(f&quot;   Order: {order2.order_id}&quot;)
+        print(f&quot;   Total: ${order2.total_price:.2f}&quot;)
+
+if __name__ == &quot;__main__&quot;:
+    run_demo()
+</code></pre>
+
+<hr />
+<h2 id="success-criteria">Success Criteria</h2>
+<table>
+<thead>
+<tr>
+<th>Criterion</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Can explain 5 design patterns</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Can draw UML diagram</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Understand concurrency handling</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Know scaling strategies</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Can handle edge cases</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Ready for interview</td>
+<td>✅</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Ready for your interview? Let's go! 🚀</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-04-05</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

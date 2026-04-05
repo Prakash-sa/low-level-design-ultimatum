@@ -139,277 +139,370 @@ class SiteGenerator:
         """Generate complete HTML page"""
         nav_html = self.generate_nav_html(nav_items)
         breadcrumb_html = self.generate_breadcrumb_html(breadcrumbs)
-        
+
         html = f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{title} - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){{
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        }})();
+    </script>
     <style>
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {{
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
         }}
-        
+        [data-theme="dark"] {{
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }}
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after {{ margin: 0; padding: 0; box-sizing: border-box; }}
+
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             line-height: 1.6;
-            color: #333;
-            background: #f5f5f5;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
         }}
-        
-        .wrapper {{
-            display: flex;
-            min-height: 100vh;
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {{
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
         }}
-        
-        nav {{
-            width: 280px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px;
-            overflow-y: auto;
-            box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
-        }}
-        
-        nav h2 {{
-            font-size: 1.2em;
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid rgba(255, 255, 255, 0.3);
-            color: white;
-        }}
-        
-        nav ul {{
-            list-style: none;
-            padding-left: 0;
-            margin-left: 0;
-        }}
-        
-        nav li {{
-            margin: 4px 0;
-        }}
-        
-        .nav-row {{
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {{
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
             display: flex;
             align-items: center;
-            gap: 6px;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
         }}
-        
+        .top-navbar .brand {{
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }}
+        .top-navbar .home-link {{
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }}
+        .top-navbar .home-link:hover {{
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }}
+        .top-navbar .spacer {{ flex: 1; }}
+        .top-navbar .icon-btn {{
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }}
+        .top-navbar .icon-btn:hover {{
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }}
+        .hamburger {{
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }}
+        @media (max-width: 768px) {{ .hamburger {{ display: flex; }} }}
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {{
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }}
+        .sidebar {{
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }}
+        .sidebar h2 {{
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }}
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul {{ list-style: none; padding-left: 0; margin-left: 0; }}
+        .sidebar li {{ margin: 4px 0; }}
+        .nav-row {{ display: flex; align-items: center; gap: 6px; }}
         .nav-toggle {{
-            width: 22px;
-            height: 22px;
-            border: 1px solid rgba(255, 255, 255, 0.5);
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
             background: transparent;
             color: white;
             border-radius: 4px;
             cursor: pointer;
             font-size: 12px;
             line-height: 1;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.2s ease;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
         }}
-        
-        .nav-toggle:hover {{
-            background: rgba(255, 255, 255, 0.2);
-        }}
-        
-        .nav-folder[data-collapsed="true"] .nav-toggle::after {{
-            content: "▶";
-        }}
-        
-        .nav-folder[data-collapsed="false"] .nav-toggle::after {{
-            content: "▼";
-        }}
-        
-        .nav-folder[data-collapsed="true"] > .nav-children {{
-            display: none;
-        }}
-        
-        .nav-folder > .nav-children {{
-            margin-top: 6px;
-        }}
-        
-        nav a {{
+        .nav-toggle:hover {{ background: rgba(255,255,255,0.2); }}
+        .nav-folder[data-collapsed="true"] .nav-toggle::after {{ content: "▶"; }}
+        .nav-folder[data-collapsed="false"] .nav-toggle::after {{ content: "▼"; }}
+        .nav-folder[data-collapsed="true"] > .nav-children {{ display: none; }}
+        .nav-folder > .nav-children {{ margin-top: 6px; }}
+        .sidebar a {{
             display: block;
-            color: white;
+            color: var(--text-sidebar);
             text-decoration: none;
-            padding: 8px 10px;
-            border-radius: 4px;
-            transition: all 0.2s ease;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
             word-break: break-word;
+            font-size: .92em;
         }}
-        
-        nav a:hover {{
-            background: rgba(255, 255, 255, 0.2);
+        .sidebar a:hover {{
+            background: rgba(255,255,255,0.18);
             padding-left: 14px;
+            text-decoration: none;
         }}
-        
-        .nav-file > a {{
-            padding-left: 32px;
-        }}
-        
-        .nav-folder > a {{
-            font-weight: 600;
-        }}
-        
+        .nav-file > a {{ padding-left: 30px; }}
+        .nav-folder > .nav-row > a {{ font-weight: 600; }}
         .nav-children {{
             margin-left: 12px;
-            border-left: 1px solid rgba(255, 255, 255, 0.2);
+            border-left: 1px solid rgba(255,255,255,0.2);
             padding-left: 8px;
         }}
-        
+
+        /* ── Main Content ──────────────────────────────── */
         main {{
             flex: 1;
-            padding: 40px;
-            background: white;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
         }}
-        
+
+        /* ── Breadcrumbs ───────────────────────────────── */
         .breadcrumbs {{
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 1px solid #e0e0e0;
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
         }}
-        
-        .breadcrumbs a {{
-            color: #667eea;
-            text-decoration: none;
-            margin: 0 5px;
-        }}
-        
-        .breadcrumbs a:hover {{
-            text-decoration: underline;
-        }}
-        
-        .breadcrumbs span {{
-            color: #999;
-            margin: 0 5px;
-        }}
-        
-        h1 {{
-            color: #667eea;
-            margin-bottom: 30px;
-            font-size: 2em;
-        }}
-        
+        .breadcrumbs a {{ color: var(--accent); text-decoration: none; margin: 0 4px; }}
+        .breadcrumbs a:hover {{ text-decoration: underline; }}
+        .breadcrumbs span {{ color: var(--text-muted); margin: 0 4px; }}
+
+        /* ── Typography ────────────────────────────────── */
+        h1 {{ color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }}
         h2 {{
-            color: #667eea;
-            margin-top: 40px;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #667eea;
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
         }}
-        
-        h3 {{
-            color: #764ba2;
-            margin-top: 25px;
-            margin-bottom: 10px;
-        }}
-        
+        h3 {{ color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }}
+
+        /* ── Inline code ───────────────────────────────── */
         code {{
-            background: #f4f4f4;
+            background: rgba(102,126,234,0.10);
             padding: 2px 6px;
-            border-radius: 3px;
-            font-family: 'Courier New', monospace;
-            color: #d63384;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
         }}
-        
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {{
+            position: relative;
+            margin: 18px 0;
+        }}
         pre {{
-            background: #2d2d2d;
-            color: #f8f8f2;
-            padding: 15px;
-            border-radius: 5px;
+            border-radius: 8px !important;
             overflow-x: auto;
-            margin: 15px 0;
-            line-height: 1.4;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
         }}
-        
         pre code {{
-            background: none;
-            color: inherit;
-            padding: 0;
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
         }}
-        
+        .copy-btn {{
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }}
+        .copy-btn:hover {{ background: rgba(255,255,255,0.22); color: white; }}
+        .copy-btn.copied {{ background: #22c55e; color: white; border-color: #22c55e; }}
+
+        /* ── Blockquote, Table ─────────────────────────── */
         blockquote {{
-            border-left: 4px solid #667eea;
-            padding-left: 15px;
-            margin: 15px 0;
-            color: #666;
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
         }}
-        
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin: 15px 0;
-        }}
-        
+        table {{ width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }}
         table th {{
-            background: #f4f4f4;
-            padding: 10px;
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
             text-align: left;
-            border-bottom: 2px solid #ddd;
+            border-bottom: 2px solid var(--accent);
             font-weight: 600;
         }}
-        
-        table td {{
-            padding: 10px;
-            border-bottom: 1px solid #ddd;
+        table td {{ padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }}
+        table tr:hover td {{ background: rgba(102,126,234,0.04); }}
+
+        a {{ color: var(--accent); text-decoration: none; }}
+        a:hover {{ text-decoration: underline; }}
+
+        .content {{ max-width: 860px; }}
+        .content p {{ margin-bottom: 14px; color: var(--text-primary); }}
+        .content ul, .content ol {{ margin-left: 22px; margin-bottom: 14px; }}
+        .content li {{ margin-bottom: 6px; color: var(--text-primary); }}
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {{
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
         }}
-        
-        a {{
-            color: #667eea;
-            text-decoration: none;
-        }}
-        
-        a:hover {{
-            text-decoration: underline;
-        }}
-        
-        .content {{
-            max-width: 900px;
-        }}
-        
-        .content p {{
-            margin-bottom: 15px;
-        }}
-        
-        .content ul, .content ol {{
-            margin-left: 20px;
-            margin-bottom: 15px;
-        }}
-        
-        .content li {{
-            margin-bottom: 8px;
-        }}
-        
+        .sidebar-overlay.active {{ display: block; }}
+
         @media (max-width: 768px) {{
-            .wrapper {{
-                flex-direction: column;
+            .sidebar {{
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
             }}
-            
-            nav {{
-                width: 100%;
-                max-height: 300px;
-                border-bottom: 1px solid #ddd;
-            }}
-            
-            main {{
-                padding: 20px;
-            }}
-            
-            h1 {{
-                font-size: 1.5em;
-            }}
+            .sidebar.open {{ transform: translateX(0); }}
+            main {{ padding: 20px 18px; }}
+            h1 {{ font-size: 1.5em; }}
         }}
     </style>
 </head>
 <body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="{self.base_url}" class="brand">🎯 LLD</a>
+        <a href="{self.base_url}" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
     <div class="wrapper">
-        <nav>
+        <nav class="sidebar" id="sidebar">
             <h2>🎯 LLD</h2>
             {nav_html}
         </nav>
@@ -420,75 +513,164 @@ class SiteGenerator:
             <div class="content">
                 {content}
             </div>
-            <footer style="margin-top: 60px; padding-top: 20px; border-top: 1px solid #e0e0e0; color: #999; text-align: center; font-size: 0.9em;">
-                <p>Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
-                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum" style="color: #667eea;">View on GitHub</a></p>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: {datetime.now().strftime('%Y-%m-%d')}</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
             </footer>
         </main>
     </div>
-</body>
-</html>
-<script>
-// Simple nav collapse/expand
-document.addEventListener('DOMContentLoaded', () => {{
-    const toggles = document.querySelectorAll('.nav-toggle');
-    const expandedKey = 'lldu_nav_expanded';
-    
-    const loadExpanded = () => {{
-        try {{
-            return JSON.parse(localStorage.getItem(expandedKey)) || [];
-        }} catch (e) {{
-            return [];
-        }}
-    }};
-    
-    const saveExpanded = (paths) => {{
-        try {{
-            localStorage.setItem(expandedKey, JSON.stringify(paths));
-        }} catch (e) {{}}
-    }};
-    
-    const expandedPaths = new Set(loadExpanded());
-    
-    const applyState = (li) => {{
-        const path = li.getAttribute('data-path');
-        const isExpanded = expandedPaths.has(path);
-        const isCollapsed = !isExpanded;
-        li.setAttribute('data-collapsed', isCollapsed ? 'true' : 'false');
-        const btn = li.querySelector('.nav-toggle');
-        if (btn) {{
-            btn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
-        }}
-    }};
-    
-    document.querySelectorAll('.nav-folder').forEach(applyState);
-    
-    toggles.forEach(btn => {{
-        btn.addEventListener('click', (event) => {{
-            event.preventDefault();
-            const li = btn.closest('.nav-folder');
-            const path = li.getAttribute('data-path');
-            const collapsed = li.getAttribute('data-collapsed') === 'true';
-            const newCollapsed = !collapsed;
-            li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
-            btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
-            if (newCollapsed) {{
-                expandedPaths.delete(path);
-            }} else {{
-                expandedPaths.add(path);
-            }}
-            saveExpanded([...expandedPaths]);
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script>
+    // 1. DARK MODE
+    (function() {{
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {{
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        }};
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {{
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
         }});
-        // Keyboard access
-        btn.addEventListener('keydown', (event) => {{
-            if (event.key === 'Enter' || event.key === ' ') {{
-                event.preventDefault();
-                btn.click();
+    }})();
+
+    // 2. READING PROGRESS BAR
+    (function() {{
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {{
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }}, {{ passive: true }});
+    }})();
+
+    // 3. COPY CODE BUTTONS
+    (function() {{
+        document.querySelectorAll('pre').forEach(function(pre) {{
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {{
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {{
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {{
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }}, 2000);
+                }};
+                if (navigator.clipboard && navigator.clipboard.writeText) {{
+                    navigator.clipboard.writeText(text).then(done).catch(function() {{
+                        fallbackCopy(text); done();
+                    }});
+                }} else {{ fallbackCopy(text); done(); }}
+            }});
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {{
+                codeEl.classList.add('language-python');
             }}
+        }});
+
+        function fallbackCopy(text) {{
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try {{ document.execCommand('copy'); }} catch(e) {{}}
+            document.body.removeChild(ta);
+        }}
+
+        if (window.Prism) Prism.highlightAll();
+    }})();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {{
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {{
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        }};
+        var closeSidebar = function() {{
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        }};
+        hamburger.addEventListener('click', function() {{
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        }});
+        overlay.addEventListener('click', closeSidebar);
+    }})();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {{
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {{
+            try {{ return JSON.parse(localStorage.getItem(expandedKey)) || []; }}
+            catch(e) {{ return []; }}
+        }};
+        var saveExpanded = function(paths) {{
+            try {{ localStorage.setItem(expandedKey, JSON.stringify(paths)); }}
+            catch(e) {{}}
+        }};
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {{
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        }};
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {{
+            btn.addEventListener('click', function(event) {{
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) {{ expandedPaths.delete(path); }}
+                else {{ expandedPaths.add(path); }}
+                saveExpanded([...expandedPaths]);
+            }});
+            btn.addEventListener('keydown', function(event) {{
+                if (event.key === 'Enter' || event.key === ' ') {{
+                    event.preventDefault();
+                    btn.click();
+                }}
+            }});
         }});
     }});
-}});
-</script>"""
+    </script>
+</body>
+</html>"""
         return html
     
     def generate_nav_html(self, nav_items):

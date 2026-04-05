@@ -1,0 +1,1455 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Train Platform Management System - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Insatance%20Variable.html">Class Variable vs Insatance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Airline%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Airline Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/">Airline Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/Airline%20Management%20System.html">Airline Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Locker System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/">Amazon Locker System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/Amazon%20Locker%20System.html">Amazon Locker System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Online Shopping System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/">Amazon Online Shopping System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/ATM/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle ATM" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/ATM/">ATM</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM/ATM.html">ATM</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Cache/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Cache" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Cache/">Cache</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache/Cache.html">Cache</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Car%20Rental%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Car Rental System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/">Car Rental System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/Car%20Rental%20System.html">Car Rental System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Chess%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Chess Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Chess%20Game/">Chess Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game/Chess%20Game.html">Chess Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circinfo (Ride Sharing)" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/">Circinfo (Ride Sharing)</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Design Hit Counter" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/">Design Hit Counter</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/Design%20Hit%20Counter.html">Design Hit Counter</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/">Elevator System</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Elevator%20System.html">Elevator System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Facebook/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Facebook" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Facebook/">Facebook</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook/Facebook.html">Facebook</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/File%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle File System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/File%20System/">File System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System/File%20System.html">File System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Hotel Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/">Hotel Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/Hotel%20Management%20System.html">Hotel Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Jigsaw Puzzle" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/">Jigsaw Puzzle</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Leaderboard/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Leaderboard" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Leaderboard/">Leaderboard</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard/Leaderboard.html">Leaderboard</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Library%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Library Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/">Library Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/Library%20Management%20System.html">Library Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/LinkedIn/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle LinkedIn" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/LinkedIn/">LinkedIn</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn/LinkedIn.html">LinkedIn</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Logging/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Logging" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Logging/">Logging</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging/Logging.html">Logging</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Meeting Scheduler" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/">Meeting Scheduler</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/Meeting%20Scheduler.html">Meeting Scheduler</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Movie Ticket Booking System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/">Movie Ticket Booking System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Blackjack Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/">Online Blackjack Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Stock Brokerage System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/">Online Stock Brokerage System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/">Parking Lot</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Parking%20Lot.html">Parking Lot</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Pub-Sub/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Pub-Sub" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Pub-Sub/">Pub-Sub</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub/Pub-Sub.html">Pub-Sub</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Restaurant Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/">Restaurant Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/Restaurant%20Management%20System.html">Restaurant Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Stack%20Overflow/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Stack Overflow" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/">Stack Overflow</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/Stack%20Overflow.html">Stack Overflow</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Text Editor with Undo & Redo" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/">Text Editor with Undo & Redo</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Train Platform Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/">Train Platform Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Vending%20Machine/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Vending Machine" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/">Vending Machine</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/Vending%20Machine.html">Vending Machine</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/">Train Platform Management System</a>
+            </div>
+            <div class="content">
+                <h1 id="train-platform-management-system-75-minute-interview-guide">Train Platform Management System — 75-Minute Interview Guide</h1>
+<h2 id="quick-start-timeline">⏱️ Quick Start Timeline</h2>
+<table>
+<thead>
+<tr>
+<th>Time</th>
+<th>Focus</th>
+<th>Output</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0–5</td>
+<td>Requirements</td>
+<td>Scope (assign, arrive, depart, release)</td>
+</tr>
+<tr>
+<td>5–15</td>
+<td>Architecture</td>
+<td>Entities + states + events + strategies</td>
+</tr>
+<tr>
+<td>15–35</td>
+<td>Core Entities</td>
+<td>Train, Platform, Assignment, enums</td>
+</tr>
+<tr>
+<td>35–55</td>
+<td>Logic</td>
+<td>schedule, assign, arrive, depart, release, wait list</td>
+</tr>
+<tr>
+<td>55–70</td>
+<td>Integration</td>
+<td>Strategy swap + observer + summary</td>
+</tr>
+<tr>
+<td>70–75</td>
+<td>Demo/Q&amp;A</td>
+<td>Run scenarios &amp; explain trade-offs</td>
+</tr>
+</tbody>
+</table>
+<h2 id="quick-reference">🎯 Quick Reference</h2>
+<h3 id="core-entities">Core Entities</h3>
+<ul>
+<li><strong>Train</strong>: (id, origin, destination, arrival_time, departure_time, status)</li>
+<li><strong>Platform</strong>: (id, status, current_train_id)</li>
+<li><strong>Assignment</strong>: (train_id, platform_id, timestamp)</li>
+<li><strong>Enums</strong>: TrainStatus (SCHEDULED, EN_ROUTE, ARRIVING, AT_PLATFORM, DEPARTED, CANCELLED)</li>
+<li><strong>PlatformStatus</strong>: (FREE, OCCUPIED, MAINTENANCE)</li>
+</ul>
+<h3 id="design-patterns">Design Patterns</h3>
+<ul>
+<li><strong>Singleton</strong>: One station controller coordinates all assignments</li>
+<li><strong>Strategy</strong>: PlatformAssignmentStrategy (EarliestFree vs PriorityPlatform) pluggable</li>
+<li><strong>Observer</strong>: Emits events for assignment, arrival, departure, release, maintenance</li>
+<li><strong>State</strong>: Enforce valid lifecycle transitions (no depart before arrive, no double assign)</li>
+<li><strong>Factory</strong>: Helper methods create trains/platforms with auto-incremented IDs</li>
+</ul>
+<h2 id="system-overview">📋 System Overview</h2>
+<p><strong>Purpose</strong>: Manage train schedule intake, platform assignment, arrival/departure transitions, maintenance states, and event publishing for a single railway station.</p>
+<p><strong>Scale</strong>: 10–30 platforms, 100–300 trains/day, moderate concurrency.</p>
+<p><strong>Excluded (clarify early)</strong>: Cross-station routing, passenger flow modeling, delay prediction, multi-station synchronization, signal safety systems.</p>
+<hr />
+<h2 id="functional-requirements">Functional Requirements</h2>
+<table>
+<thead>
+<tr>
+<th>Requirement</th>
+<th>Included</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Schedule trains</td>
+<td>✅</td>
+<td>Provide arrival/departure timestamps</td>
+</tr>
+<tr>
+<td>Assign platform</td>
+<td>✅</td>
+<td>Based on strategy &amp; availability</td>
+</tr>
+<tr>
+<td>Arrival marking</td>
+<td>✅</td>
+<td>Transition to AT_PLATFORM</td>
+</tr>
+<tr>
+<td>Departure &amp; release</td>
+<td>✅</td>
+<td>Free platform, process queue</td>
+</tr>
+<tr>
+<td>Maintenance mode</td>
+<td>✅</td>
+<td>Platform unavailable while in maintenance</td>
+</tr>
+<tr>
+<td>Strategy swap</td>
+<td>✅</td>
+<td>Change assignment heuristic at runtime</td>
+</tr>
+<tr>
+<td>Conflict handling</td>
+<td>✅</td>
+<td>Waiting queue for trains</td>
+</tr>
+<tr>
+<td>Event emission</td>
+<td>✅</td>
+<td>Observer publishes lifecycle events</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="design-patterns-benefits">Design Patterns &amp; Benefits</h2>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Domain Use</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Singleton</td>
+<td>Station controller</td>
+<td>Central coordination, single source of truth</td>
+</tr>
+<tr>
+<td>Strategy</td>
+<td>Platform assignment</td>
+<td>Pluggable heuristics (earliest free, priority, distance-based)</td>
+</tr>
+<tr>
+<td>Observer</td>
+<td>Operational events</td>
+<td>Decoupled analytics, monitoring, alerting</td>
+</tr>
+<tr>
+<td>State</td>
+<td>Train &amp; Platform status</td>
+<td>Validated transitions, prevent illegal operations</td>
+</tr>
+<tr>
+<td>Factory</td>
+<td>Creation helpers</td>
+<td>Consistent ID generation &amp; object initialization</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="data-model-enumerations-constants">Data Model: Enumerations &amp; Constants</h2>
+<pre class="codehilite"><code class="language-python">from enum import Enum
+
+class TrainStatus(Enum):
+    SCHEDULED = &quot;scheduled&quot;
+    EN_ROUTE = &quot;en_route&quot;
+    ARRIVING = &quot;arriving&quot;
+    AT_PLATFORM = &quot;at_platform&quot;
+    DEPARTED = &quot;departed&quot;
+    CANCELLED = &quot;cancelled&quot;
+
+class PlatformStatus(Enum):
+    FREE = &quot;free&quot;
+    OCCUPIED = &quot;occupied&quot;
+    MAINTENANCE = &quot;maintenance&quot;
+</code></pre>
+
+<hr />
+<h2 id="core-classes">Core Classes</h2>
+<pre class="codehilite"><code class="language-python">class Train:
+    def __init__(self, tid, origin, destination, arrival_time, departure_time):
+        self.id=tid; self.origin=origin; self.destination=destination
+        self.arrival_time=arrival_time; self.departure_time=departure_time
+        self.status=TrainStatus.SCHEDULED; self.platform_id=None
+
+class Platform:
+    def __init__(self, pid):
+        self.id=pid; self.status=PlatformStatus.FREE; self.current_train_id=None
+
+class Assignment:
+    def __init__(self, train_id, platform_id, timestamp):
+        self.train_id=train_id; self.platform_id=platform_id; self.timestamp=timestamp
+</code></pre>
+
+<hr />
+<h2 id="strategy-pattern-platform-assignment">Strategy Pattern: Platform Assignment</h2>
+<pre class="codehilite"><code class="language-python">from abc import ABC, abstractmethod
+
+class PlatformAssignmentStrategy(ABC):
+    @abstractmethod
+    def assign(self, train, platforms): pass
+
+class EarliestFreeStrategy(PlatformAssignmentStrategy):
+    def assign(self, train, platforms):
+        free=[p for p in platforms if p.status==PlatformStatus.FREE]
+        return free[0] if free else None
+
+class PriorityPlatformStrategy(PlatformAssignmentStrategy):
+    def __init__(self, priority_order): self.priority_order=priority_order
+    def assign(self, train, platforms):
+        free={p.id:p for p in platforms if p.status==PlatformStatus.FREE}
+        for pid in self.priority_order:
+            if pid in free: return free[pid]
+        return next(iter(free.values()), None)
+</code></pre>
+
+<hr />
+<h2 id="observer-pattern-event-handling">Observer Pattern: Event Handling</h2>
+<pre class="codehilite"><code class="language-python">class Observer(ABC):
+    @abstractmethod
+    def update(self, event: str, payload: dict): pass
+
+class ConsoleObserver(Observer):
+    def update(self, event, payload): print(f&quot;[EVENT] {event.upper():14} | {payload}&quot;)
+</code></pre>
+
+<p><strong>Events</strong>: <code>train_scheduled</code>, <code>train_assigned</code>, <code>train_arrived</code>, <code>train_departed</code>, <code>platform_released</code>, <code>platform_maintenance</code>, <code>strategy_changed</code>, <code>assignment_pending</code>.</p>
+<hr />
+<h2 id="singleton-controller-trainstationsystem">Singleton Controller: TrainStationSystem</h2>
+<pre class="codehilite"><code class="language-python">class TrainStationSystem:
+    _instance=None
+    def __new__(cls):
+        if not cls._instance: cls._instance=super().__new__(cls)
+        return cls._instance
+    def __init__(self):
+        if getattr(self,'_init',False): return
+        self.trains={}; self.platforms={}; self.waiting_queue=[]; self.assignments=[]
+        self.observers=[]; self.strategy=EarliestFreeStrategy(); self._init=True
+    def add_observer(self,o): self.observers.append(o)
+    def _notify(self,e,p): [obs.update(e,p) for obs in self.observers]
+    def add_platform(self):
+        pid=f&quot;P{len(self.platforms)+1}&quot;; self.platforms[pid]=Platform(pid); return self.platforms[pid]
+    def schedule_train(self, origin, destination, arrival_time, departure_time):
+        tid=f&quot;T{len(self.trains)+1}&quot;; t=Train(tid, origin, destination, arrival_time, departure_time)
+        self.trains[tid]=t; self._notify(&quot;train_scheduled&quot;,{&quot;train&quot;:tid,&quot;arrival&quot;:arrival_time}); self._attempt_assignment(t); return t
+</code></pre>
+
+<pre class="codehilite"><code class="language-python">    def _attempt_assignment(self, train):
+        platform=self.strategy.assign(train, self.platforms.values())
+        if platform:
+            platform.status=PlatformStatus.OCCUPIED; platform.current_train_id=train.id
+            train.platform_id=platform.id; train.status=TrainStatus.EN_ROUTE
+            self.assignments.append(Assignment(train.id, platform.id, arrival_time=train.arrival_time))
+            self._notify(&quot;train_assigned&quot;,{&quot;train&quot;:train.id,&quot;platform&quot;:platform.id})
+        else:
+            self.waiting_queue.append(train.id); self._notify(&quot;assignment_pending&quot;,{&quot;train&quot;:train.id})
+    def set_strategy(self,strategy):
+        self.strategy=strategy; self._notify(&quot;strategy_changed&quot;,{&quot;strategy&quot;:strategy.__class__.__name__})
+    def arrive_train(self, train_id):
+        t=self.trains.get(train_id); 
+        if t and t.status in (TrainStatus.EN_ROUTE, TrainStatus.ARRIVING):
+            t.status=TrainStatus.AT_PLATFORM; self._notify(&quot;train_arrived&quot;,{&quot;train&quot;:train_id,&quot;platform&quot;:t.platform_id})
+    def depart_train(self, train_id):
+        t=self.trains.get(train_id)
+        if t and t.status==TrainStatus.AT_PLATFORM:
+            t.status=TrainStatus.DEPARTED; self._notify(&quot;train_departed&quot;,{&quot;train&quot;:train_id,&quot;platform&quot;:t.platform_id}); self._release_platform(t.platform_id)
+    def _release_platform(self, platform_id):
+        p=self.platforms.get(platform_id)
+        if p:
+            p.status=PlatformStatus.FREE; p.current_train_id=None; self._notify(&quot;platform_released&quot;,{&quot;platform&quot;:platform_id})
+            self._process_waiting()
+    def _process_waiting(self):
+        if not self.waiting_queue: return
+        remaining=[]
+        for tid in self.waiting_queue:
+            train=self.trains[tid]; self._attempt_assignment(train)
+            if train.platform_id is None: remaining.append(tid)
+        self.waiting_queue=remaining
+    def set_platform_maintenance(self, platform_id):
+        p=self.platforms.get(platform_id)
+        if p and p.status==PlatformStatus.FREE:
+            p.status=PlatformStatus.MAINTENANCE; self._notify(&quot;platform_maintenance&quot;,{&quot;platform&quot;:platform_id})
+</code></pre>
+
+<hr />
+<h2 id="uml-class-diagram">UML Class Diagram</h2>
+<pre class="codehilite"><code>┌──────────────────────────────────────────────────────────────────────┐
+│                    TRAIN STATION SYSTEM (Singleton)                  │
+├──────────────────────────────────────────────────────────────────────┤
+│ - trains: Dict[str, Train]                                           │
+│ - platforms: Dict[str, Platform]                                     │
+│ - assignments: List[Assignment]                                      │
+│ - waiting_queue: List[str]                                           │
+│ - observers: List[Observer]                                          │
+│ - strategy: PlatformAssignmentStrategy                               │
+├──────────────────────────────────────────────────────────────────────┤
+│ + schedule_train(origin, dest, arrival, departure): Train           │
+│ + arrive_train(train_id): bool                                       │
+│ + depart_train(train_id): bool                                       │
+│ + set_strategy(strategy): void                                       │
+│ + add_platform(): Platform                                           │
+│ + set_platform_maintenance(platform_id): void                        │
+│ + add_observer(observer): void                                       │
+│ - _attempt_assignment(train): void                                   │
+│ - _release_platform(platform_id): void                               │
+│ - _process_waiting_queue(): void                                     │
+│ - _notify(event, payload): void                                      │
+│ + summary(): Dict                                                    │
+└──────────────────────────────────────────────────────────────────────┘
+         │                              │                      │
+         ▼                              ▼                      ▼
+    ┌─────────────┐            ┌──────────────┐        ┌────────────────┐
+    │   Train     │            │  Platform    │        │  Assignment    │
+    ├─────────────┤            ├──────────────┤        ├────────────────┤
+    │ - id: str   │            │ - id: str    │        │ - train_id     │
+    │ - origin    │            │ - status     │        │ - platform_id  │
+    │ - dest      │            │ - train_id   │        │ - timestamp    │
+    │ - arrival   │            │              │        └────────────────┘
+    │ - departure │            │              │
+    │ - status    │            │              │
+    │ - platform  │            │              │
+    └─────────────┘            └──────────────┘
+
+         │
+         │ uses strategies
+         ▼
+    ┌────────────────────────────────────────┐
+    │ PlatformAssignmentStrategy (Abstract)   │
+    ├────────────────────────────────────────┤
+    │ + assign(train, platforms): Platform   │
+    └────────────────────────────────────────┘
+              ▲                      ▲
+              │                      │
+    ┌─────────────────────┐ ┌──────────────────────────┐
+    │ EarliestFreeStrategy│ │ PriorityPlatformStrategy │
+    ├─────────────────────┤ ├──────────────────────────┤
+    │ + assign(...)       │ │ - priority_order: List   │
+    │   Returns first     │ │ + assign(...)            │
+    │   available FREE    │ │   Returns by priority    │
+    │   platform          │ └──────────────────────────┘
+    └─────────────────────┘
+
+         │
+         │ uses observers
+         ▼
+    ┌────────────────────────────────────┐
+    │ Observer (Abstract)                 │
+    ├────────────────────────────────────┤
+    │ + update(event: str, payload): void│
+    └────────────────────────────────────┘
+              ▲
+              │
+    ┌─────────────────────────┐
+    │  ConsoleObserver        │
+    ├─────────────────────────┤
+    │ + update(event, payload)│
+    │   Prints to console     │
+    └─────────────────────────┘
+
+Events: train_scheduled | train_assigned | train_arrived | train_departed
+        platform_released | platform_maintenance | strategy_changed
+        assignment_pending
+</code></pre>
+
+<hr />
+<h2 id="demo-flow">Demo Flow</h2>
+<ol>
+<li><strong>Setup</strong>: Create platforms (P1, P2, P3) + register observer</li>
+<li><strong>Arrival</strong>: Mark train1 as AT_PLATFORM</li>
+<li><strong>Strategy Switch</strong>: Change to PriorityPlatformStrategy; schedule train4</li>
+<li><strong>Departure &amp; Release</strong>: Train departs; queued train gets assigned platform</li>
+<li><strong>Maintenance &amp; Conflict</strong>: Set platform to maintenance; schedule train5 → queued</li>
+</ol>
+<hr />
+<h2 id="demo-execution">Demo Execution</h2>
+<p>Run the compact implementation:</p>
+<pre class="codehilite"><code class="language-bash">python3 INTERVIEW_COMPACT.py
+</code></pre>
+
+<p>Expected output:</p>
+<pre class="codehilite"><code>DEMO 1: Setup (Platforms &amp; Trains)
+[HH:MM:SS] PLATFORM_ADDED   | {'platform': 'P1'}
+[HH:MM:SS] TRAIN_SCHEDULED   | {'train': 'T1', 'arrival': '10:00'}
+[HH:MM:SS] TRAIN_ASSIGNED    | {'train': 'T1', 'platform': 'P1'}
+...
+DEMO 2: Arrival Transition
+[HH:MM:SS] TRAIN_ARRIVED     | {'train': 'T1', 'platform': 'P1'}
+...
+</code></pre>
+
+<hr />
+<h2 id="interview-qa-core-concepts">Interview Q&amp;A: Core Concepts</h2>
+<p><strong>Q1: Why Strategy pattern for assignment?</strong><br />
+Enables changing platform selection heuristics (earliest free, priority list, distance-based, accessibility) without modifying the station controller. Follows Open/Closed Principle.</p>
+<p><strong>Q2: How to prevent double assignment of a platform?</strong><br />
+Platform status is set to OCCUPIED atomically when assigned. Strategy only returns FREE platforms. Waiting queue catches assignment failures.</p>
+<p><strong>Q3: How do you handle conflicts when all platforms are occupied?</strong><br />
+Trains queue in <code>waiting_queue</code>. When a platform is released, <code>_process_waiting_queue()</code> retries assignment.</p>
+<p><strong>Q4: What if all platforms are in maintenance?</strong><br />
+All incoming trains queue indefinitely. System should emit alerts (<code>platform_maintenance</code>) for operator escalation.</p>
+<p><strong>Q5: Ensure arrival before departure?</strong><br />
+Only allow <code>depart_train()</code> when <code>train.status == AT_PLATFORM</code>. Invalid transitions are ignored.</p>
+<p><strong>Q6: Why store the waiting queue centrally vs in Platform?</strong><br />
+Queue is station-level resource, not platform-specific. Central logic allows global reordering by strategy (fairness, priority).</p>
+<p><strong>Q7: What if a train is cancelled?</strong><br />
+Transition to CANCELLED and release the platform if occupied. Observer emits <code>train_cancelled</code> event.</p>
+<hr />
+<h2 id="interview-qa-scaling-performance">Interview Q&amp;A: Scaling &amp; Performance</h2>
+<p><strong>Q1: How to scale to 100+ platforms and 1000+ trains/day?</strong></p>
+<p><em>Horizontal Partitioning</em>:
+- Divide station into zones (north, south, east platforms).
+- Each zone has independent controller instance + strategy.
+- Central router directs trains to zone controller by destination.
+- Reduces lock contention and improves throughput.</p>
+<p><em>Vertical Optimization</em>:
+- Cache free platform list (O(1) lookup vs O(n) scan).
+- Use heap for priority-based assignment (extract-min in O(log p)).
+- Index trains by status for faster queries.</p>
+<p><strong>Q2: How to prevent race conditions in concurrent assignment?</strong></p>
+<p><em>Optimistic Locking</em>:
+- Each platform has version number.
+- CAS (Compare-And-Swap) when transitioning FREE → OCCUPIED.
+- On conflict, retry or queue train.</p>
+<p><em>Pessimistic Locking</em>:
+- Lock platform during assignment check.
+- Single-threaded train processing (actor model / event queue).</p>
+<p><strong>Code sketch (optimistic)</strong>:</p>
+<pre class="codehilite"><code class="language-python">def _attempt_assignment(self, train):
+    platform = self.strategy.assign(train, self.platforms.values())
+    if platform and platform.acquire_lock(train.id):
+        # Assign successfully
+        platform.status = PlatformStatus.OCCUPIED
+        platform.release_lock()
+    else:
+        # Retry or queue
+        self.waiting_queue.append(train.id)
+</code></pre>
+
+<p><strong>Q3: How to handle real-time delays and late arrivals?</strong></p>
+<p><em>Extend Train</em>:</p>
+<pre class="codehilite"><code class="language-python">class Train:
+    def __init__(self, ...):
+        self.scheduled_arrival = arrival_time
+        self.actual_arrival = None
+        self.delay_minutes = 0
+</code></pre>
+
+<p><em>Observer for Delays</em>:</p>
+<pre class="codehilite"><code class="language-python">def mark_delayed(self, train_id, delay_minutes):
+    train = self.trains[train_id]
+    train.delay_minutes = delay_minutes
+    self._notify(&quot;train_delayed&quot;, {&quot;train&quot;: train_id, &quot;delay&quot;: delay_minutes})
+    # Potential: reassign nearby waiting trains to different slots
+</code></pre>
+
+<p><strong>Q4: How to implement predictive platform assignment?</strong></p>
+<p><em>Pre-assignment Strategy</em>:</p>
+<pre class="codehilite"><code class="language-python">class PredictiveStrategy(PlatformAssignmentStrategy):
+    def assign(self, train, platforms, timetable):
+        # Look ahead: predict dwell time, arrival conflicts
+        dwell_time = self.estimate_dwell(train)
+        platform = self.find_free_after(platforms, train.arrival_time, dwell_time)
+        return platform
+</code></pre>
+
+<p><em>Dwell Time Estimation</em>:
+- ML model trained on historical data (route, time-of-day, day-of-week).
+- Or simple rules: express=10min, regional=20min, freight=30min.</p>
+<p><strong>Q5: How to scale event emission and observability?</strong></p>
+<p><em>Event Streaming (Kafka)</em>:</p>
+<pre class="codehilite"><code class="language-python">def _notify(self, event: str, payload: Dict):
+    for obs in self.observers:
+        obs.update(event, payload)
+
+    # Also publish to Kafka
+    kafka_producer.send('station_events', 
+                       key=payload.get('train') or payload.get('platform'),
+                       value={'event': event, 'payload': payload})
+</code></pre>
+
+<p><em>Benefits</em>:
+- Decouple notification from analytics.
+- Enable real-time dashboards, alerting, ML feature pipelines.
+- Replay events for auditing &amp; ML training.</p>
+<p><strong>Q6: How to persist state and recover from failures?</strong></p>
+<p><em>Event Sourcing</em>:</p>
+<pre class="codehilite"><code class="language-python"># On each state change, log to append-only log
+log_entry = {
+    'timestamp': datetime.now(),
+    'event': 'train_assigned',
+    'train_id': train.id,
+    'platform_id': platform.id
+}
+persistence_layer.append(log_entry)
+</code></pre>
+
+<p><em>Recovery</em>:</p>
+<pre class="codehilite"><code class="language-python">def restore_from_log(log_entries):
+    system = TrainStationSystem()
+    for entry in log_entries:
+        if entry['event'] == 'train_assigned':
+            train = system.trains[entry['train_id']]
+            train.platform_id = entry['platform_id']
+        # ... replay all events
+    return system
+</code></pre>
+
+<p><em>High Availability</em>:
+- Replicate log across 3+ nodes (consensus: Raft/Paxos).
+- Leader election for active controller.
+- Automatic failover on leader crash.</p>
+<p><strong>Q7: How to optimize memory for long-running systems?</strong></p>
+<p><em>Limits &amp; Cleanup</em>:</p>
+<pre class="codehilite"><code class="language-python">MAX_ASSIGNMENTS_HISTORY = 10_000
+
+def add_assignment(self, assignment):
+    self.assignments.append(assignment)
+    if len(self.assignments) &gt; MAX_ASSIGNMENTS_HISTORY:
+        old = self.assignments.pop(0)
+        archive_to_db(old)  # Offload to DB
+</code></pre>
+
+<p><em>Snapshot State</em>:</p>
+<pre class="codehilite"><code class="language-python">def create_snapshot(self):
+    return {
+        'trains': self.trains,
+        'platforms': self.platforms,
+        'timestamp': datetime.now()
+    }
+</code></pre>
+
+<p><strong>Q8: How to handle multi-station coordination?</strong></p>
+<p><em>Hub Model</em>:
+- Central dispatcher receives train schedule.
+- Routes train to target station controller.
+- Each station manages local platform assignment.
+- Dispatcher tracks train across stations.</p>
+<p><em>Code sketch</em>:</p>
+<pre class="codehilite"><code class="language-python">class CentralDispatcher:
+    def __init__(self):
+        self.stations = {}  # station_id -&gt; TrainStationSystem
+
+    def schedule_train_across_stations(self, stations_list, train_info):
+        for station_id in stations_list:
+            station = self.stations[station_id]
+            station.schedule_train(...)
+        self._notify('train_routed', {'stations': stations_list})
+</code></pre>
+
+<p><strong>Q9: How to prioritize trains (express vs freight vs regional)?</strong></p>
+<p><em>Priority-aware Strategy</em>:</p>
+<pre class="codehilite"><code class="language-python">class PriorityAwareStrategy(PlatformAssignmentStrategy):
+    def assign(self, train, platforms):
+        # Sort platforms by proximity to destination
+        # Prefer &quot;express&quot; platforms for fast trains
+        for priority in ['EXPRESS', 'REGIONAL', 'FREIGHT']:
+            candidates = [p for p in platforms 
+                         if p.priority_level &gt;= train.priority 
+                         and p.status == PlatformStatus.FREE]
+            if candidates:
+                return self._pick_best(candidates, train)
+        return None
+</code></pre>
+
+<p><strong>Q10: How to handle cancellations and retroactive changes?</strong></p>
+<p><em>Cancellation with Queue Reprocessing</em>:</p>
+<pre class="codehilite"><code class="language-python">def cancel_train(self, train_id):
+    train = self.trains[train_id]
+    train.status = TrainStatus.CANCELLED
+
+    if train.platform_id:
+        self._release_platform(train.platform_id)  # Frees up platform
+        self._process_waiting_queue()  # Retry queued trains
+
+    self._notify('train_cancelled', {'train': train_id})
+</code></pre>
+
+<p><em>Retroactive Platform Change</em>:</p>
+<pre class="codehilite"><code class="language-python">def reassign_train(self, train_id, new_platform_id):
+    train = self.trains[train_id]
+    if train.status in (TrainStatus.SCHEDULED, TrainStatus.EN_ROUTE):
+        self._release_platform(train.platform_id)
+        train.platform_id = new_platform_id
+        self._notify('train_reassigned', {'train': train_id, 'new_platform': new_platform_id})
+</code></pre>
+
+<hr />
+<h2 id="edge-cases-handling">Edge Cases &amp; Handling</h2>
+<table>
+<thead>
+<tr>
+<th>Edge Case</th>
+<th>Handling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Assign when no FREE platform</td>
+<td>Train added to waiting_queue</td>
+</tr>
+<tr>
+<td>Depart without arrival</td>
+<td>Ignored (must be AT_PLATFORM)</td>
+</tr>
+<tr>
+<td>Maintenance on occupied platform</td>
+<td>Disallow until release (or forceful for emergency)</td>
+</tr>
+<tr>
+<td>Reassign already assigned train</td>
+<td>Skip if already platform_id set</td>
+</tr>
+<tr>
+<td>Strategy switch mid-operation</td>
+<td>New trains use new strategy; existing unchanged</td>
+</tr>
+<tr>
+<td>Queue starvation</td>
+<td>Priority strategy can reorder; note fairness</td>
+</tr>
+<tr>
+<td>All platforms in maintenance</td>
+<td>Emit alert; queue all trains; scale up resources</td>
+</tr>
+<tr>
+<td>Train cancellation</td>
+<td>Release platform, reprocess queue</td>
+</tr>
+<tr>
+<td>Long waiting queue backlog</td>
+<td>Consider dynamic strategy tuning or dwell time reduction</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Lifecycle transitions valid (no depart before arrive)</li>
+<li>[ ] Queue processed on release</li>
+<li>[ ] Strategy swap changes assignment behavior</li>
+<li>[ ] Maintenance blocks assignment</li>
+<li>[ ] Events fire for all key operations</li>
+<li>[ ] No platform simultaneously hosts two trains</li>
+<li>[ ] Concurrent assignment safe (no race conditions)</li>
+<li>[ ] Memory bounded (snapshots, archiving)</li>
+<li>[ ] Recovery from failure (event log replay)</li>
+<li>[ ] Scaling strategy documented (zones, partitions, caching)</li>
+</ul>
+<hr />
+<p>"""Train Platform Management System - Interview Compact Implementation
+Patterns: Singleton | Strategy | Observer | State | Factory
+Five demo scenarios mirroring Airline example structure.
+"""</p>
+<p>from enum import Enum
+from abc import ABC, abstractmethod
+from typing import Dict, List, Optional
+from datetime import datetime</p>
+<h1 id="_1">============================================================================</h1>
+<h1 id="enumerations">ENUMERATIONS</h1>
+<h1 id="_2">============================================================================</h1>
+<p>class TrainStatus(Enum):
+    SCHEDULED = "scheduled"
+    EN_ROUTE = "en_route"
+    ARRIVING = "arriving"
+    AT_PLATFORM = "at_platform"
+    DEPARTED = "departed"
+    CANCELLED = "cancelled"</p>
+<p>class PlatformStatus(Enum):
+    FREE = "free"
+    OCCUPIED = "occupied"
+    MAINTENANCE = "maintenance"</p>
+<h1 id="_3">============================================================================</h1>
+<h1 id="domain-entities">DOMAIN ENTITIES</h1>
+<h1 id="_4">============================================================================</h1>
+<p>class Train:
+    def <strong>init</strong>(self, tid: str, origin: str, destination: str, arrival_time: str, departure_time: str):
+        self.id = tid
+        self.origin = origin
+        self.destination = destination
+        self.arrival_time = arrival_time
+        self.departure_time = departure_time
+        self.status = TrainStatus.SCHEDULED
+        self.platform_id: Optional[str] = None
+        self.created_at = datetime.now()
+    def <strong>repr</strong>(self):
+        return f"Train({self.id}, {self.origin}-&gt;{self.destination}, status={self.status.name}, platform={self.platform_id})"</p>
+<p>class Platform:
+    def <strong>init</strong>(self, pid: str):
+        self.id = pid
+        self.status = PlatformStatus.FREE
+        self.current_train_id: Optional[str] = None
+    def <strong>repr</strong>(self):
+        return f"Platform({self.id}, status={self.status.name}, current={self.current_train_id})"</p>
+<p>class Assignment:
+    def <strong>init</strong>(self, train_id: str, platform_id: str, timestamp: str):
+        self.train_id = train_id
+        self.platform_id = platform_id
+        self.timestamp = timestamp
+    def <strong>repr</strong>(self):
+        return f"Assignment(train={self.train_id}, platform={self.platform_id}, ts={self.timestamp})"</p>
+<h1 id="_5">============================================================================</h1>
+<h1 id="strategy-pattern-platform-assignment_1">STRATEGY PATTERN (Platform Assignment)</h1>
+<h1 id="_6">============================================================================</h1>
+<p>class PlatformAssignmentStrategy(ABC):
+    @abstractmethod
+    def assign(self, train: Train, platforms: List[Platform]) -&gt; Optional[Platform]:
+        pass</p>
+<p>class EarliestFreeStrategy(PlatformAssignmentStrategy):
+    def assign(self, train: Train, platforms: List[Platform]) -&gt; Optional[Platform]:
+        free = [p for p in platforms if p.status == PlatformStatus.FREE]
+        return free[0] if free else None</p>
+<p>class PriorityPlatformStrategy(PlatformAssignmentStrategy):
+    def <strong>init</strong>(self, priority_order: List[str]):
+        self.priority_order = priority_order
+    def assign(self, train: Train, platforms: List[Platform]) -&gt; Optional[Platform]:
+        free_map = {p.id: p for p in platforms if p.status == PlatformStatus.FREE}
+        for pid in self.priority_order:
+            if pid in free_map:
+                return free_map[pid]
+        # fallback earliest free
+        return next(iter(free_map.values()), None) if free_map else None</p>
+<h1 id="_7">============================================================================</h1>
+<h1 id="observer-pattern">OBSERVER PATTERN</h1>
+<h1 id="_8">============================================================================</h1>
+<p>class Observer(ABC):
+    @abstractmethod
+    def update(self, event: str, payload: Dict):
+        pass</p>
+<p>class ConsoleObserver(Observer):
+    def update(self, event: str, payload: Dict):
+        ts = datetime.now().strftime('%H:%M:%S')
+        print(f"[{ts}] {event.upper():16} | {payload}")</p>
+<h1 id="_9">============================================================================</h1>
+<h1 id="singleton-controller">SINGLETON CONTROLLER</h1>
+<h1 id="_10">============================================================================</h1>
+<p>class TrainStationSystem:
+    _instance = None
+    def <strong>new</strong>(cls):
+        if cls._instance is None:
+            cls._instance = super().<strong>new</strong>(cls)
+        return cls._instance
+    def <strong>init</strong>(self):
+        if getattr(self, '_initialized', False):
+            return
+        self.trains: Dict[str, Train] = {}
+        self.platforms: Dict[str, Platform] = {}
+        self.assignments: List[Assignment] = []
+        self.waiting_queue: List[str] = []
+        self.observers: List[Observer] = []
+        self.strategy: PlatformAssignmentStrategy = EarliestFreeStrategy()
+        self._initialized = True
+    def add_observer(self, obs: Observer):
+        self.observers.append(obs)
+    def _notify(self, event: str, payload: Dict):
+        for o in self.observers:
+            o.update(event, payload)
+    def set_strategy(self, strategy: PlatformAssignmentStrategy):
+        self.strategy = strategy
+        self._notify("strategy_changed", {"strategy": strategy.<strong>class</strong>.<strong>name</strong>})
+    def add_platform(self) -&gt; Platform:
+        pid = f"P{len(self.platforms)+1}"
+        p = Platform(pid)
+        self.platforms[pid] = p
+        self._notify("platform_added", {"platform": pid})
+        return p
+    def schedule_train(self, origin: str, destination: str, arrival_time: str, departure_time: str) -&gt; Train:
+        tid = f"T{len(self.trains)+1}"
+        t = Train(tid, origin, destination, arrival_time, departure_time)
+        self.trains[tid] = t
+        self._notify("train_scheduled", {"train": tid, "arrival": arrival_time})
+        self._attempt_assignment(t)
+        return t
+    def _attempt_assignment(self, train: Train):
+        if train.platform_id:
+            return  # already assigned
+        platform = self.strategy.assign(train, list(self.platforms.values()))
+        if platform:
+            platform.status = PlatformStatus.OCCUPIED
+            platform.current_train_id = train.id
+            train.platform_id = platform.id
+            train.status = TrainStatus.EN_ROUTE
+            self.assignments.append(Assignment(train.id, platform.id, train.arrival_time))
+            self._notify("train_assigned", {"train": train.id, "platform": platform.id})
+        else:
+            if train.id not in self.waiting_queue:
+                self.waiting_queue.append(train.id)
+            self._notify("assignment_pending", {"train": train.id})
+    def arrive_train(self, train_id: str):
+        t = self.trains.get(train_id)
+        if not t or t.status not in (TrainStatus.EN_ROUTE, TrainStatus.ARRIVING):
+            return False
+        t.status = TrainStatus.AT_PLATFORM
+        self._notify("train_arrived", {"train": train_id, "platform": t.platform_id})
+        return True
+    def depart_train(self, train_id: str):
+        t = self.trains.get(train_id)
+        if not t or t.status != TrainStatus.AT_PLATFORM:
+            return False
+        t.status = TrainStatus.DEPARTED
+        self._notify("train_departed", {"train": train_id, "platform": t.platform_id})
+        self._release_platform(t.platform_id)
+        return True
+    def _release_platform(self, platform_id: str):
+        p = self.platforms.get(platform_id)
+        if not p:
+            return
+        p.status = PlatformStatus.FREE
+        p.current_train_id = None
+        self._notify("platform_released", {"platform": platform_id})
+        self._process_waiting_queue()
+    def _process_waiting_queue(self):
+        if not self.waiting_queue:
+            return
+        remaining = []
+        for tid in self.waiting_queue:
+            train = self.trains.get(tid)
+            self._attempt_assignment(train)
+            if not train.platform_id:
+                remaining.append(tid)
+        self.waiting_queue = remaining
+    def set_platform_maintenance(self, platform_id: str):
+        p = self.platforms.get(platform_id)
+        if p and p.status == PlatformStatus.FREE:
+            p.status = PlatformStatus.MAINTENANCE
+            self._notify("platform_maintenance", {"platform": platform_id})
+    def summary(self) -&gt; Dict[str, int]:
+        return {
+            "trains": len(self.trains),
+            "platforms": len(self.platforms),
+            "assignments": len(self.assignments),
+            "waiting": len(self.waiting_queue)
+        }</p>
+<h1 id="_11">============================================================================</h1>
+<h1 id="demo-scenarios">DEMO SCENARIOS</h1>
+<h1 id="_12">============================================================================</h1>
+<p>def demo_1_setup(system: TrainStationSystem):
+    print("\n" + "="<em>70)
+    print("DEMO 1: Setup (Platforms &amp; Trains)")
+    print("="</em>70)
+    system.observers.clear()
+    system.add_observer(ConsoleObserver())
+    p1 = system.add_platform()
+    p2 = system.add_platform()
+    p3 = system.add_platform()
+    t1 = system.schedule_train("CityA", "CityB", "10:00", "10:15")
+    t2 = system.schedule_train("CityC", "CityD", "10:05", "10:25")
+    t3 = system.schedule_train("CityE", "CityF", "10:07", "10:30")
+    return p1, p2, p3, t1, t2, t3</p>
+<p>def demo_2_arrival(system: TrainStationSystem, train: Train):
+    print("\n" + "="<em>70)
+    print("DEMO 2: Arrival Transition")
+    print("="</em>70)
+    system.arrive_train(train.id)
+    print(f"Train {train.id} status: {train.status.name}")</p>
+<p>def demo_3_strategy_switch(system: TrainStationSystem):
+    print("\n" + "="<em>70)
+    print("DEMO 3: Strategy Switch &amp; New Train")
+    print("="</em>70)
+    system.set_strategy(PriorityPlatformStrategy(["P3", "P2", "P1"]))
+    t4 = system.schedule_train("CityG", "CityH", "10:12", "10:40")
+    print(f"New train {t4.id} assigned platform: {t4.platform_id}")
+    return t4</p>
+<p>def demo_4_departure_release(system: TrainStationSystem, train: Train):
+    print("\n" + "="<em>70)
+    print("DEMO 4: Departure &amp; Release")
+    print("="</em>70)
+    system.arrive_train(train.id)  # ensure at platform
+    system.depart_train(train.id)
+    print(f"Departed {train.id}; waiting queue length: {len(system.waiting_queue)}")</p>
+<p>def demo_5_maintenance_conflict(system: TrainStationSystem):
+    print("\n" + "="<em>70)
+    print("DEMO 5: Maintenance &amp; Conflict")
+    print("="</em>70)
+    # Put a free platform into maintenance
+    for p in system.platforms.values():
+        if p.status == PlatformStatus.FREE:
+            system.set_platform_maintenance(p.id)
+            break
+    t5 = system.schedule_train("CityI", "CityJ", "10:18", "10:50")
+    print(f"Train {t5.id} platform: {t5.platform_id} (None means queued)")
+    print(f"Waiting queue: {system.waiting_queue}")</p>
+<h1 id="_13">============================================================================</h1>
+<h1 id="main-execution">MAIN EXECUTION</h1>
+<h1 id="_14">============================================================================</h1>
+<p>if <strong>name</strong> == "<strong>main</strong>":
+    print("\n" + "="<em>70)
+    print("TRAIN PLATFORM MANAGEMENT - 75 MINUTE INTERVIEW DEMOS")
+    print("Patterns: Singleton | Strategy | Observer | State | Factory")
+    print("="</em>70)
+    system = TrainStationSystem()
+    try:
+        p1, p2, p3, t1, t2, t3 = demo_1_setup(system)
+        demo_2_arrival(system, t1)
+        t4 = demo_3_strategy_switch(system)
+        demo_4_departure_release(system, t2)
+        demo_5_maintenance_conflict(system)
+        print("\n" + "="<em>70)
+        print("✅ ALL DEMOS COMPLETED SUCCESSFULLY")
+        print("="</em>70)
+        print("Summary:")
+        print(system.summary())
+        print("Key Takeaways:")
+        print(" • Strategy swap alters platform preference order")
+        print(" • Queue processed on platform release")
+        print(" • Maintenance removes platform from availability set")
+        print(" • Observer events enable telemetry &amp; alerts")
+    except Exception as e:
+        print(f"❌ Demo error: {e}")
+        import traceback
+        traceback.print_exc()</p>
+<p>```</p>
+<hr />
+<h2 id="tips-for-success">Tips for Success</h2>
+<p>✅ Keep assignment heuristic out of Train/Platform (Strategy)<br />
+✅ Emit events immediately after state changes<br />
+✅ Show clear, validated transitions<br />
+✅ Mention delay &amp; prediction as future concerns<br />
+✅ Clarify exclusions (routing, signaling) early<br />
+✅ Demonstrate scaling considerations (zones, async, event streams)<br />
+✅ Handle edge cases gracefully (queues, maintenance, cancellations)</p>
+<hr />
+<h2 id="summary">Summary</h2>
+<p>The Train Platform Management System demonstrates:
+- <strong>Patterns in Action</strong>: Singleton (central coordination), Strategy (pluggable assignment), Observer (event-driven extensibility), State (lifecycle), Factory (creation).
+- <strong>Conflict Resolution</strong>: Waiting queues when no platform is free.
+- <strong>Extensibility</strong>: Swap strategies, add observers, extend events without modifying core.
+- <strong>Scalability</strong>: Partitioning by zones, optimistic locking, event streaming, snapshots, multi-station coordination.
+- <strong>Real-world Considerations</strong>: Delays, cancellations, maintenance windows, predictive assignment.</p>
+<p>Run <code>INTERVIEW_COMPACT.py</code> to see all 5 demo scenarios in action.</p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-04-05</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

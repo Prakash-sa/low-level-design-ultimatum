@@ -1,0 +1,1027 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leaderboard - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Insatance%20Variable.html">Class Variable vs Insatance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Airline%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Airline Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/">Airline Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/Airline%20Management%20System.html">Airline Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Locker System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/">Amazon Locker System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/Amazon%20Locker%20System.html">Amazon Locker System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Online Shopping System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/">Amazon Online Shopping System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/ATM/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle ATM" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/ATM/">ATM</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM/ATM.html">ATM</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Cache/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Cache" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Cache/">Cache</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache/Cache.html">Cache</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Car%20Rental%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Car Rental System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/">Car Rental System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/Car%20Rental%20System.html">Car Rental System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Chess%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Chess Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Chess%20Game/">Chess Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game/Chess%20Game.html">Chess Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circinfo (Ride Sharing)" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/">Circinfo (Ride Sharing)</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Design Hit Counter" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/">Design Hit Counter</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/Design%20Hit%20Counter.html">Design Hit Counter</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/">Elevator System</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Elevator%20System.html">Elevator System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Facebook/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Facebook" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Facebook/">Facebook</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook/Facebook.html">Facebook</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/File%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle File System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/File%20System/">File System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System/File%20System.html">File System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Hotel Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/">Hotel Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/Hotel%20Management%20System.html">Hotel Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Jigsaw Puzzle" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/">Jigsaw Puzzle</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Leaderboard/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Leaderboard" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Leaderboard/">Leaderboard</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard/Leaderboard.html">Leaderboard</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Library%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Library Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/">Library Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/Library%20Management%20System.html">Library Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/LinkedIn/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle LinkedIn" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/LinkedIn/">LinkedIn</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn/LinkedIn.html">LinkedIn</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Logging/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Logging" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Logging/">Logging</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging/Logging.html">Logging</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Meeting Scheduler" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/">Meeting Scheduler</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/Meeting%20Scheduler.html">Meeting Scheduler</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Movie Ticket Booking System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/">Movie Ticket Booking System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Blackjack Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/">Online Blackjack Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Stock Brokerage System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/">Online Stock Brokerage System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/">Parking Lot</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Parking%20Lot.html">Parking Lot</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Pub-Sub/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Pub-Sub" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Pub-Sub/">Pub-Sub</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub/Pub-Sub.html">Pub-Sub</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Restaurant Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/">Restaurant Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/Restaurant%20Management%20System.html">Restaurant Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Stack%20Overflow/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Stack Overflow" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/">Stack Overflow</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/Stack%20Overflow.html">Stack Overflow</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Text Editor with Undo & Redo" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/">Text Editor with Undo & Redo</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Train Platform Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/">Train Platform Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Vending%20Machine/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Vending Machine" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/">Vending Machine</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/Vending%20Machine.html">Vending Machine</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/Leaderboard/">Leaderboard</a>
+            </div>
+            <div class="content">
+                <h1 id="leaderboard-75-minute-interview-guide">Leaderboard — 75-Minute Interview Guide</h1>
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>What is it?</strong> Real-time ranking system tracking player scores and displaying top performers globally or by region.</p>
+<p><strong>Key Classes:</strong>
+- <code>Leaderboard</code> (Singleton): Central ranking system
+- <code>Player</code>: User with unique ID, score, metadata
+- <code>Score</code>: Event recording points earned
+- <code>TimeRange</code>: Scope filter (daily, weekly, monthly, all-time)
+- <code>Region</code>: Geographic filter for localized leaderboards
+- <code>Cache</code>: In-memory top-N rankings</p>
+<p><strong>Core Flows:</strong>
+1. <strong>Update Score</strong>: Player scores point → Rank recalculated
+2. <strong>Query Global Leaderboard</strong>: Get top 100 players worldwide
+3. <strong>Query Regional</strong>: Get top 50 in region with percentile
+4. <strong>Query Personal Rank</strong>: Check single player's ranking + nearby players
+5. <strong>Competitive Rankings</strong>: Time-windowed scores (season-based)</p>
+<p><strong>5 Design Patterns:</strong>
+- <strong>Singleton</strong>: One Leaderboard system
+- <strong>Observer</strong>: Notify on rank change (promotion/demotion)
+- <strong>Cache</strong>: Top-N rankings with TTL
+- <strong>Strategy</strong>: Different ranking algorithms (ELO, points, percentage)
+- <strong>State Machine</strong>: Season lifecycle (active, closed, archived)</p>
+<hr />
+<h2 id="system-overview">System Overview</h2>
+<p>Large-scale ranking system aggregating player scores, computing real-time rankings, and serving leaderboard queries for millions of players.</p>
+<h3 id="requirements">Requirements</h3>
+<p><strong>Functional:</strong>
+- Record score updates in real-time
+- Compute player rankings (global, regional)
+- Query top-N leaderboard
+- Display player percentile
+- Filter by time (daily, weekly, monthly, all-time)
+- Support multiple regions/competitive seasons
+- Show nearby competitors (+/- 5 ranks)</p>
+<p><strong>Non-Functional:</strong>
+- Leaderboard query &lt; 100ms
+- Support 10M+ players, 100K QPS
+- Score update latency &lt; 1 second
+- 99.99% uptime (ranked competitive)</p>
+<p><strong>Constraints:</strong>
+- Max players per leaderboard: 10M+
+- Scoring range: 0-1,000,000,000 points
+- Top-N display: typically 100-1000
+- Real-time: &lt;1 second consistency requirement</p>
+<hr />
+<h2 id="architecture-diagram-ascii-uml">Architecture Diagram (ASCII UML)</h2>
+<pre class="codehilite"><code>┌────────────────┐
+│ Leaderboard    │
+│ (Singleton)    │
+└────────┬───────┘
+         │
+    ┌────┼────┬──────────┐
+    │    │    │          │
+    ▼    ▼    ▼          ▼
+┌────────┐ ┌─────┐ ┌──────┐ ┌───────┐
+│Players │ │Score│ │Region│ │Season │
+└────────┘ └─────┘ └──────┘ └───────┘
+    │
+    ▼
+┌──────────────┐
+│CachedRankings│
+│Top-100       │ ← TTL: 1-5 min
+│Top-1000      │
+│Regional      │
+└──────────────┘
+
+Rank Computation:
+Score Changes → Event Queue → Batch Rank Recompute → Update Cache
+                 ↓
+            Sort by Score DESC
+            Assign ranks 1, 2, 3...
+            Cache for 1-5 minutes
+</code></pre>
+
+<hr />
+<h2 id="interview-qa-12-questions">Interview Q&amp;A (12 Questions)</h2>
+<h3 id="basic-level">Basic Level</h3>
+<p><strong>Q1: How do you define leaderboard rank?</strong>
+A: Rank = count of players with score &gt; current player's score + 1. Example: 50 players above you → rank 51. Ties break by: earlier timestamp (who reached score first gets better rank).</p>
+<p><strong>Q2: What information do you display?</strong>
+A: Player rank (1-10M), player name/avatar, score, region, points_earned_today, time_played. Optional: rating badge (Gold/Silver/Bronze), achievement icons.</p>
+<p><strong>Q3: How frequently should you recompute rankings?</strong>
+A: Two approaches: (1) Real-time: recompute immediately (complex). (2) Batch: recompute every 5-60 minutes (simpler). Recommendation: batch + cache for consistency + performance.</p>
+<p><strong>Q4: What time windows do you support?</strong>
+A: Daily (resets 12 AM UTC), weekly (resets Sundays), monthly (resets 1st), seasonal (3 months), all-time (never). Separate leaderboards per window. Player sees all rankings simultaneously.</p>
+<p><strong>Q5: How do you handle region-specific leaderboards?</strong>
+A: Partition players by region (geo-IP or account setting). Separate leaderboard per region. Query: top 100 in player's region. Total leaderboards = num_regions × num_seasons.</p>
+<h3 id="intermediate-level">Intermediate Level</h3>
+<p><strong>Q6: How to efficiently query top-100?</strong>
+A: Maintain sorted list of top-100 (by score DESC). Index: sorted array or balanced BST. Query top-100: O(100) = O(1). Update: when player score changes, update if in top-100 or could enter top-100.</p>
+<p><strong>Q7: How to compute percentile rank?</strong>
+A: Percentile = (num_players_below / total_players) × 100. Example: rank 51 out of 10M → (10M - 51) / 10M ≈ 99.99th percentile. Computed on-demand or cached.</p>
+<p><strong>Q8: How to show "nearby" competitors?</strong>
+A: Store top-1000 rankings. User at rank 500 → show ranks 495-505 (nearby 10). Reduces data transfer + improves performance vs showing full 10M.</p>
+<p><strong>Q9: How to batch process score updates?</strong>
+A: Collect score updates in queue (Redis stream). Every 1 minute: dequeue all, recompute ranks, update cache + DB. Avoids recomputing for each individual update.</p>
+<p><strong>Q10: How to reset leaderboards (seasons)?</strong>
+A: At season end: archive current leaderboard (historical data). Clear scores, reset ranks. Start new season. Players retain seasonal badges but leaderboard fresh.</p>
+<h3 id="advanced-level">Advanced Level</h3>
+<p><strong>Q11: How to prevent ranking manipulation?</strong>
+A: Score validation: check if score increase is reasonable (e.g., max +100 points per game). Flag suspicious patterns (rank jump 10M → 1 in 1 day). Manual review before displaying.</p>
+<p><strong>Q12: How to scale to 100 million players?</strong>
+A: (1) Partition by region (US, EU, Asia = 33M each). (2) Per region: cache top-1000 globally + top-100 per sub-region. (3) Store full rankings in distributed DB (partition by player ID).</p>
+<hr />
+<h2 id="scaling-qa-12-questions">Scaling Q&amp;A (12 Questions)</h2>
+<p><strong>Q1: Can you handle 10M players with real-time scores?</strong>
+A: With batch approach: yes. Batch every 1 minute, recompute rankings in parallel (map-reduce). Bottleneck: storing 10M rankings (memory). Use tiered storage: top-10K in memory, rest in DB.</p>
+<p><strong>Q2: How to handle 100K score updates per second?</strong>
+A: Write to message queue (Kafka): 100K msgs/sec. Batch consumer: process 1M events every 10 seconds. Rank recomputation: O(n log n) = O(10M log 10M) ≈ 0.1 seconds on modern hardware.</p>
+<p><strong>Q3: How to keep leaderboard fresh (&lt; 100ms latency)?</strong>
+A: Cache top-1000 with TTL 5 minutes. On query: return cached (1ms). On cache miss or expiry: recompute (0.1s), cache new result. Acceptable latency for most use cases.</p>
+<p><strong>Q4: How to handle score ties?</strong>
+A: Tiebreaker 1: timestamp (who reached score first). Tiebreaker 2: player_id (lexicographic). Ensures consistent, deterministic ranking. Example: Rank 1 = highest score, earliest timestamp.</p>
+<p><strong>Q5: Can you support country leaderboards for 200 countries?</strong>
+A: Yes. 200 separate leaderboards (one per country). Each cached independently. Total memory: 200 × (10K players × 100 bytes) = 200 MB. Reasonable.</p>
+<p><strong>Q6: How to efficiently update a single player's rank?</strong>
+A: Instead of recomputing all 10M: (1) Find player's current rank. (2) Check if new score affects top-1000. If yes: insert into top-1000, remove bottom. If no: update DB only, cache unchanged.</p>
+<p><strong>Q7: How to distribute ranking computation across machines?</strong>
+A: Partition players by ID range: Machine 1 handles IDs 1-1M, Machine 2 handles 1M-2M, etc. Each machine: compute ranks for its partition. Merge results (distributed sort).</p>
+<p><strong>Q8: How to support sub-region leaderboards?</strong>
+A: Hierarchical: Global → Country → City → Guild. Cache each level separately. Query city leaderboard: merge city-level + global rank (for reference). O(log d) where d = depth.</p>
+<p><strong>Q9: How to prevent cache stampede when cache expires?</strong>
+A: Probabilistic expiry: instead of TTL=5 min (all expire same time), use TTL=5 min ± 30 sec (stagger). Prevents thundering herd on cache miss.</p>
+<p><strong>Q10: Can you support weighted scores (multiple events)?</strong>
+A: Events: win=100pts, kill=10pts, death=-5pts. Total = Σ(event_weight × frequency). Leaderboard ranks by total score. Recompute weights: recalculate leaderboard.</p>
+<p><strong>Q11: How to handle seasonal resets efficiently?</strong>
+A: Archive old season: copy leaderboard table, mark as historic. Create new table for new season. Player sees all seasonal leaderboards (current + archive). Queries filtered by season.</p>
+<p><strong>Q12: Can you support spectator mode (follow top-10 updates)?</strong>
+A: Broadcast top-10 changes every 1 second (via WebSocket). Spectators subscribe to updates. Expected update frequency: 10-50 rank changes/sec (out of 10M). Feasible with event streaming.</p>
+<hr />
+<h2 id="demo-scenarios-5-examples">Demo Scenarios (5 Examples)</h2>
+<h3 id="demo-1-score-update-rank-change">Demo 1: Score Update &amp; Rank Change</h3>
+<pre class="codehilite"><code>- Player John currently rank 500 (score: 50,000)
+- John scores 100 points → new score: 50,100
+- Rank recomputed: 2 players passed him
+- New rank: 502
+- Email notification: &quot;Rank dropped 500→502&quot;
+</code></pre>
+
+<h3 id="demo-2-query-leaderboard-top-100">Demo 2: Query Leaderboard (Top 100)</h3>
+<pre class="codehilite"><code>- User requests top-100 global
+- API query: /leaderboard?limit=100&amp;timerange=all-time
+- Returns: ranks 1-100 with scores, names, regions
+- Latency: 50ms (cached result)
+- Display: sorted by score DESC
+</code></pre>
+
+<h3 id="demo-3-regional-leaderboard">Demo 3: Regional Leaderboard</h3>
+<pre class="codehilite"><code>- Player in USA requests top-100 in USA
+- API query: /leaderboard?region=USA&amp;limit=100
+- Returns: USA-specific leaderboard
+- Player rank: 5,432 out of 2M USA players
+- Percentile: 99.73%
+</code></pre>
+
+<h3 id="demo-4-nearby-players">Demo 4: Nearby Players</h3>
+<pre class="codehilite"><code>- Player at rank 5,000 requests nearby
+- API query: /leaderboard/nearby?rank=5000&amp;offset=10
+- Returns: ranks 4,990-5,010 (20 players nearby)
+- Shows: all scores within 50 points range
+- Allows competition/comparison
+</code></pre>
+
+<h3 id="demo-5-season-transition">Demo 5: Season Transition</h3>
+<pre class="codehilite"><code>- Season 1 ends: Sept 30
+- Leaderboard frozen: top 100 archived
+- Season 2 starts: Oct 1
+- All scores reset: everyone starts at 0
+- Seasonal badges awarded to season 1 top-100
+- New leaderboard fresh for competition
+</code></pre>
+
+<hr />
+<h2 id="complete-implementation">Complete Implementation</h2>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+🏆 Leaderboard - Interview Implementation
+Demonstrates:
+1. Real-time ranking computation
+2. Caching top-N results
+3. Percentile calculation
+4. Regional partitioning
+5. Seasonal management
+&quot;&quot;&quot;
+
+from enum import Enum
+from typing import List, Optional, Dict, Tuple
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+import threading
+import heapq
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class TimeRange(Enum):
+    DAILY = &quot;daily&quot;
+    WEEKLY = &quot;weekly&quot;
+    MONTHLY = &quot;monthly&quot;
+    ALL_TIME = &quot;all_time&quot;
+
+# ============================================================================
+# DATA CLASSES
+# ============================================================================
+
+@dataclass
+class Player:
+    player_id: str
+    name: str
+    region: str
+    all_time_score: int = 0
+    daily_score: int = 0
+    weekly_score: int = 0
+    monthly_score: int = 0
+    last_update: datetime = field(default_factory=datetime.now)
+
+@dataclass
+class Score:
+    event_id: str
+    player_id: str
+    points: int
+    timestamp: datetime
+    event_type: str
+
+# ============================================================================
+# LEADERBOARD (SINGLETON)
+# ============================================================================
+
+class Leaderboard:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+
+        self._initialized = True
+        self.players: Dict[str, Player] = {}
+        self.scores: List[Score] = []
+
+        # Caches: region -&gt; list of (player_id, score)
+        self.global_top_100: List[Tuple[str, int]] = []
+        self.regional_tops: Dict[str, List[Tuple[str, int]]] = {}
+        self.cache_timestamp = datetime.now()
+        self.cache_ttl_seconds = 300  # 5 minutes
+
+        self.lock = threading.Lock()
+        print(&quot;🏆 Leaderboard initialized&quot;)
+
+    def add_player(self, player_id: str, name: str, region: str):
+        with self.lock:
+            player = Player(player_id, name, region)
+            self.players[player_id] = player
+            print(f&quot;✓ Player registered: {name} ({region})&quot;)
+
+    def record_score(self, player_id: str, points: int, event_type: str):
+        with self.lock:
+            if player_id not in self.players:
+                return
+
+            player = self.players[player_id]
+
+            # Update scores (simplified - only all_time)
+            player.all_time_score += points
+            player.last_update = datetime.now()
+
+            # Record event
+            event_id = f&quot;E_{len(self.scores)}&quot;
+            score = Score(event_id, player_id, points, datetime.now(), event_type)
+            self.scores.append(score)
+
+            print(f&quot;✓ {player.name} +{points} pts ({event_type}) → total: {player.all_time_score}&quot;)
+
+    def _is_cache_valid(self) -&gt; bool:
+        return (datetime.now() - self.cache_timestamp).total_seconds() &lt; self.cache_ttl_seconds
+
+    def _recompute_rankings(self):
+        &quot;&quot;&quot;Recompute top rankings from scratch&quot;&quot;&quot;
+        # Global rankings
+        sorted_players = sorted(
+            [(pid, p.all_time_score) for pid, p in self.players.items()],
+            key=lambda x: (-x[1], self.players[x[0]].last_update)  # Score DESC, timestamp ASC
+        )
+
+        self.global_top_100 = sorted_players[:100]
+
+        # Regional rankings
+        self.regional_tops = {}
+        for region in set(p.region for p in self.players.values()):
+            regional_players = sorted(
+                [(pid, p.all_time_score) for pid, p in self.players.items() if p.region == region],
+                key=lambda x: (-x[1], self.players[x[0]].last_update)
+            )
+            self.regional_tops[region] = regional_players[:100]
+
+        self.cache_timestamp = datetime.now()
+        print(f&quot;  ✓ Rankings recomputed (cache valid for 5 min)&quot;)
+
+    def get_global_leaderboard(self, limit: int = 100) -&gt; List[Tuple[int, str, int]]:
+        &quot;&quot;&quot;Returns: [(rank, player_id, score)]&quot;&quot;&quot;
+        with self.lock:
+            if not self._is_cache_valid():
+                self._recompute_rankings()
+
+            result = []
+            for rank, (player_id, score) in enumerate(self.global_top_100[:limit], 1):
+                result.append((rank, player_id, score))
+
+            return result
+
+    def get_regional_leaderboard(self, region: str, limit: int = 100) -&gt; List[Tuple[int, str, int]]:
+        &quot;&quot;&quot;Returns: [(rank, player_id, score)]&quot;&quot;&quot;
+        with self.lock:
+            if not self._is_cache_valid():
+                self._recompute_rankings()
+
+            result = []
+            if region in self.regional_tops:
+                for rank, (player_id, score) in enumerate(self.regional_tops[region][:limit], 1):
+                    result.append((rank, player_id, score))
+
+            return result
+
+    def get_player_rank(self, player_id: str) -&gt; Optional[Tuple[int, int, float]]:
+        &quot;&quot;&quot;Returns: (rank, score, percentile)&quot;&quot;&quot;
+        with self.lock:
+            if not self._is_cache_valid():
+                self._recompute_rankings()
+
+            # Find rank in global
+            for rank, (pid, score) in enumerate(self.global_top_100, 1):
+                if pid == player_id:
+                    total_players = len(self.players)
+                    percentile = ((total_players - rank) / total_players) * 100
+                    return (rank, score, percentile)
+
+            # If not in top-100, estimate
+            total = len(self.players)
+            return (total + 1, self.players[player_id].all_time_score, 0.0)
+
+    def get_nearby_players(self, player_id: str, offset: int = 5) -&gt; List[Tuple[int, str, int]]:
+        &quot;&quot;&quot;Returns nearby ranks (player ± offset)&quot;&quot;&quot;
+        with self.lock:
+            if not self._is_cache_valid():
+                self._recompute_rankings()
+
+            player_rank = None
+            for rank, (pid, _) in enumerate(self.global_top_100, 1):
+                if pid == player_id:
+                    player_rank = rank
+                    break
+
+            if not player_rank:
+                return []
+
+            start = max(0, player_rank - offset - 1)
+            end = min(len(self.global_top_100), player_rank + offset)
+
+            result = []
+            for rank, (pid, score) in enumerate(self.global_top_100[start:end], start + 1):
+                result.append((rank, pid, score))
+
+            return result
+
+    def display_leaderboard(self, limit: int = 10):
+        leaderboard = self.get_global_leaderboard(limit)
+        print(f&quot;\n  Top {limit} Global Leaderboard:&quot;)
+        for rank, player_id, score in leaderboard:
+            player = self.players[player_id]
+            print(f&quot;  {rank:3d}. {player.name:20} {score:10,d} pts ({player.region})&quot;)
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def demo_1_score_updates():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 1: SCORE UPDATES &amp; RANKING&quot;)
+    print(&quot;=&quot;*70)
+
+    lb = Leaderboard()
+    lb.add_player(&quot;P1&quot;, &quot;Alice&quot;, &quot;USA&quot;)
+    lb.add_player(&quot;P2&quot;, &quot;Bob&quot;, &quot;USA&quot;)
+    lb.add_player(&quot;P3&quot;, &quot;Charlie&quot;, &quot;USA&quot;)
+
+    lb.record_score(&quot;P1&quot;, 1000, &quot;game_win&quot;)
+    lb.record_score(&quot;P2&quot;, 800, &quot;game_win&quot;)
+    lb.record_score(&quot;P3&quot;, 500, &quot;game_win&quot;)
+
+    lb.display_leaderboard(3)
+
+def demo_2_global_leaderboard():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 2: QUERY GLOBAL LEADERBOARD&quot;)
+    print(&quot;=&quot;*70)
+
+    lb = Leaderboard()
+    for i in range(5):
+        lb.add_player(f&quot;P{i}&quot;, f&quot;Player{i}&quot;, &quot;USA&quot;)
+        lb.record_score(f&quot;P{i}&quot;, (5-i)*1000, &quot;game_win&quot;)
+
+    leaderboard = lb.get_global_leaderboard(5)
+    print(f&quot;\n  Top 5:&quot;)
+    for rank, pid, score in leaderboard:
+        print(f&quot;  Rank {rank}: {lb.players[pid].name} - {score} pts&quot;)
+
+def demo_3_player_rank():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 3: QUERY PLAYER RANK &amp; PERCENTILE&quot;)
+    print(&quot;=&quot;*70)
+
+    lb = Leaderboard()
+    for i in range(100):
+        lb.add_player(f&quot;P{i}&quot;, f&quot;Player{i}&quot;, &quot;USA&quot;)
+        lb.record_score(f&quot;P{i}&quot;, (100-i)*100, &quot;game_win&quot;)
+
+    rank, score, percentile = lb.get_player_rank(&quot;P50&quot;)
+    print(f&quot;\n  Player: {lb.players['P50'].name}&quot;)
+    print(f&quot;  Rank: {rank}&quot;)
+    print(f&quot;  Score: {score}&quot;)
+    print(f&quot;  Percentile: {percentile:.2f}%&quot;)
+
+def demo_4_nearby_players():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 4: NEARBY COMPETITORS&quot;)
+    print(&quot;=&quot;*70)
+
+    lb = Leaderboard()
+    for i in range(20):
+        lb.add_player(f&quot;P{i}&quot;, f&quot;Player{i}&quot;, &quot;USA&quot;)
+        lb.record_score(f&quot;P{i}&quot;, (20-i)*500, &quot;game_win&quot;)
+
+    nearby = lb.get_nearby_players(&quot;P5&quot;, offset=3)
+    print(f&quot;\n  Players near P5:&quot;)
+    for rank, pid, score in nearby:
+        print(f&quot;  {rank:2d}. {lb.players[pid].name:15} {score:6d} pts&quot;)
+
+def demo_5_regional():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 5: REGIONAL LEADERBOARDS&quot;)
+    print(&quot;=&quot;*70)
+
+    lb = Leaderboard()
+    regions = [&quot;USA&quot;, &quot;EU&quot;, &quot;ASIA&quot;]
+
+    for region in regions:
+        for i in range(5):
+            player_id = f&quot;{region}_P{i}&quot;
+            lb.add_player(player_id, f&quot;{region}_Player{i}&quot;, region)
+            lb.record_score(player_id, (5-i)*1000, &quot;game_win&quot;)
+
+    for region in regions:
+        print(f&quot;\n  Top 3 in {region}:&quot;)
+        leaderboard = lb.get_regional_leaderboard(region, 3)
+        for rank, pid, score in leaderboard:
+            print(f&quot;  {rank}. {lb.players[pid].name:15} {score} pts&quot;)
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;🏆 LEADERBOARD - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_score_updates()
+    demo_2_global_leaderboard()
+    demo_3_player_rank()
+    demo_4_nearby_players()
+    demo_5_regional()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;✅ ALL DEMOS COMPLETED&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<hr />
+<h2 id="summary">Summary</h2>
+<p>✅ <strong>Real-time rankings</strong> for 10M+ players
+✅ <strong>Global + regional</strong> leaderboards
+✅ <strong>Efficient caching</strong> (top-1000) with TTL
+✅ <strong>Percentile ranking</strong> computation
+✅ <strong>Nearby competitors</strong> display
+✅ <strong>Seasonal competition</strong> support
+✅ <strong>Score update batching</strong> for performance
+✅ <strong>Multi-region partitioning</strong> for scale
+✅ <strong>Spectator mode</strong> (broadcast updates)
+✅ <strong>Fraud prevention</strong> (score validation)</p>
+<p><strong>Key Takeaway</strong>: Leaderboard demonstrates high-scale ranking computation, caching strategies, and efficient query patterns. Core focus: cache top-N rankings, use batch updates, support hierarchical queries (global/regional).</p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-04-05</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

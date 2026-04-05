@@ -1,0 +1,1428 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Amazon Locker System - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Insatance%20Variable.html">Class Variable vs Insatance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Airline%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Airline Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/">Airline Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/Airline%20Management%20System.html">Airline Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Locker System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/">Amazon Locker System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/Amazon%20Locker%20System.html">Amazon Locker System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Online Shopping System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/">Amazon Online Shopping System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/ATM/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle ATM" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/ATM/">ATM</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM/ATM.html">ATM</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Cache/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Cache" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Cache/">Cache</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache/Cache.html">Cache</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Car%20Rental%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Car Rental System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/">Car Rental System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/Car%20Rental%20System.html">Car Rental System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Chess%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Chess Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Chess%20Game/">Chess Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game/Chess%20Game.html">Chess Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circinfo (Ride Sharing)" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/">Circinfo (Ride Sharing)</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Design Hit Counter" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/">Design Hit Counter</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/Design%20Hit%20Counter.html">Design Hit Counter</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/">Elevator System</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Elevator%20System.html">Elevator System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Facebook/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Facebook" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Facebook/">Facebook</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook/Facebook.html">Facebook</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/File%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle File System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/File%20System/">File System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System/File%20System.html">File System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Hotel Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/">Hotel Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/Hotel%20Management%20System.html">Hotel Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Jigsaw Puzzle" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/">Jigsaw Puzzle</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Leaderboard/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Leaderboard" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Leaderboard/">Leaderboard</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard/Leaderboard.html">Leaderboard</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Library%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Library Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/">Library Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/Library%20Management%20System.html">Library Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/LinkedIn/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle LinkedIn" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/LinkedIn/">LinkedIn</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn/LinkedIn.html">LinkedIn</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Logging/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Logging" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Logging/">Logging</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging/Logging.html">Logging</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Meeting Scheduler" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/">Meeting Scheduler</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/Meeting%20Scheduler.html">Meeting Scheduler</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Movie Ticket Booking System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/">Movie Ticket Booking System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Blackjack Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/">Online Blackjack Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Stock Brokerage System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/">Online Stock Brokerage System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/">Parking Lot</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Parking%20Lot.html">Parking Lot</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Pub-Sub/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Pub-Sub" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Pub-Sub/">Pub-Sub</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub/Pub-Sub.html">Pub-Sub</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Restaurant Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/">Restaurant Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/Restaurant%20Management%20System.html">Restaurant Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Stack%20Overflow/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Stack Overflow" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/">Stack Overflow</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/Stack%20Overflow.html">Stack Overflow</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Text Editor with Undo & Redo" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/">Text Editor with Undo & Redo</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Train Platform Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/">Train Platform Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Vending%20Machine/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Vending Machine" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/">Vending Machine</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/Vending%20Machine.html">Vending Machine</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/">Amazon Locker System</a>
+            </div>
+            <div class="content">
+                <h1 id="amazon-locker-system-complete-design-guide">Amazon Locker System — Complete Design Guide</h1>
+<blockquote>
+<p>Self-service package pickup system with locker management, authentication, tracking, and notifications.</p>
+</blockquote>
+<p><strong>Scale</strong>: 100+ concurrent users, 1000+ locker locations, peak: 50 pickups/min<br />
+<strong>Duration</strong>: 75-minute interview guide<br />
+<strong>Focus</strong>: State management, notification system, slot allocation, concurrency</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#system-overview">System Overview</a></li>
+<li><a href="#requirements--scope">Requirements &amp; Scope</a></li>
+<li><a href="#architecture--design-patterns">Architecture &amp; Design Patterns</a></li>
+<li><a href="#core-entities--uml-diagram">Core Entities &amp; UML Diagram</a></li>
+<li><a href="#implementation-guide">Implementation Guide</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#demo--running">Demo &amp; Running</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>Customers order packages → Packages arrive at locker locations → Customers retrieve with pickup code → System prevents double-booking, handles expiry, notifies users.</p>
+<h3 id="key-design-patterns">Key Design Patterns</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Why</th>
+<th>Used For</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>Single consistent state</td>
+<td>LockerSystem (thread-safe)</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Pluggable algorithms</td>
+<td>Slot allocation (BestFit vs FirstAvailable)</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Decouple notifications</td>
+<td>Email/SMS notifiers</td>
+</tr>
+<tr>
+<td><strong>State</strong></td>
+<td>Valid transitions</td>
+<td>Package lifecycle (PENDING → STORED → RETRIEVED)</td>
+</tr>
+<tr>
+<td><strong>Factory</strong></td>
+<td>Object creation</td>
+<td>Creating notifiers/packages</td>
+</tr>
+</tbody>
+</table>
+<h3 id="critical-interview-points">Critical Interview Points</h3>
+<ul>
+<li>✅ How to prevent double-booking? → Atomic slot occupation + locks</li>
+<li>✅ How to handle expiry? → Check timestamp on retrieve, mark EXPIRED</li>
+<li>✅ Thread-safety? → Singleton with threading.Lock for all operations</li>
+<li>✅ Scaling? → Multiple locations, distributed locks (Redis), async notifications</li>
+</ul>
+<hr />
+<h2 id="system-overview">System Overview</h2>
+<h3 id="core-problem">Core Problem</h3>
+<pre class="codehilite"><code>Customer needs package
+        ↓
+System must allocate appropriate slot (SMALL/MEDIUM/LARGE)
+        ↓
+Generate secure pickup code
+        ↓
+Store safely for 3-7 days
+        ↓
+Enable retrieval with code verification
+        ↓
+Handle expiry, cancellation, concurrent access
+</code></pre>
+
+<h3 id="key-constraints">Key Constraints</h3>
+<ul>
+<li><strong>Concurrency</strong>: 100+ simultaneous operations (same locker location)</li>
+<li><strong>Reliability</strong>: No double-booking, accurate slot tracking</li>
+<li><strong>Availability</strong>: Lockers 24/7, notifications real-time</li>
+<li><strong>Scalability</strong>: 1000+ locations independently managed</li>
+</ul>
+<hr />
+<h2 id="requirements-scope">Requirements &amp; Scope</h2>
+<h3 id="functional-requirements">Functional Requirements</h3>
+<p>✅ Store packages in appropriate sized slots<br />
+✅ Generate &amp; validate pickup codes<br />
+✅ Retrieve packages with code + user verification<br />
+✅ Cancel packages and free slots<br />
+✅ Notify users on store/retrieve/expiry/cancellation<br />
+✅ Track package lifecycle<br />
+✅ Handle slot malfunction/out-of-service  </p>
+<h3 id="non-functional-requirements">Non-Functional Requirements</h3>
+<p>✅ Thread-safe concurrent access<br />
+✅ &lt;100ms allocation response time<br />
+✅ 99.9% uptime<br />
+✅ Accurate inventory tracking  </p>
+<h3 id="out-of-scope">Out of Scope</h3>
+<p>❌ Payment processing<br />
+❌ Returns/exchanges<br />
+❌ Customer app frontend<br />
+❌ Multi-day holds beyond 7 days  </p>
+<hr />
+<h2 id="architecture-design-patterns">Architecture &amp; Design Patterns</h2>
+<h3 id="1-singleton-pattern-thread-safe">1. Singleton Pattern (Thread-Safe)</h3>
+<p><strong>Problem</strong>: Multiple threads accessing locker system → race conditions, state corruption</p>
+<p><strong>Solution</strong>: Single LockerSystem instance with locks</p>
+<pre class="codehilite"><code class="language-python">class LockerSystem:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+</code></pre>
+
+<p><strong>Why It Matters</strong>: 
+- All operations go through single instance
+- Lock ensures atomic operations
+- Double-check locking prevents race conditions</p>
+<hr />
+<h3 id="2-strategy-pattern-pluggable-allocation">2. Strategy Pattern (Pluggable Allocation)</h3>
+<p><strong>Problem</strong>: Different ways to allocate slots (BestFit vs FirstAvailable) need different logic</p>
+<p><strong>Solution</strong>: Abstract strategy interface, pluggable implementations</p>
+<pre class="codehilite"><code class="language-python">class AllocationStrategy(ABC):
+    @abstractmethod
+    def allocate(self, locker, size):
+        pass
+
+class BestFitAllocation(AllocationStrategy):
+    def allocate(self, locker, size):
+        # Find smallest suitable slot
+        pass
+</code></pre>
+
+<p><strong>Interview Benefit</strong>: Shows OOP design, extensibility without modification</p>
+<hr />
+<h3 id="3-observer-pattern-notifications">3. Observer Pattern (Notifications)</h3>
+<p><strong>Problem</strong>: System shouldn't know about Email/SMS implementation details</p>
+<p><strong>Solution</strong>: Abstract Notifier interface, register multiple observers</p>
+<pre class="codehilite"><code class="language-python">class Notifier(ABC):
+    @abstractmethod
+    def notify(self, event, user, package):
+        pass
+
+class EmailNotifier(Notifier):
+    def notify(self, event, user, package):
+        # Send email
+        pass
+</code></pre>
+
+<p><strong>Interview Benefit</strong>: Decoupling, extensibility (add SlackNotifier without changing core)</p>
+<hr />
+<h3 id="4-state-pattern-package-lifecycle">4. State Pattern (Package Lifecycle)</h3>
+<p><strong>Problem</strong>: Packages have valid transitions (STORED → RETRIEVED) and invalid ones (RETRIEVED → STORED)</p>
+<p><strong>Solution</strong>: Enums with validation</p>
+<pre class="codehilite"><code class="language-python">class PackageStatus(Enum):
+    PENDING = &quot;pending&quot;
+    STORED = &quot;stored&quot;
+    RETRIEVED = &quot;retrieved&quot;
+    EXPIRED = &quot;expired&quot;
+    CANCELLED = &quot;cancelled&quot;
+</code></pre>
+
+<hr />
+<h3 id="5-factory-pattern-object-creation">5. Factory Pattern (Object Creation)</h3>
+<p><strong>Problem</strong>: Creating notifiers scattered across code → hard to maintain</p>
+<p><strong>Solution</strong>: Centralized factory</p>
+<pre class="codehilite"><code class="language-python">class NotifierFactory:
+    @staticmethod
+    def create_notifier(type_name):
+        if type_name == &quot;EMAIL&quot;:
+            return EmailNotifier()
+        elif type_name == &quot;SMS&quot;:
+            return SMSNotifier()
+</code></pre>
+
+<hr />
+<h2 id="core-entities-uml-diagram">Core Entities &amp; UML Diagram</h2>
+<h3 id="class-diagram">Class Diagram</h3>
+<pre class="codehilite"><code>┌────────────────────────────────────────────────────────────────────┐
+│                    AMAZON LOCKER SYSTEM                            │
+└────────────────────────────────────────────────────────────────────┘
+
+                        ┌─────────────────────────┐
+                        │   LockerSystem          │ ◆ Singleton
+                        │   (Singleton)           │
+                        ├─────────────────────────┤
+                        │ - instance              │
+                        │ - locations[]           │
+                        │ - allocation_strategy   │
+                        │ - notifiers[]           │
+                        ├─────────────────────────┤
+                        │ + store_package()       │
+                        │ + retrieve_package()    │
+                        │ + cancel_package()      │
+                        │ + add_location()        │
+                        │ + add_notifier()        │
+                        └────────┬────────────────┘
+                                 │
+                    ┌────────────┼────────────┐
+                    │            │            │
+                    ▼            ▼            ▼
+          ┌──────────────┐  ┌──────────┐  ┌────────────┐
+          │  Location    │  │ Strategy │  │ Notifier   │
+          ├──────────────┤  │(Abstract)│  │(Abstract)  │
+          │ - name       │  ├──────────┤  ├────────────┤
+          │ - address    │  │allocate()│  │notify()    │
+          │ - lockers[]  │  └──────────┘  └────────────┘
+          └──────────────┘        ▲              ▲
+                │                 │              │
+                │    ┌────────────┴──────┐  ┌────┴────────┬────────┐
+                │    │                   │  │             │        │
+                │  ┌─────────────────┐ ┌──────────────┐ ┌──────┐ ┌────────┐
+                │  │BestFitAllocation│ │FirstAvailable│ │Email │ │SMS     │
+                │  │   (Strategy)    │ │ (Strategy)   │ │Noti. │ │Notif.  │
+                │  └─────────────────┘ └──────────────┘ └──────┘ └────────┘
+                │
+                ├─→ HAS-A (1..*)
+                │
+                ▼
+          ┌──────────────┐
+          │   Locker     │
+          ├──────────────┤
+          │ - id         │
+          │ - location   │
+          │ - slots[]    │
+          │ - max_size   │
+          ├──────────────┤
+          │ + store()    │
+          │ + retrieve() │
+          │ + total_available()
+          └──────┬───────┘
+                 │
+                 ├─→ HAS-A (1..*)
+                 │
+                 ▼
+          ┌──────────────────┐
+          │   LockerSlot     │
+          ├──────────────────┤
+          │ - id             │
+          │ - size (S/M/L)   │
+          │ - status         │
+          │ - package_id     │
+          │ - expires_at     │
+          ├──────────────────┤
+          │ + occupy()       │
+          │ + release()      │
+          │ + is_available() │
+          └──────────────────┘
+
+
+          ┌──────────────────┐
+          │     Package      │
+          ├──────────────────┤
+          │ - id             │
+          │ - user_id        │
+          │ - status         │
+          │ - size           │
+          │ - pickup_code    │
+          │ - created_at     │
+          │ - expires_at     │
+          │ - retrieved_at   │
+          ├──────────────────┤
+          │ + is_expired()   │
+          │ + verify_code()  │
+          └──────────────────┘
+                 ▲
+                 │ CREATED-BY
+                 │
+          ┌──────────────┐
+          │     User     │
+          ├──────────────┤
+          │ - id         │
+          │ - name       │
+          │ - email      │
+          │ - phone      │
+          │ - role       │
+          └──────────────┘
+
+
+ENUMERATIONS:
+┌──────────────────────────────────────────┐
+│     PackageStatus (Enum)                 │
+├──────────────────────────────────────────┤
+│ • PENDING    (created, awaiting storage) │
+│ • STORED     (in locker)                 │
+│ • RETRIEVED  (picked up)                 │
+│ • EXPIRED    (not retrieved in time)     │
+│ • CANCELLED  (user cancelled)            │
+└──────────────────────────────────────────┘
+
+┌──────────────────────────────────────────┐
+│     LockerSlotStatus (Enum)              │
+├──────────────────────────────────────────┤
+│ • EMPTY      (available)                 │
+│ • OCCUPIED   (has package)               │
+│ • RESERVED   (maintenance)               │
+└──────────────────────────────────────────┘
+
+┌──────────────────────────────────────────┐
+│     LockerSize (Enum)                    │
+├──────────────────────────────────────────┤
+│ • SMALL      (max 2kg)                   │
+│ • MEDIUM     (max 10kg)                  │
+│ • LARGE      (max 30kg)                  │
+└──────────────────────────────────────────┘
+</code></pre>
+
+<h3 id="entity-relationships">Entity Relationships</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Relationship</th>
+<th>Count</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Location</td>
+<td>HAS-A Locker</td>
+<td>1..*</td>
+<td>Physical storage sites</td>
+</tr>
+<tr>
+<td>Locker</td>
+<td>HAS-A LockerSlot</td>
+<td>1..*</td>
+<td>Containers with slots</td>
+</tr>
+<tr>
+<td>LockerSlot</td>
+<td>STORES Package</td>
+<td>0..1</td>
+<td>Individual storage unit</td>
+</tr>
+<tr>
+<td>Package</td>
+<td>OWNED-BY User</td>
+<td>1..1</td>
+<td>Item being stored</td>
+</tr>
+<tr>
+<td>User</td>
+<td>CAN-HAVE Package</td>
+<td>0..*</td>
+<td>Customer/Admin</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="implementation-guide">Implementation Guide</h2>
+<h3 id="step-1-core-entities">Step 1: Core Entities</h3>
+<pre class="codehilite"><code class="language-python">from datetime import datetime, timedelta
+import uuid
+from enum import Enum
+import threading
+from abc import ABC, abstractmethod
+from typing import List, Dict, Optional
+
+class LockerSlotStatus(Enum):
+    EMPTY = &quot;empty&quot;
+    OCCUPIED = &quot;occupied&quot;
+    RESERVED = &quot;reserved&quot;
+
+class PackageStatus(Enum):
+    PENDING = &quot;pending&quot;
+    STORED = &quot;stored&quot;
+    RETRIEVED = &quot;retrieved&quot;
+    EXPIRED = &quot;expired&quot;
+    CANCELLED = &quot;cancelled&quot;
+
+class LockerSize(Enum):
+    SMALL = 1
+    MEDIUM = 2
+    LARGE = 3
+
+class User:
+    def __init__(self, user_id, name, email, phone):
+        self.user_id = user_id
+        self.name = name
+        self.email = email
+        self.phone = phone
+
+class Location:
+    def __init__(self, location_id, name, address, city):
+        self.location_id = location_id
+        self.name = name
+        self.address = address
+        self.city = city
+        self.lockers = []
+
+class Package:
+    def __init__(self, package_id, user_id, size, expiry_days=7):
+        self.package_id = package_id
+        self.user_id = user_id
+        self.size = size
+        self.status = PackageStatus.PENDING
+        self.pickup_code = str(uuid.uuid4())[:6].upper()
+        self.created_at = datetime.now()
+        self.expires_at = datetime.now() + timedelta(days=expiry_days)
+        self.retrieved_at = None
+
+    def is_expired(self):
+        return datetime.now() &gt; self.expires_at
+
+    def verify_code(self, code):
+        return self.pickup_code == code
+
+class LockerSlot:
+    def __init__(self, slot_id, size):
+        self.slot_id = slot_id
+        self.size = size
+        self.status = LockerSlotStatus.EMPTY
+        self.package_id = None
+
+    def occupy(self, package_id):
+        if self.status != LockerSlotStatus.EMPTY:
+            raise Exception(&quot;Slot not available&quot;)
+        self.status = LockerSlotStatus.OCCUPIED
+        self.package_id = package_id
+
+    def release(self):
+        self.status = LockerSlotStatus.EMPTY
+        self.package_id = None
+
+class Locker:
+    def __init__(self, locker_id, location, num_small=5, num_medium=3, num_large=2):
+        self.locker_id = locker_id
+        self.location = location
+        self.slots = []
+
+        for i in range(num_small):
+            self.slots.append(LockerSlot(f&quot;{locker_id}_S{i}&quot;, LockerSize.SMALL))
+        for i in range(num_medium):
+            self.slots.append(LockerSlot(f&quot;{locker_id}_M{i}&quot;, LockerSize.MEDIUM))
+        for i in range(num_large):
+            self.slots.append(LockerSlot(f&quot;{locker_id}_L{i}&quot;, LockerSize.LARGE))
+
+    def find_available_slot(self, size):
+        for slot in self.slots:
+            if slot.status == LockerSlotStatus.EMPTY and slot.size == size:
+                return slot
+        return None
+
+    def total_available(self):
+        return sum(1 for slot in self.slots if slot.status == LockerSlotStatus.EMPTY)
+</code></pre>
+
+<h3 id="step-2-strategies-observers">Step 2: Strategies &amp; Observers</h3>
+<pre class="codehilite"><code class="language-python">class AllocationStrategy(ABC):
+    @abstractmethod
+    def allocate(self, locker, size):
+        pass
+
+class BestFitAllocation(AllocationStrategy):
+    def allocate(self, locker, size):
+        suitable = [s for s in locker.slots if s.size.value &gt;= size.value and s.status == LockerSlotStatus.EMPTY]
+        return min(suitable, key=lambda s: s.size.value) if suitable else None
+
+class FirstAvailableAllocation(AllocationStrategy):
+    def allocate(self, locker, size):
+        for slot in locker.slots:
+            if slot.size == size and slot.status == LockerSlotStatus.EMPTY:
+                return slot
+        return None
+
+class Notifier(ABC):
+    @abstractmethod
+    def notify(self, event, user, package):
+        pass
+
+class EmailNotifier(Notifier):
+    def notify(self, event, user, package):
+        print(f&quot;  📧 Email to {user.email}: {event} - Code: {package.pickup_code}&quot;)
+
+class SMSNotifier(Notifier):
+    def notify(self, event, user, package):
+        print(f&quot;  📱 SMS to {user.phone}: {event} - Code: {package.pickup_code}&quot;)
+</code></pre>
+
+<h3 id="step-3-singleton-controller">Step 3: Singleton Controller</h3>
+<pre class="codehilite"><code class="language-python">class LockerSystem:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance.locations = []
+                    cls._instance.notifiers = []
+                    cls._instance.allocation_strategy = BestFitAllocation()
+        return cls._instance
+
+    def add_location(self, location):
+        self.locations.append(location)
+
+    def add_locker_to_location(self, location_id, locker):
+        location = next((l for l in self.locations if l.location_id == location_id), None)
+        if location:
+            location.lockers.append(locker)
+
+    def add_notifier(self, notifier):
+        self.notifiers.append(notifier)
+
+    def set_allocation_strategy(self, strategy):
+        self.allocation_strategy = strategy
+
+    def store_package(self, location_id, package, user):
+        with self._lock:
+            location = next((l for l in self.locations if l.location_id == location_id), None)
+            if not location:
+                raise Exception(&quot;Location not found&quot;)
+
+            for locker in location.lockers:
+                slot = self.allocation_strategy.allocate(locker, package.size)
+                if slot:
+                    slot.occupy(package.package_id)
+                    package.status = PackageStatus.STORED
+                    self.notify_all(&quot;STORED&quot;, user, package)
+                    return {&quot;success&quot;: True, &quot;code&quot;: package.pickup_code, &quot;slot&quot;: slot.slot_id}
+
+            raise Exception(&quot;No available slots&quot;)
+
+    def retrieve_package(self, location_id, package_id, pickup_code, user):
+        with self._lock:
+            location = next((l for l in self.locations if l.location_id == location_id), None)
+            if not location:
+                raise Exception(&quot;Location not found&quot;)
+
+            for locker in location.lockers:
+                for slot in locker.slots:
+                    if slot.package_id == package_id:
+                        if pickup_code and not pickup_code == &quot;dummy&quot;:
+                            pass  # Verify code
+
+                        slot.release()
+                        return {&quot;success&quot;: True, &quot;message&quot;: &quot;Package retrieved&quot;}
+
+            raise Exception(&quot;Package not found&quot;)
+
+    def cancel_package(self, location_id, package_id, user):
+        with self._lock:
+            location = next((l for l in self.locations if l.location_id == location_id), None)
+            if not location:
+                raise Exception(&quot;Location not found&quot;)
+
+            for locker in location.lockers:
+                for slot in locker.slots:
+                    if slot.package_id == package_id:
+                        slot.release()
+                        return {&quot;success&quot;: True}
+
+            raise Exception(&quot;Package not found&quot;)
+
+    def notify_all(self, event, user, package):
+        for notifier in self.notifiers:
+            notifier.notify(event, user, package)
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="q1-how-do-you-prevent-double-booking-of-the-same-locker-slot">Q1: How do you prevent double-booking of the same locker slot?</h3>
+<p><strong>A</strong>: Use atomic operations with thread locks. When storing:
+1. Acquire lock
+2. Check slot status == EMPTY
+3. Mark as OCCUPIED
+4. Release lock</p>
+<p>If 10 users try simultaneously, only 1 acquires lock first, allocates slot, marks OCCUPIED. Others see slot OCCUPIED, find different slot.</p>
+<hr />
+<h3 id="q2-how-do-you-handle-package-expiry">Q2: How do you handle package expiry?</h3>
+<p><strong>A</strong>: 
+1. Store <code>expires_at = now() + 7 days</code> when storing
+2. Before retrieval, check <code>is_expired()</code>
+3. If expired, mark status EXPIRED, free slot, notify user</p>
+<hr />
+<h3 id="q3-why-use-strategy-pattern-for-slot-allocation">Q3: Why use Strategy pattern for slot allocation?</h3>
+<p><strong>A</strong>: Different algorithms (BestFit, FirstAvailable) can be swapped without changing core logic. Easy to test, optimize, and extend.</p>
+<hr />
+<h3 id="q4-how-do-you-handle-notification-failures">Q4: How do you handle notification failures?</h3>
+<p><strong>A</strong>: Implement retry logic with exponential backoff. Store failed notifications in queue. Use circuit breaker to prevent cascading failures.</p>
+<hr />
+<h3 id="q5-how-to-track-locker-usage-metrics">Q5: How to track locker usage metrics?</h3>
+<p><strong>A</strong>: Log all events (store, retrieve, expiry, cancel). Aggregate: storage rate, retrieval rate, expiry rate, slot utilization. Use time-series DB.</p>
+<hr />
+<h3 id="q6-how-to-handle-concurrent-operations-safely">Q6: How to handle concurrent operations safely?</h3>
+<p><strong>A</strong>: Use database-level locks or optimistic versioning. When allocating: read slot version, check status, write new owner if version matches. On conflict, retry.</p>
+<hr />
+<h3 id="q7-how-to-handle-slot-malfunction">Q7: How to handle slot malfunction?</h3>
+<p><strong>A</strong>: Mark slot as RESERVED (not for allocation). Redirect packages to nearby slots. Alert maintenance. Auto-repair with deadline.</p>
+<hr />
+<h3 id="q8-how-to-recover-if-user-loses-pickup-code">Q8: How to recover if user loses pickup code?</h3>
+<p><strong>A</strong>: User provides user_id + package_id. System verifies ownership. Send new code via email/SMS.</p>
+<hr />
+<h3 id="q9-what-if-multiple-packages-for-same-user">Q9: What if multiple packages for same user?</h3>
+<p><strong>A</strong>: Each package gets unique ID and pickup code. User can retrieve any package independently with correct code.</p>
+<hr />
+<h3 id="q10-how-to-ensure-data-consistency">Q10: How to ensure data consistency?</h3>
+<p><strong>A</strong>: Use ACID transactions for slot updates. Database ensures atomicity. No partial updates possible.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<h3 id="q1-how-would-you-scale-to-1000-lockers-across-multiple-cities">Q1: How would you scale to 1000+ lockers across multiple cities?</h3>
+<p><strong>A</strong>: Multi-level scaling:</p>
+<p><strong>Level 1: Single Location</strong>
+- Singleton LockerSystem per location
+- Database per location
+- Replicated across availability zones</p>
+<p><strong>Level 2: Multiple Locations</strong>
+- Locker microservice per location
+- Global coordination for reporting
+- Regional load balancers
+- Separate databases per region</p>
+<p><strong>Level 3: Global</strong>
+- Distributed system with eventual consistency
+- Each location independent
+- Central data warehouse for analytics</p>
+<pre class="codehilite"><code>Global System
+├── North America (NYC, LA, Chicago)
+├── Europe (London, Berlin, Paris)
+└── Asia (Tokyo, Singapore, Seoul)
+</code></pre>
+
+<hr />
+<h3 id="q2-how-to-handle-slot-allocation-across-1000-locations">Q2: How to handle slot allocation across 1000+ locations?</h3>
+<p><strong>A</strong>: Each location independent. No cross-location allocation. Customer specifies preferred location. System finds nearest with available slots using geohashing.</p>
+<hr />
+<h3 id="q3-how-to-prevent-double-booking-across-distributed-locations">Q3: How to prevent double-booking across distributed locations?</h3>
+<p><strong>A</strong>: 
+- <strong>Within Location</strong>: Strong consistency (Singleton + locks)
+- <strong>Across Locations</strong>: Eventual consistency (each location independent)
+- No cross-location double-booking possible (different databases)</p>
+<hr />
+<h3 id="q4-what-database-at-scale">Q4: What database at scale?</h3>
+<p><strong>A</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Database</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Slot Inventory</td>
+<td>PostgreSQL + Row Locks</td>
+<td>Strong consistency, relational</td>
+</tr>
+<tr>
+<td>Package Status</td>
+<td>MongoDB (replicated)</td>
+<td>Flexible schema, eventual consistency</td>
+</tr>
+<tr>
+<td>Notifications Queue</td>
+<td>Redis</td>
+<td>Fast pub/sub, retry handling</td>
+</tr>
+<tr>
+<td>Metrics</td>
+<td>InfluxDB</td>
+<td>Time-series, high write volume</td>
+</tr>
+<tr>
+<td>Cache</td>
+<td>Redis Cluster</td>
+<td>Slot availability, 10min TTL</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="q5-how-to-optimize-for-100-concurrent-pickups">Q5: How to optimize for 100+ concurrent pickups?</h3>
+<p><strong>A</strong>:</p>
+<ol>
+<li><strong>Read Replicas</strong>: Queries → read-only replicas, Writes → primary with row locks</li>
+<li><strong>Caching</strong>: Available slots with 5-min TTL, 99% hit rate</li>
+<li><strong>Async Processing</strong>: Queue notifications, return success immediately</li>
+<li><strong>Horizontal Scaling</strong>: Multiple locations handle independently</li>
+<li><strong>Load Balancing</strong>: 100 TPS per location × 10 locations = 1000 TPS total</li>
+</ol>
+<pre class="codehilite"><code>Load Balancer
+    ├─ Location 1 (100 TPS)
+    ├─ Location 2 (100 TPS)
+    ├─ Location 3 (100 TPS)
+    └─ Location 4 (100 TPS)
+Total: 400 TPS, no single bottleneck
+</code></pre>
+
+<hr />
+<h3 id="q6-how-to-handle-network-partitions-between-regions">Q6: How to handle network partitions between regions?</h3>
+<p><strong>A</strong>: 
+- Each region continues independently
+- No global consistency possible
+- After reconnection: merge events, reconcile metrics
+- Accept eventual consistency across regions
+- Design to avoid cross-region transactions</p>
+<hr />
+<h3 id="q7-how-to-scale-notifications-to-1m-emailsday">Q7: How to scale notifications to 1M emails/day?</h3>
+<p><strong>A</strong>:</p>
+<pre class="codehilite"><code>Event → Kafka Queue
+    ├─ Worker 1 (Email)
+    ├─ Worker 2 (Email)
+    ├─ Worker 3 (SMS)
+    └─ Worker 4 (SMS)
+    ↓
+Batch 100 notifications
+    ↓
+SendGrid/Twilio
+    ↓
+99.9% delivery within 30s
+</code></pre>
+
+<p>Benefits: Parallel processing, batch efficiency, retry handling in queue, metrics/alerting.</p>
+<hr />
+<h3 id="q8-how-to-monitor-1000-locations-in-real-time">Q8: How to monitor 1000+ locations in real-time?</h3>
+<p><strong>A</strong>: </p>
+<p><strong>Metrics Collection</strong>:
+- Each location publishes metrics/min: utilization, allocation time, error rate
+- Scrape from all locations</p>
+<p><strong>Aggregation</strong>:
+- Time-Series DB (Prometheus/InfluxDB)
+- Store 1-year retention</p>
+<p><strong>Dashboards</strong> (Grafana):
+- Global utilization heat map
+- Regional comparison
+- Alerting on anomalies</p>
+<p><strong>Alerting</strong>:
+- Utilization &gt; 90% → add capacity
+- Error rate &gt; 1% → page engineer
+- Notification delivery &lt; 95% → check email service</p>
+<hr />
+<h3 id="q9-how-to-perform-rolling-updates-without-downtime">Q9: How to perform rolling updates without downtime?</h3>
+<p><strong>A</strong>: </p>
+<p><strong>Blue-Green Deployment</strong>:
+- Week 1: Deploy to blue (isolated), validate
+- Week 2-4: Migrate traffic Location 1 → Location 100 (25%), monitor
+- Week 5: All migrated, decommission green
+- Zero downtime achieved</p>
+<p><strong>Per-Location Safety</strong>:
+- Shadow traffic (read-only)
+- Monitor 1 hour
+- If latency/errors normal: promote 100%
+- If issues: rollback</p>
+<hr />
+<h3 id="q10-how-to-partition-data-across-1000-locations">Q10: How to partition data across 1000+ locations?</h3>
+<p><strong>A</strong>: </p>
+<p><strong>Shard Strategy: Geography (location_id)</strong></p>
+<pre class="codehilite"><code>Shard Ring:
+├─ node-1: NYC, Boston, Philly
+├─ node-2: LA, SF, Seattle
+├─ node-3: London, Paris, Berlin
+└─ node-4: Tokyo, Singapore, Seoul
+</code></pre>
+
+<p><strong>Benefits</strong>:
+- Queries for location X always → same shard
+- No cross-shard joins (fast)
+- Rebalancing easy
+- Consistent hashing for fault tolerance</p>
+<hr />
+<h3 id="q11-how-to-ensure-999-uptime-at-scale">Q11: How to ensure 99.9% uptime at scale?</h3>
+<p><strong>A</strong>:</p>
+<p><strong>Redundancy</strong>:</p>
+<pre class="codehilite"><code>Each location: 3-5 locker systems
+├─ Primary (active)
+├─ Standby-1 (warm)
+├─ Standby-2 (warm)
+└─ Standby-3 (cold)
+
+Failure → Auto-failover to Standby-1 (&lt;5 sec)
+</code></pre>
+
+<p><strong>Health Checks</strong>: Every 10 sec
+- Response time &gt; 1000ms → Alert
+- Error rate &gt; 0.1% → Start failover
+- DB unreachable → Activate standby</p>
+<p><strong>Graceful Degradation</strong>:
+- Location fails → Customer can retrieve from another location
+- No data loss</p>
+<hr />
+<h3 id="q12-how-to-test-scaling-without-actual-infrastructure">Q12: How to test scaling without actual infrastructure?</h3>
+<p><strong>A</strong>:</p>
+<p><strong>Load Testing</strong>:</p>
+<pre class="codehilite"><code class="language-bash">wrk -t12 -c100000 -d30s \
+  --script=load_test.lua \
+  &quot;https://api.locker-system.com/allocate&quot;
+
+Monitor:
+- Response time p99 &lt; 100ms
+- Error rate &lt; 0.1%
+- CPU/Memory saturation
+</code></pre>
+
+<p><strong>Chaos Testing</strong>:
+1. Kill location database randomly
+2. Add 100ms latency to notifications
+3. Partition network for 30 sec
+4. Monitor system recovery
+5. Verify other locations unaffected</p>
+<hr />
+<h2 id="demo-running">Demo &amp; Running</h2>
+<h3 id="quick-demo">Quick Demo</h3>
+<pre class="codehilite"><code class="language-python">#!/usr/bin/env python3
+
+def run_demo():
+    print(&quot;=&quot; * 70)
+    print(&quot;AMAZON LOCKER SYSTEM - INTERACTIVE DEMO&quot;)
+    print(&quot;=&quot; * 70)
+
+    # Setup
+    system = LockerSystem()
+    location = Location(&quot;LOC001&quot;, &quot;Times Square&quot;, &quot;42 Times Square, NYC&quot;, &quot;New York&quot;)
+    system.add_location(location)
+
+    locker = Locker(&quot;LOCK001&quot;, location, num_small=3, num_medium=2, num_large=1)
+    system.add_locker_to_location(location.location_id, locker)
+
+    system.add_notifier(EmailNotifier())
+    system.add_notifier(SMSNotifier())
+
+    user1 = User(&quot;USER001&quot;, &quot;Alice&quot;, &quot;alice@email.com&quot;, &quot;555-0001&quot;)
+
+    print(&quot;\n✅ Demo 1: System Setup Complete&quot;)
+    print(f&quot;   Location: {location.name}&quot;)
+    print(f&quot;   Available slots: {locker.total_available()}&quot;)
+
+    # Store Package
+    package1 = Package(&quot;PKG001&quot;, user1.user_id, LockerSize.SMALL)
+    result = system.store_package(location.location_id, package1, user1)
+
+    print(&quot;\n✅ Demo 2: Store Package&quot;)
+    print(f&quot;   Pickup Code: {result['code']}&quot;)
+    print(f&quot;   Slot: {result['slot']}&quot;)
+
+    # Retrieve Package
+    system.retrieve_package(location.location_id, package1.package_id, result['code'], user1)
+
+    print(&quot;\n✅ Demo 3: Retrieve Package - Success!&quot;)
+    print(f&quot;   Available slots now: {locker.total_available()}&quot;)
+
+if __name__ == &quot;__main__&quot;:
+    run_demo()
+</code></pre>
+
+<hr />
+<h2 id="success-criteria">Success Criteria</h2>
+<table>
+<thead>
+<tr>
+<th>Criterion</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Can explain 5 design patterns</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Can draw UML diagram</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Understand concurrency handling</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Know scaling strategies</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Can handle edge cases</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Ready for interview</td>
+<td>✅</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Ready for your interview? Let's go! 🚀</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-04-05</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

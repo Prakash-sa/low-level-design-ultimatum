@@ -1,0 +1,1282 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Facebook - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Insatance%20Variable.html">Class Variable vs Insatance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Airline%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Airline Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/">Airline Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/Airline%20Management%20System.html">Airline Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Locker System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/">Amazon Locker System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/Amazon%20Locker%20System.html">Amazon Locker System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Online Shopping System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/">Amazon Online Shopping System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/ATM/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle ATM" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/ATM/">ATM</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM/ATM.html">ATM</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Cache/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Cache" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Cache/">Cache</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache/Cache.html">Cache</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Car%20Rental%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Car Rental System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/">Car Rental System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/Car%20Rental%20System.html">Car Rental System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Chess%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Chess Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Chess%20Game/">Chess Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game/Chess%20Game.html">Chess Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circinfo (Ride Sharing)" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/">Circinfo (Ride Sharing)</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Design Hit Counter" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/">Design Hit Counter</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/Design%20Hit%20Counter.html">Design Hit Counter</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/">Elevator System</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Elevator%20System.html">Elevator System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Facebook/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Facebook" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Facebook/">Facebook</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook/Facebook.html">Facebook</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/File%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle File System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/File%20System/">File System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System/File%20System.html">File System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Hotel Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/">Hotel Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/Hotel%20Management%20System.html">Hotel Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Jigsaw Puzzle" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/">Jigsaw Puzzle</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Leaderboard/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Leaderboard" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Leaderboard/">Leaderboard</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard/Leaderboard.html">Leaderboard</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Library%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Library Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/">Library Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/Library%20Management%20System.html">Library Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/LinkedIn/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle LinkedIn" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/LinkedIn/">LinkedIn</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn/LinkedIn.html">LinkedIn</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Logging/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Logging" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Logging/">Logging</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging/Logging.html">Logging</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Meeting Scheduler" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/">Meeting Scheduler</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/Meeting%20Scheduler.html">Meeting Scheduler</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Movie Ticket Booking System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/">Movie Ticket Booking System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Blackjack Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/">Online Blackjack Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Stock Brokerage System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/">Online Stock Brokerage System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/">Parking Lot</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Parking%20Lot.html">Parking Lot</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Pub-Sub/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Pub-Sub" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Pub-Sub/">Pub-Sub</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub/Pub-Sub.html">Pub-Sub</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Restaurant Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/">Restaurant Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/Restaurant%20Management%20System.html">Restaurant Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Stack%20Overflow/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Stack Overflow" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/">Stack Overflow</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/Stack%20Overflow.html">Stack Overflow</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Text Editor with Undo & Redo" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/">Text Editor with Undo & Redo</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Train Platform Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/">Train Platform Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Vending%20Machine/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Vending Machine" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/">Vending Machine</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/Vending%20Machine.html">Vending Machine</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/Facebook/">Facebook</a>
+            </div>
+            <div class="content">
+                <h1 id="facebook-75-minute-interview-guide">Facebook — 75-Minute Interview Guide</h1>
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>What is it?</strong> A social network platform managing user profiles, friendships, posts, feeds, likes, comments, and notifications. Core: efficient feed generation (show relevant posts), friendship graph management, real-time notifications, timeline persistence.</p>
+<p><strong>Key Classes:</strong>
+- <code>Facebook</code> (Singleton): Central platform coordinator
+- <code>User</code>: Profile, friends list, posts, feed
+- <code>Post</code>: Content, timestamp, author, likes, comments
+- <code>Like</code>: Associates user to post/comment
+- <code>Comment</code>: Reply to post, timestamp, author
+- <code>Feed</code>: Personalized timeline for user
+- <code>Notification</code>: Alert on like/comment/friend request</p>
+<p><strong>Core Flows:</strong>
+1. <strong>Post Creation</strong>: User writes content → Publish → Add to user's timeline → Notify followers
+2. <strong>Feed Generation</strong>: User requests feed → Fetch posts from friends → Rank by recency/engagement → Return top N
+3. <strong>Like</strong>: User clicks like → Increment counter → Notify post author
+4. <strong>Comment</strong>: User replies → Add to post → Notify author + other commenters
+5. <strong>Friend Request</strong>: User 1 → User 2 → Accept/Decline → Bidirectional friendship</p>
+<p><strong>5 Design Patterns:</strong>
+- <strong>Singleton</strong>: One <code>Facebook</code> platform instance
+- <strong>Observer</strong>: Notify on post/like/comment/friend events
+- <strong>Strategy</strong>: Different feed ranking algorithms (recency, engagement, ML)
+- <strong>Cache</strong>: Cache feeds to reduce computation (invalidate on new post)
+- <strong>Pub-Sub</strong>: Broadcast notifications to subscribers</p>
+<hr />
+<h2 id="system-overview">System Overview</h2>
+<p>A large-scale social networking platform supporting millions of users, connections, posts, interactions, and feed personalization with focus on real-time notifications and scalable feed generation.</p>
+<h3 id="requirements">Requirements</h3>
+<p><strong>Functional:</strong>
+- Create user profiles with bio, profile picture, status
+- Send/accept friend requests
+- Create and publish posts (text, images, videos)
+- Like/unlike posts and comments
+- Add comments to posts
+- Generate personalized feeds (posts from friends)
+- Send and receive notifications
+- View friend list
+- Delete/edit posts
+- Search users and posts</p>
+<p><strong>Non-Functional:</strong>
+- Feed generation &lt; 200ms (95th percentile)
+- Support 2B+ users, 500M+ daily active users
+- Real-time notifications (&lt;5s latency)
+- Consistent read (data accuracy)
+- High availability (99.9% uptime)
+- Geographic distribution (multi-datacenter)</p>
+<p><strong>Constraints:</strong>
+- Friends list max: 10K (per user)
+- Feed size: 50-200 posts per request
+- Notification delivery: at-least-once
+- Comment depth: unlimited but display nested
+- Post visibility: public/friends-only</p>
+<hr />
+<h2 id="architecture-diagram-ascii-uml">Architecture Diagram (ASCII UML)</h2>
+<pre class="codehilite"><code>┌─────────────────────────────────┐
+│ Facebook (Singleton)            │
+│ - User service                  │
+│ - Post service                  │
+│ - Feed service                  │
+│ - Notification service          │
+└──────────┬──────────────────────┘
+           │
+    ┌──────┼────────┬────────┐
+    │      │        │        │
+    ▼      ▼        ▼        ▼
+┌──────┐ ┌────┐ ┌────┐ ┌──────────┐
+│Users │ │Post│ │Like│ │Comment   │
+└──────┘ └────┘ └────┘ └──────────┘
+
+User Entity:
+┌─────────────────────────┐
+│ User                    │
+├─────────────────────────┤
+│ user_id: str            │
+│ name: str               │
+│ friends: Set[User]      │
+│ posts: List[Post]       │
+│ feed: List[Post]        │
+│ followers: Set[User]    │
+└─────────────────────────┘
+
+Post Entity:
+┌─────────────────────────┐
+│ Post                    │
+├─────────────────────────┤
+│ post_id: str            │
+│ author: User            │
+│ content: str            │
+│ timestamp: datetime     │
+│ likes: Set[User]        │
+│ comments: List[Comment] │
+│ visibility: PUBLIC/PRIV │
+└─────────────────────────┘
+
+Comment Entity:
+┌─────────────────────────┐
+│ Comment                 │
+├─────────────────────────┤
+│ comment_id: str         │
+│ author: User            │
+│ text: str               │
+│ timestamp: datetime     │
+│ likes: Set[User]        │
+└─────────────────────────┘
+
+Friendship Graph:
+┌──────┐
+│User A│ ──(friend)── User B
+└──────┘               ┌──────┐
+  │                    │      │
+  ├──(friend)── User C│      │
+  │                   └──────┘
+  └──(friend)── User D
+
+Feed Generation Flow:
+REQUEST FEED
+  └─→ Get friends list
+      └─→ Fetch recent posts from friends
+          └─→ Apply ranking (recency, likes, comments)
+              └─→ Apply filters (blocked users, privacy)
+                  └─→ Cache result (invalidate on new post)
+                      └─→ Return top 50 posts
+
+Notification Flow:
+EVENT (POST/LIKE/COMMENT/FRIEND_REQUEST)
+  └─→ Create notification
+      └─→ Broadcast to relevant users
+          └─→ Store in notification queue
+              └─→ Deliver to client (push/email/in-app)
+
+Like/Comment Counters:
+┌──────────┐
+│ Post #1  │
+├──────────┤
+│ Likes: 1234 (cached counter, update on like/unlike)
+│ Comments: 456
+│ Shares: 89
+│ Views: 10000
+└──────────┘
+</code></pre>
+
+<hr />
+<h2 id="interview-qa-12-questions">Interview Q&amp;A (12 Questions)</h2>
+<h3 id="basic-level">Basic Level</h3>
+<p><strong>Q1: How do you store and retrieve posts?</strong>
+A: Store posts in database with indexed fields: (author_id, timestamp, post_id). For user timeline: query posts WHERE author_id = user_id ORDER BY timestamp DESC. For feed: query posts WHERE author_id IN (friend_ids) ORDER BY timestamp DESC LIMIT 50. Denormalize like_count, comment_count for fast access.</p>
+<p><strong>Q2: What's the difference between a timeline and a feed?</strong>
+A: <strong>Timeline</strong>: All posts by one user (author's own posts). <strong>Feed</strong>: Posts from all friends aggregated. Timeline is user-specific + author-specific. Feed is personalized per viewer based on their friend list.</p>
+<p><strong>Q3: How do you handle like/comment operations efficiently?</strong>
+A: (1) Increment counters atomically (prevent race conditions), (2) Cache counter in Redis, (3) Async background job: persist to DB every N seconds, (4) On read: return cached value. Prevents O(n) counting of likes.</p>
+<p><strong>Q4: How do you delete a post?</strong>
+A: (1) Mark as deleted (soft delete), (2) Remove from feed cache, (3) Notify followers (post removed), (4) Retain metrics for analytics. Hard delete: lose engagement data. Soft delete: faster, reversible, preserves history.</p>
+<h3 id="intermediate-level">Intermediate Level</h3>
+<p><strong>Q5: How do you generate a personalized feed?</strong>
+A: (1) Get user's friend list, (2) Query recent posts from friends (past 7 days), (3) Rank by: recency (newest first), engagement (likes+comments), relevance (user interaction history), (4) Filter privacy (remove blocked/private posts), (5) Paginate (limit 50/request), (6) Cache for 5 minutes.</p>
+<p><strong>Q6: What about scalability with 500M daily active users?</strong>
+A: Fan-out on write vs read trade-offs. (1) <strong>Fan-out on Write</strong>: When user posts, push to all followers' feeds (heavy write, easy read). Problem: celebrity with 10M followers = 10M writes. (2) <strong>Fan-out on Read</strong>: When user requests feed, compute on-the-fly (light write, heavy read). Hybrid: cache hot feeds (celebs), compute cold feeds on-read.</p>
+<p><strong>Q7: How to handle notifications efficiently?</strong>
+A: Use message broker (Kafka/RabbitMQ). On event (like/comment): produce notification event → subscribe → deliver to user. Async delivery decouples producer/consumer. Scale: thousands of notification servers consuming from queue.</p>
+<p><strong>Q8: What about duplicate posts or race conditions?</strong>
+A: Use unique IDs (UUID v4 or Snowflake) for posts. On creation: check if post_id exists (idempotent). Optimistic locking on counters: increment with version, retry if mismatch. Distributed transactions if spanning multiple services.</p>
+<h3 id="advanced-level">Advanced Level</h3>
+<p><strong>Q9: How to optimize feed ranking with machine learning?</strong>
+A: Collect features per post: author (celebrity?), engagement (early likes/comments), recency, user interaction (liked similar posts?). Train ML model: CTR prediction (will user like post?). Rank by predicted CTR. Trade-off: computation time vs relevance.</p>
+<p><strong>Q10: How to handle eventual consistency (distributed DB)?</strong>
+A: Replicas may lag. User posts → replica 1 has it, replica 2 doesn't (yet). Solution: (1) Read from primary (consistency but slower), (2) Read from replica + accept staleness (fast), (3) Quorum reads (N/2 replicas agree). Choose per use-case.</p>
+<p><strong>Q11: How to prevent spam/abuse at scale?</strong>
+A: (1) Rate limiting: max N posts per user per hour, (2) Abuse detector: flag suspicious patterns (same post repeated, hate speech), (3) Reputation system: new users = lower rate limits, trusted users = higher, (4) Report system: users flag abusive content, (5) ML model: detect spam posts automatically.</p>
+<p><strong>Q12: How to ensure data consistency in distributed system?</strong>
+A: (1) Transactions: ACID in single DB, (2) Distributed transactions: 2-phase commit (slow, lock-heavy), (3) Event sourcing: store all events, replay to reconstruct state, (4) CQRS: separate read/write models, eventual consistency between them.</p>
+<hr />
+<h2 id="scaling-qa-12-questions">Scaling Q&amp;A (12 Questions)</h2>
+<p><strong>Q1: Can you handle 500M daily active users?</strong>
+A: Yes, with geographic sharding. Partition users by region (US/EU/ASIA). Each region has separate DB + servers. Global load balancer routes requests. Cross-region friendships: eventual consistency (2-3s lag). Expected QPS per region: 5-10K.</p>
+<p><strong>Q2: How to prevent feed generation from becoming bottleneck?</strong>
+A: Cache heavily: Redis cluster stores user feeds (update on new post). Cache hit rate: 80-90% for active users. For cache misses: async generation (queue), return stale cache while generating. Reduce computation: pre-rank top 50 posts offline, serve online.</p>
+<p><strong>Q3: What if user has 10M followers and posts once?</strong>
+A: Fan-out on write problem. Solution: (1) Celeb detection: don't fan-out, (2) Lazy load: when followers request feed, include celeb post dynamically, (3) Hybrid: fan-out to small follower list (1K), lazy-load for rest. Prevents cascading writes.</p>
+<p><strong>Q4: How to handle timeline inconsistency (post appears then disappears)?</strong>
+A: Use write-through cache: (1) Write to primary DB, (2) Write to cache, (3) Respond to client. Ensures read sees post. If read goes to stale replica: acceptable lag (couple seconds). For critical apps: read from primary after write.</p>
+<p><strong>Q5: Can you support 1M QPS (queries per second)?</strong>
+A: Single DB: ~1000 QPS. Scale: (1) Database replication (read replicas), (2) Caching (Redis, Memcached), (3) Service replication (N application servers), (4) CDN for static content. Expected: 100+ servers, 10+ caches, 3+ read replicas per region.</p>
+<p><strong>Q6: What if comment thread has 100K comments?</strong>
+A: Store nested structure (parent_comment_id). Fetch top-level comments (20), fetch replies on demand. Pagination: load 10 replies at a time. Prevent full load: most users don't read all 100K comments.</p>
+<p><strong>Q7: How to archive old posts (data retention)?</strong>
+A: Posts older than 1 year: move to cold storage (S3/Glacier). Keep hot DB for recent (1 year). Archived posts: viewable but not searchable/feedable. Reduces DB size, improves performance. Delete after 7 years (policy).</p>
+<p><strong>Q8: How to optimize likes counter for 1M likes per post?</strong>
+A: Don't query count (O(n)). Maintain counter: increment on like, decrement on unlike. Cache in Redis (atomic increment). Persist every 1 min batch to DB. Incorrect temporarily (1min lag) but acceptable.</p>
+<p><strong>Q9: What if notification queue grows to 10M messages?</strong>
+A: Scale message broker: add partitions (Kafka), add consumers. Parallel processing: 1000 consumers each processing 10K messages/sec. If still backing up: reduce delivery guarantee (best-effort vs at-least-once), alert ops.</p>
+<p><strong>Q10: How to handle friend graph with billions of edges?</strong>
+A: Store in graph DB (Neo4j) or denormalize in cache. For large queries (all friends of friends = 2-hop): pre-compute offline, store results. Real-time queries: return approximate (sample top 100 friends' friends).</p>
+<p><strong>Q11: Can you detect trending topics in real-time?</strong>
+A: Stream processing: Kafka → Flink/Spark Streaming. Count hashtag mentions per minute. Rank top 50. Update every 60 seconds. Store in Redis (sorted set). Serve from cache. Accuracy lag: 1-2 minutes (acceptable for trends).</p>
+<p><strong>Q12: How to handle data migration (moving DBs)?</strong>
+A: Dual-write: write to old DB + new DB simultaneously. Run in parallel (1-2 weeks). Verify counts match. Switch reads to new DB. Keep writes dual until confident. Rollback: switch back to old if issues.</p>
+<hr />
+<h2 id="demo-scenarios-5-examples">Demo Scenarios (5 Examples)</h2>
+<h3 id="demo-1-create-user-post">Demo 1: Create User &amp; Post</h3>
+<pre class="codehilite"><code>- Create user: John (user_id = 1)
+- Create post: &quot;Hello World!&quot; (post_id = 101)
+- Store in DB
+- Add to John's timeline (author_id = 1)
+</code></pre>
+
+<h3 id="demo-2-friendship-feed">Demo 2: Friendship &amp; Feed</h3>
+<pre class="codehilite"><code>- User John adds User Sarah as friend (bidirectional)
+- Sarah posts: &quot;Having coffee!&quot; (post_id = 102)
+- John requests feed
+- Feed includes Sarah's post (since they're friends)
+- Display: [Sarah's post, ...]
+</code></pre>
+
+<h3 id="demo-3-like-comment">Demo 3: Like &amp; Comment</h3>
+<pre class="codehilite"><code>- John likes Sarah's post (post_id = 102)
+- Increment like_count (1 → 2)
+- Notify Sarah: &quot;John liked your post&quot;
+- Mike comments: &quot;Nice photo!&quot;
+- Add comment to post
+- Notify Sarah: &quot;Mike commented on your post&quot;
+- Like_count: 2, Comment_count: 1
+</code></pre>
+
+<h3 id="demo-4-feed-generation">Demo 4: Feed Generation</h3>
+<pre class="codehilite"><code>- User requests feed (50 posts max)
+- Query posts from friends (past 7 days)
+- Rank by: recency, engagement, relevance
+- Return top 50
+- Cache result for 5 minutes
+- Next request: return cached feed
+</code></pre>
+
+<h3 id="demo-5-delete-post">Demo 5: Delete Post</h3>
+<pre class="codehilite"><code>- John deletes his post (post_id = 101)
+- Mark as deleted (soft delete)
+- Remove from feed caches
+- Notify: post no longer visible
+- Later search doesn't include deleted post
+- Likes/comments preserved (analytics)
+</code></pre>
+
+<hr />
+<h2 id="complete-implementation">Complete Implementation</h2>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+👥 Facebook - Interview Implementation
+Demonstrates:
+1. User profiles and friendships
+2. Posts and timelines
+3. Likes and comments
+4. Feed generation
+5. Notifications
+&quot;&quot;&quot;
+
+from enum import Enum
+from abc import ABC, abstractmethod
+from typing import List, Optional, Dict, Set
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+import threading
+from collections import defaultdict
+import heapq
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class Visibility(Enum):
+    PUBLIC = 1
+    FRIENDS_ONLY = 2
+    PRIVATE = 3
+
+class NotificationType(Enum):
+    LIKE = 1
+    COMMENT = 2
+    FRIEND_REQUEST = 3
+    POST = 4
+
+# ============================================================================
+# DATA CLASSES
+# ============================================================================
+
+@dataclass
+class Comment:
+    comment_id: str
+    author_id: str
+    post_id: str
+    text: str
+    timestamp: datetime = field(default_factory=datetime.now)
+    likes: Set[str] = field(default_factory=set)
+
+    def like(self, user_id: str):
+        self.likes.add(user_id)
+
+    def unlike(self, user_id: str):
+        self.likes.discard(user_id)
+
+@dataclass
+class Post:
+    post_id: str
+    author_id: str
+    content: str
+    visibility: Visibility = Visibility.PUBLIC
+    timestamp: datetime = field(default_factory=datetime.now)
+    likes: Set[str] = field(default_factory=set)
+    comments: List[Comment] = field(default_factory=list)
+
+    def like(self, user_id: str):
+        self.likes.add(user_id)
+
+    def unlike(self, user_id: str):
+        self.likes.discard(user_id)
+
+    def add_comment(self, comment: Comment):
+        self.comments.append(comment)
+
+    def get_like_count(self) -&gt; int:
+        return len(self.likes)
+
+    def get_comment_count(self) -&gt; int:
+        return len(self.comments)
+
+@dataclass
+class Notification:
+    notification_id: str
+    user_id: str
+    type: NotificationType
+    actor_id: str
+    post_id: Optional[str] = None
+    comment_id: Optional[str] = None
+    timestamp: datetime = field(default_factory=datetime.now)
+    read: bool = False
+
+# ============================================================================
+# USER
+# ============================================================================
+
+class User:
+    def __init__(self, user_id: str, name: str):
+        self.user_id = user_id
+        self.name = name
+        self.friends: Set[str] = set()
+        self.posts: List[Post] = []
+        self.notifications: List[Notification] = []
+        self.feed_cache: List[Post] = []
+        self.feed_cache_timestamp: Optional[datetime] = None
+        self.lock = threading.Lock()
+
+    def add_friend(self, friend_id: str):
+        with self.lock:
+            self.friends.add(friend_id)
+
+    def remove_friend(self, friend_id: str):
+        with self.lock:
+            self.friends.discard(friend_id)
+
+    def add_post(self, post: Post):
+        with self.lock:
+            self.posts.append(post)
+
+    def add_notification(self, notification: Notification):
+        with self.lock:
+            self.notifications.append(notification)
+
+    def get_friends(self) -&gt; Set[str]:
+        with self.lock:
+            return self.friends.copy()
+
+    def __repr__(self):
+        return f&quot;User({self.user_id}, {self.name}, Friends: {len(self.friends)})&quot;
+
+# ============================================================================
+# FACEBOOK (SINGLETON)
+# ============================================================================
+
+class Facebook:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+        self._initialized = True
+        self.users: Dict[str, User] = {}
+        self.posts: Dict[str, Post] = {}
+        self.post_counter = 0
+        self.comment_counter = 0
+        self.notification_counter = 0
+        self.lock = threading.Lock()
+
+    def create_user(self, user_id: str, name: str) -&gt; User:
+        with self.lock:
+            user = User(user_id, name)
+            self.users[user_id] = user
+            print(f&quot;✓ Created user: {user}&quot;)
+            return user
+
+    def add_friend(self, user_id: str, friend_id: str) -&gt; bool:
+        &quot;&quot;&quot;Bidirectional friendship&quot;&quot;&quot;
+        with self.lock:
+            if user_id not in self.users or friend_id not in self.users:
+                return False
+
+            user = self.users[user_id]
+            friend = self.users[friend_id]
+
+            user.add_friend(friend_id)
+            friend.add_friend(user_id)
+
+            print(f&quot;✓ {user.name} and {friend.name} are now friends&quot;)
+            return True
+
+    def create_post(self, user_id: str, content: str, visibility: Visibility = Visibility.PUBLIC) -&gt; Optional[Post]:
+        with self.lock:
+            if user_id not in self.users:
+                return None
+
+            self.post_counter += 1
+            post_id = f&quot;POST_{self.post_counter}&quot;
+            post = Post(post_id, user_id, content, visibility)
+            self.posts[post_id] = post
+            self.users[user_id].add_post(post)
+
+            print(f&quot;✓ Post created: {post_id} by {self.users[user_id].name}&quot;)
+            return post
+
+    def like_post(self, user_id: str, post_id: str) -&gt; bool:
+        with self.lock:
+            if post_id not in self.posts or user_id not in self.users:
+                return False
+
+            post = self.posts[post_id]
+            post.like(user_id)
+
+            # Notify post author
+            if user_id != post.author_id:
+                self._notify_user(post.author_id, NotificationType.LIKE, user_id, post_id)
+
+            print(f&quot;✓ {self.users[user_id].name} liked post {post_id} (Likes: {post.get_like_count()})&quot;)
+            return True
+
+    def unlike_post(self, user_id: str, post_id: str) -&gt; bool:
+        with self.lock:
+            if post_id not in self.posts:
+                return False
+
+            post = self.posts[post_id]
+            post.unlike(user_id)
+            print(f&quot;✓ {self.users[user_id].name} unliked post {post_id} (Likes: {post.get_like_count()})&quot;)
+            return True
+
+    def comment_post(self, user_id: str, post_id: str, text: str) -&gt; Optional[Comment]:
+        with self.lock:
+            if post_id not in self.posts or user_id not in self.users:
+                return None
+
+            self.comment_counter += 1
+            comment_id = f&quot;COMMENT_{self.comment_counter}&quot;
+            comment = Comment(comment_id, user_id, post_id, text)
+
+            post = self.posts[post_id]
+            post.add_comment(comment)
+
+            # Notify post author
+            if user_id != post.author_id:
+                self._notify_user(post.author_id, NotificationType.COMMENT, user_id, post_id, comment_id)
+
+            print(f&quot;✓ {self.users[user_id].name} commented on post {post_id} (Comments: {post.get_comment_count()})&quot;)
+            return comment
+
+    def get_feed(self, user_id: str) -&gt; List[Post]:
+        &quot;&quot;&quot;Generate personalized feed&quot;&quot;&quot;
+        with self.lock:
+            if user_id not in self.users:
+                return []
+
+            user = self.users[user_id]
+
+            # Check cache
+            if user.feed_cache and user.feed_cache_timestamp:
+                if (datetime.now() - user.feed_cache_timestamp).seconds &lt; 300:
+                    return user.feed_cache[:50]
+
+            # Compute feed: posts from friends
+            feed = []
+            friends = user.get_friends()
+
+            for friend_id in friends:
+                if friend_id in self.users:
+                    friend = self.users[friend_id]
+                    for post in friend.posts:
+                        if post.visibility == Visibility.PUBLIC or post.visibility == Visibility.FRIENDS_ONLY:
+                            feed.append(post)
+
+            # Sort by timestamp (newest first)
+            feed.sort(key=lambda p: p.timestamp, reverse=True)
+
+            # Rank by engagement (likes + comments)
+            feed.sort(key=lambda p: (p.get_like_count() + p.get_comment_count() * 2), reverse=True)
+
+            # Cache
+            user.feed_cache = feed
+            user.feed_cache_timestamp = datetime.now()
+
+            return feed[:50]
+
+    def delete_post(self, user_id: str, post_id: str) -&gt; bool:
+        with self.lock:
+            if post_id not in self.posts or user_id != self.posts[post_id].author_id:
+                return False
+
+            del self.posts[post_id]
+            print(f&quot;✓ Post {post_id} deleted&quot;)
+            return True
+
+    def _notify_user(self, user_id: str, notification_type: NotificationType, actor_id: str, 
+                    post_id: Optional[str] = None, comment_id: Optional[str] = None):
+        if user_id not in self.users:
+            return
+
+        self.notification_counter += 1
+        notification = Notification(
+            f&quot;NOTIF_{self.notification_counter}&quot;,
+            user_id,
+            notification_type,
+            actor_id,
+            post_id,
+            comment_id
+        )
+        self.users[user_id].add_notification(notification)
+        print(f&quot;  → Notification sent to {self.users[user_id].name}&quot;)
+
+    def get_notifications(self, user_id: str) -&gt; List[Notification]:
+        with self.lock:
+            if user_id not in self.users:
+                return []
+            return self.users[user_id].notifications[:10]
+
+    def display_status(self):
+        print(&quot;\n&quot; + &quot;=&quot;*70)
+        print(&quot;FACEBOOK STATUS&quot;)
+        print(&quot;=&quot;*70)
+        print(f&quot;Total users: {len(self.users)}&quot;)
+        print(f&quot;Total posts: {len(self.posts)}&quot;)
+        total_likes = sum(len(p.likes) for p in self.posts.values())
+        total_comments = sum(len(p.comments) for p in self.posts.values())
+        print(f&quot;Total likes: {total_likes}&quot;)
+        print(f&quot;Total comments: {total_comments}&quot;)
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def demo_1_users_friendship():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 1: CREATE USERS &amp; FRIENDSHIP&quot;)
+    print(&quot;=&quot;*70)
+
+    fb = Facebook()
+
+    john = fb.create_user(&quot;U1&quot;, &quot;John&quot;)
+    sarah = fb.create_user(&quot;U2&quot;, &quot;Sarah&quot;)
+    mike = fb.create_user(&quot;U3&quot;, &quot;Mike&quot;)
+
+    fb.add_friend(&quot;U1&quot;, &quot;U2&quot;)
+    fb.add_friend(&quot;U1&quot;, &quot;U3&quot;)
+    fb.add_friend(&quot;U2&quot;, &quot;U3&quot;)
+
+    fb.display_status()
+
+def demo_2_posts_timeline():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 2: CREATE POSTS &amp; TIMELINE&quot;)
+    print(&quot;=&quot;*70)
+
+    fb = Facebook()
+    fb.create_user(&quot;U1&quot;, &quot;John&quot;)
+    fb.create_user(&quot;U2&quot;, &quot;Sarah&quot;)
+
+    fb.add_friend(&quot;U1&quot;, &quot;U2&quot;)
+
+    fb.create_post(&quot;U2&quot;, &quot;Hello world!&quot;)
+    fb.create_post(&quot;U2&quot;, &quot;Having a great day!&quot;)
+    fb.create_post(&quot;U1&quot;, &quot;Just coding...&quot;)
+
+def demo_3_likes_comments():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 3: LIKES &amp; COMMENTS&quot;)
+    print(&quot;=&quot;*70)
+
+    fb = Facebook()
+    fb.create_user(&quot;U1&quot;, &quot;John&quot;)
+    fb.create_user(&quot;U2&quot;, &quot;Sarah&quot;)
+    fb.create_user(&quot;U3&quot;, &quot;Mike&quot;)
+
+    fb.add_friend(&quot;U1&quot;, &quot;U2&quot;)
+    fb.add_friend(&quot;U3&quot;, &quot;U2&quot;)
+
+    post = fb.create_post(&quot;U2&quot;, &quot;Beautiful sunset!&quot;)
+
+    print(&quot;\nLiking post:&quot;)
+    fb.like_post(&quot;U1&quot;, post.post_id)
+    fb.like_post(&quot;U3&quot;, post.post_id)
+
+    print(&quot;\nCommenting on post:&quot;)
+    fb.comment_post(&quot;U1&quot;, post.post_id, &quot;Amazing!&quot;)
+    fb.comment_post(&quot;U3&quot;, post.post_id, &quot;Love this!&quot;)
+
+def demo_4_feed_generation():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 4: FEED GENERATION&quot;)
+    print(&quot;=&quot;*70)
+
+    fb = Facebook()
+
+    fb.create_user(&quot;U1&quot;, &quot;John&quot;)
+    fb.create_user(&quot;U2&quot;, &quot;Sarah&quot;)
+    fb.create_user(&quot;U3&quot;, &quot;Mike&quot;)
+
+    fb.add_friend(&quot;U1&quot;, &quot;U2&quot;)
+    fb.add_friend(&quot;U1&quot;, &quot;U3&quot;)
+
+    # Create posts
+    post1 = fb.create_post(&quot;U2&quot;, &quot;Coffee time!&quot;)
+    post2 = fb.create_post(&quot;U3&quot;, &quot;Gym session!&quot;)
+    post3 = fb.create_post(&quot;U2&quot;, &quot;Movie night!&quot;)
+
+    # Add likes and comments
+    fb.like_post(&quot;U1&quot;, post1.post_id)
+    fb.like_post(&quot;U1&quot;, post3.post_id)
+    fb.comment_post(&quot;U1&quot;, post2.post_id, &quot;Nice!&quot;)
+
+    # Generate feed for John
+    print(&quot;\n✓ Generating feed for John...&quot;)
+    feed = fb.get_feed(&quot;U1&quot;)
+    print(f&quot;✓ Feed contains {len(feed)} posts&quot;)
+    for post in feed:
+        author = fb.users[post.author_id].name
+        print(f&quot;  - {author}: '{post.content}' (Likes: {post.get_like_count()}, Comments: {post.get_comment_count()})&quot;)
+
+def demo_5_notifications():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 5: NOTIFICATIONS&quot;)
+    print(&quot;=&quot;*70)
+
+    fb = Facebook()
+
+    fb.create_user(&quot;U1&quot;, &quot;John&quot;)
+    fb.create_user(&quot;U2&quot;, &quot;Sarah&quot;)
+
+    fb.add_friend(&quot;U1&quot;, &quot;U2&quot;)
+
+    post = fb.create_post(&quot;U2&quot;, &quot;New photo!&quot;)
+
+    print(&quot;\nLiking post (notification sent to Sarah):&quot;)
+    fb.like_post(&quot;U1&quot;, post.post_id)
+
+    print(&quot;\nCommenting (notification sent to Sarah):&quot;)
+    fb.comment_post(&quot;U1&quot;, post.post_id, &quot;Beautiful!&quot;)
+
+    print(&quot;\nSarah's notifications:&quot;)
+    notifications = fb.get_notifications(&quot;U2&quot;)
+    for notif in notifications:
+        actor_name = fb.users[notif.actor_id].name
+        print(f&quot;  - {actor_name} {notif.type.name}d your post&quot;)
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;👥 FACEBOOK - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_users_friendship()
+    demo_2_posts_timeline()
+    demo_3_likes_comments()
+    demo_4_feed_generation()
+    demo_5_notifications()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;✅ ALL DEMOS COMPLETED&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<hr />
+<h2 id="design-patterns-explained">Design Patterns Explained</h2>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Usage</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td><code>Facebook</code> manages all users/posts</td>
+<td>Centralized platform state</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Notify on like/comment/friend events</td>
+<td>Decoupled notifications</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Different feed ranking (recency, engagement, ML)</td>
+<td>Swap ranking algorithms</td>
+</tr>
+<tr>
+<td><strong>Cache</strong></td>
+<td>Cache personalized feeds (invalidate on new post)</td>
+<td>Reduce computation + latency</td>
+</tr>
+<tr>
+<td><strong>Pub-Sub</strong></td>
+<td>Broadcast notifications to subscribers</td>
+<td>Real-time async delivery</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="key-system-rules-implemented">Key System Rules Implemented</h2>
+<ul>
+<li><strong>Bidirectional Friendships</strong>: Adding friend is mutual</li>
+<li><strong>Feed Ranking</strong>: By engagement (likes + 2×comments) + recency</li>
+<li><strong>Privacy Levels</strong>: PUBLIC / FRIENDS_ONLY / PRIVATE</li>
+<li><strong>Soft Delete</strong>: Posts retain data for analytics</li>
+<li><strong>Feed Cache</strong>: 5-minute TTL, invalidate on new post</li>
+<li><strong>Notifications</strong>: Delivered async on like/comment/friend events</li>
+</ul>
+<hr />
+<h2 id="summary">Summary</h2>
+<p>✅ <strong>Singleton</strong> for platform-wide coordination
+✅ <strong>User profiles</strong> with bidirectional friendships
+✅ <strong>Posts and timelines</strong> with visibility control
+✅ <strong>Likes and comments</strong> with atomic counters
+✅ <strong>Personalized feed generation</strong> (rank by engagement + recency)
+✅ <strong>Feed caching</strong> for performance (5-min TTL)
+✅ <strong>Real-time notifications</strong> on interactions
+✅ <strong>Soft delete</strong> preserving history
+✅ <strong>Thread-safe operations</strong> with locks
+✅ <strong>Scalable to 500M DAU</strong> with geographic sharding + caching</p>
+<p><strong>Key Takeaway</strong>: Facebook system demonstrates feed personalization, graph-based social connections, engagement ranking, and efficient notification delivery at scale. Core focus: optimal feed generation, caching strategy, and real-time notifications.</p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-04-05</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

@@ -1,0 +1,1339 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Circinfo (Ride Sharing) - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Insatance%20Variable.html">Class Variable vs Insatance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Airline%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Airline Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/">Airline Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/Airline%20Management%20System.html">Airline Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Locker System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/">Amazon Locker System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/Amazon%20Locker%20System.html">Amazon Locker System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Online Shopping System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/">Amazon Online Shopping System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/ATM/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle ATM" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/ATM/">ATM</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM/ATM.html">ATM</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Cache/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Cache" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Cache/">Cache</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache/Cache.html">Cache</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Car%20Rental%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Car Rental System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/">Car Rental System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/Car%20Rental%20System.html">Car Rental System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Chess%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Chess Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Chess%20Game/">Chess Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game/Chess%20Game.html">Chess Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circinfo (Ride Sharing)" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/">Circinfo (Ride Sharing)</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Design Hit Counter" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/">Design Hit Counter</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/Design%20Hit%20Counter.html">Design Hit Counter</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/">Elevator System</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Elevator%20System.html">Elevator System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Facebook/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Facebook" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Facebook/">Facebook</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook/Facebook.html">Facebook</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/File%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle File System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/File%20System/">File System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System/File%20System.html">File System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Hotel Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/">Hotel Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/Hotel%20Management%20System.html">Hotel Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Jigsaw Puzzle" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/">Jigsaw Puzzle</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Leaderboard/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Leaderboard" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Leaderboard/">Leaderboard</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard/Leaderboard.html">Leaderboard</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Library%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Library Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/">Library Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/Library%20Management%20System.html">Library Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/LinkedIn/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle LinkedIn" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/LinkedIn/">LinkedIn</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn/LinkedIn.html">LinkedIn</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Logging/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Logging" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Logging/">Logging</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging/Logging.html">Logging</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Meeting Scheduler" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/">Meeting Scheduler</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/Meeting%20Scheduler.html">Meeting Scheduler</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Movie Ticket Booking System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/">Movie Ticket Booking System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Blackjack Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/">Online Blackjack Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Stock Brokerage System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/">Online Stock Brokerage System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/">Parking Lot</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Parking%20Lot.html">Parking Lot</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Pub-Sub/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Pub-Sub" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Pub-Sub/">Pub-Sub</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub/Pub-Sub.html">Pub-Sub</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Restaurant Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/">Restaurant Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/Restaurant%20Management%20System.html">Restaurant Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Stack%20Overflow/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Stack Overflow" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/">Stack Overflow</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/Stack%20Overflow.html">Stack Overflow</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Text Editor with Undo & Redo" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/">Text Editor with Undo & Redo</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Train Platform Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/">Train Platform Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Vending%20Machine/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Vending Machine" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/">Vending Machine</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/Vending%20Machine.html">Vending Machine</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/">Circinfo (Ride Sharing)</a>
+            </div>
+            <div class="content">
+                <h1 id="circinfo-ride-sharing-75-minute-interview-guide">Circinfo (Ride Sharing) — 75-Minute Interview Guide</h1>
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>What is it?</strong> A real-time ride-sharing system matching drivers and passengers, managing locations, ride bookings, pricing, and ratings. Core: find nearest driver, calculate fare, track ride in progress, handle surge pricing, manage driver/passenger ratings.</p>
+<p><strong>Key Classes:</strong>
+- <code>RideService</code> (Singleton): Main dispatcher matching riders to drivers
+- <code>Driver</code>: Location, availability status, rating, vehicle info
+- <code>Passenger</code>: Location, destination, payment info
+- <code>Ride</code>: Encapsulates driver, passenger, pickup, destination, fare, status
+- <code>Location</code>: Lat/Long with distance calculation
+- <code>RatingSystem</code>: Track driver/passenger ratings (1-5 stars)</p>
+<p><strong>Core Flows:</strong>
+1. <strong>Request Ride</strong>: Passenger enters pickup/destination → System finds nearest available drivers → Calculate fare (base + distance + surge) → Present options
+2. <strong>Accept Ride</strong>: Passenger selects driver → Ride created → Driver notified → Navigation starts → Driver drives to pickup
+3. <strong>Pickup</strong>: Driver arrives → Opens door → Passenger enters → Starts ride meter
+4. <strong>Ride Progress</strong>: Real-time location updates → Distance/time tracking → Passenger can track driver
+5. <strong>Dropoff</strong>: Driver reaches destination → Stop meter → Calculate final fare → Payment processed → Rating exchange</p>
+<p><strong>5 Design Patterns:</strong>
+- <strong>Singleton</strong>: One <code>RideService</code> manages all rides
+- <strong>Observer</strong>: Notify driver/passenger of ride status changes
+- <strong>Strategy</strong>: Different pricing strategies (surge, time-based, distance-based)
+- <strong>State Machine</strong>: Ride states (requested, accepted, arrived, in_progress, completed, cancelled)
+- <strong>Factory</strong>: Create different ride types (economy, premium, shared)</p>
+<hr />
+<h2 id="system-overview">System Overview</h2>
+<p>A location-based ride-sharing platform connecting drivers and passengers in real-time, managing ride bookings, dynamic pricing (surge), ratings, payments, and driver optimization.</p>
+<h3 id="requirements">Requirements</h3>
+<p><strong>Functional:</strong>
+- Search available drivers within X km radius
+- Create ride requests with pickup/destination
+- Match drivers to passengers optimally (nearest, high rating)
+- Manage ride lifecycle (requested → accepted → in_progress → completed)
+- Calculate dynamic fare (base + distance + surge + tips)
+- Track real-time location of driver/passenger
+- Rate drivers and passengers (1-5 stars)
+- Process payments and refunds
+- Cancel rides with penalty conditions
+- Support different ride types (economy, premium, XL)</p>
+<p><strong>Non-Functional:</strong>
+- Find driver within &lt;30 seconds (95th percentile)
+- Real-time location updates (1 update per second)
+- Support 1M+ active drivers, 10M+ passengers globally
+- Surge pricing updates dynamically (demand/supply)
+- 99.9% payment success rate
+- Geographic distribution across multiple cities</p>
+<p><strong>Constraints:</strong>
+- Drivers must be within 10 km search radius
+- Max surge multiplier: 3x (prevent price gouging)
+- Cancellation penalty: 25% after driver accepts
+- Minimum rating to accept rides: 3.5 stars
+- Payment must complete within 30 seconds</p>
+<hr />
+<h2 id="architecture-diagram-ascii-uml">Architecture Diagram (ASCII UML)</h2>
+<pre class="codehilite"><code>┌────────────────────────────────┐
+│ RideService (Singleton)        │
+│ - Dispatcher                   │
+│ - Matching algorithm           │
+│ - Pricing engine               │
+│ - Location services            │
+└────────────┬────────────────────┘
+             │
+      ┌──────┼──────┬─────────┐
+      │      │      │         │
+      ▼      ▼      ▼         ▼
+  ┌─────┐ ┌─────┐ ┌──────┐ ┌──────┐
+  │Drv 1│ │Drv 2│ │Pass 1│ │Pass 2│
+  │Loc: │ │Loc: │ │Loc:  │ │Loc:  │
+  │(1,2)│ │(3,4)│ │(5,6) │ │(7,8) │
+  └─────┘ └─────┘ └──────┘ └──────┘
+
+Matching Algorithm:
+REQUEST
+  └─→ Find available drivers within 10km radius
+      └─→ Filter by: rating ≥ 3.5, online status
+          └─→ Sort by: distance, rating, acceptance rate
+              └─→ Offer ride to top 3 drivers
+                  └─→ First to accept gets ride
+                      └─→ Notify passenger + driver
+
+Ride State Machine:
+REQUESTED ──→ ACCEPTED ──→ DRIVER_ARRIVED ──→ IN_PROGRESS ──→ COMPLETED
+                                                   ↓
+                                             (real-time location tracking)
+
+Location-Based Service:
+┌──────────────────────┐
+│ Location (Lat, Long) │
+├──────────────────────┤
+│ distance_to(loc2)    │ ──→ Haversine formula
+│                      │     (accurate to ~1m)
+└──────────────────────┘
+
+Pricing Strategy:
+┌──────────────────────────────────┐
+│ PricingStrategy (ABC)            │
+├──────────────────────────────────┤
+│ EconomyPricing                   │
+│ - Base: $2                       │
+│ - Per-km: $0.80                  │
+│ - Per-min: $0.15                 │
+│ - Surge: 1.0-3.0x                │
+│                                  │
+│ PremiumPricing                   │
+│ - Base: $5                       │
+│ - Per-km: $1.50                  │
+│ - Per-min: $0.30                 │
+└──────────────────────────────────┘
+
+Driver Management:
+┌──────────────────────┐
+│ Driver               │
+├──────────────────────┤
+│ location: Location   │
+│ status: ONLINE/BUSY  │
+│ rating: 4.7 (avg)   │
+│ rides_completed: 1K │
+│ vehicle: Vehicle    │
+│ acceptance_rate: 95%│
+└──────────────────────┘
+
+Payment Flow:
+REQUEST ──→ CONFIRM PRICE ──→ RIDE ──→ CALCULATE FARE ──→ CHARGE ──→ RECEIPT
+</code></pre>
+
+<hr />
+<h2 id="interview-qa-12-questions">Interview Q&amp;A (12 Questions)</h2>
+<h3 id="basic-level">Basic Level</h3>
+<p><strong>Q1: How do you find the nearest available driver?</strong>
+A: Use location service (lat/long). Calculate distance from passenger to each active driver using Haversine formula. Sort by distance. Filter: rating ≥ 3.5, status = online. Return top 3-5 drivers. Complexity: O(n) where n = active drivers. Optimize: spatial indexing (QuadTree or GeoHash).</p>
+<p><strong>Q2: What data do you store for a Driver?</strong>
+A: ID, name, rating (average 1-5 stars), vehicle (model/plate), location (lat/long), status (online/busy/offline), total rides, acceptance rate, bank account. Update location every 1-2 seconds while online.</p>
+<p><strong>Q3: How do you calculate ride fare?</strong>
+A: Fare = base_price + (distance_km × per_km_rate) + (duration_min × per_min_rate) + surge_multiplier + tips. Example: $2 + (5 km × $0.80) + (10 min × $0.15) + (1.2x surge) = $9.00 base, $10.80 with surge.</p>
+<p><strong>Q4: What's surge pricing and when to apply it?</strong>
+A: Surge = demand/supply multiplier. High demand (rainy, late night) + low supply (few drivers) = high surge (up to 3x). Update dynamically based on active ride requests vs available drivers. Communicate surge to passenger before confirming.</p>
+<h3 id="intermediate-level">Intermediate Level</h3>
+<p><strong>Q5: How do you handle the driver acceptance timeout?</strong>
+A: Offer ride to driver, start 30-second timer. If driver accepts within 30s, assign ride. If timeout or decline, move to next driver in queue. Max queue size = 3 drivers to prevent excessive rejections.</p>
+<p><strong>Q6: What happens if passenger cancels after driver accepts?</strong>
+A: If cancelled &lt;2 minutes after acceptance: charge 25% cancellation fee. If &gt;2 minutes: full charge (driver's time wasted). If cancelled during ride: charge full ride fare + penalty. Drivers can also cancel (with rating impact if frequent).</p>
+<p><strong>Q7: How to prevent driver-passenger fraud?</strong>
+A: (1) GPS tracking throughout ride (validate route reasonableness), (2) Dispute resolution: review route/receipt, (3) Escalation: manual review for high-value disputes, (4) Blacklisting: repeated fraudsters blocked, (5) Driver ratings as reputation.</p>
+<p><strong>Q8: How to optimize driver positioning?</strong>
+A: Predict high-demand areas (ML models on historical data). Recommend drivers move to predicted hotspots. Offer incentives during off-peak. Use "sticky driver" logic: driver stays near passenger's original neighborhood after drop-off (increases next ride probability).</p>
+<h3 id="advanced-level">Advanced Level</h3>
+<p><strong>Q9: How would you handle geographic scalability (multi-city)?</strong>
+A: Partition by geography: each city gets separate Ride Service instance. Global service coordinates routing between cities (long-distance rides). Use eventual consistency for cross-city metrics (ratings, payment).</p>
+<p><strong>Q10: How to minimize wait time at scale (1M drivers)?</strong>
+A: Spatial indexing (QuadTree or H3 hex grid). Query only nearby drivers (10km cell), not all 1M. Batch matching: every 5 seconds, match all pending requests to available drivers simultaneously. Expected match time: &lt;2 seconds.</p>
+<p><strong>Q11: How to prevent double-booking (driver accepts 2 rides)?</strong>
+A: Optimistic locking: set driver.status = BUSY on acceptance. If driver tries to accept another: check status first, reject if busy. Alternative: distributed lock (Redis SETNX) for critical sections. Ensure atomicity.</p>
+<p><strong>Q12: How to handle payment failures gracefully?</strong>
+A: (1) Retry payment 3x with exponential backoff, (2) If still fails: store as pending payment, (3) Notify driver + passenger of failure, (4) Retry daily for 7 days, (5) After 7 days: escalate to support. Track payment reliability as metric.</p>
+<hr />
+<h2 id="scaling-qa-12-questions">Scaling Q&amp;A (12 Questions)</h2>
+<p><strong>Q1: Can you handle 1M concurrent ride requests?</strong>
+A: Queue requests in message broker (Kafka/RabbitMQ). Batch process: every 500ms, match top 100K requests to available drivers. Remaining requests re-queue. Expected match latency: 0.5-2 seconds vs &lt;30s target. Scales linearly with driver count.</p>
+<p><strong>Q2: How to optimize for 50M passengers globally?</strong>
+A: Geographic sharding: partition by city/region. Each shard has independent ride service instance. Global load balancer routes requests. Cross-region rides handled by distributed transactions (eventual consistency acceptable).</p>
+<p><strong>Q3: What if surge pricing leads to 10x price increase?</strong>
+A: Cap surge at 3x maximum (policy). If demand still exceeds supply at 3x: queue passengers, no surge increase. Communicate ETA + current surge to passenger for informed decision. Log surge events for analysis.</p>
+<p><strong>Q4: How to track 1M moving vehicles in real-time?</strong>
+A: Stream processing: receive location updates in Kafka. Process in Flink/Spark Streaming. Index in Redis (geospatial index). Update every 1-2 seconds. Store history in time-series DB (InfluxDB) for analytics.</p>
+<p><strong>Q5: Can payment processing handle 100K transactions/minute?</strong>
+A: Use async payment processing: (1) Confirm payment locally immediately, (2) Send to payment processor asynchronously, (3) Store pending if fails, (4) Retry batch every minute. Ensures ride completes regardless of payment latency.</p>
+<p><strong>Q6: How to prevent driver exploitation (low pay)?</strong>
+A: Set minimum per-mile rate ($0.80 minimum). Calculate guaranteed minimum per ride. Show estimated pay before driver accepts. Seasonal bonuses for reliability. Transparent rate card. Regular rate audits vs cost-of-living.</p>
+<p><strong>Q7: What if network partition separates drivers from servers?</strong>
+A: Graceful degradation: drivers operate locally with cached rules. Accept rides in offline mode (record locally). Sync when reconnected. Ensure consistency: if ride already completed remotely, server wins. Driver sees sync resolution.</p>
+<p><strong>Q8: How to efficiently match 10K requests to 100K drivers?</strong>
+A: Hungarian algorithm for optimal assignment (min-cost matching). Complexity: O(n³) prohibitive. Approximation: greedy nearest-first matching O(n log n). Match 80% optimality in &lt;1 second vs 100% in 10 seconds.</p>
+<p><strong>Q9: Can you support scheduled rides (advance booking)?</strong>
+A: Yes. Store scheduled rides in DB with future timestamp. 15 minutes before: attempt matching. If no driver: queue + retry every minute. If still no driver at 5 minutes: notify passenger + refund. Reduces wait-time pressure vs on-demand.</p>
+<p><strong>Q10: How to handle peak surge (New Year's Eve)?</strong>
+A: (1) Incentivize drivers: surge bonuses + guaranteed hours, (2) Pre-position: recommend drivers to downtown, (3) Pricing cap: communicate surge early to manage demand, (4) Queueing: accept queued requests gracefully, (5) Surge forecast: predict peaks in advance.</p>
+<p><strong>Q11: How to track driver behavior (speeding, reckless)?</strong>
+A: Collect telemetry: GPS, accelerometer, gyroscope. Analyze ride: calculate acceleration, compare to speed limits. Flag anomalies. Warn driver, then restrict if repeated. Integrate with insurance (lower premiums for safe drivers).</p>
+<p><strong>Q12: Can you support pooled/shared rides?</strong>
+A: Yes. Shared rides = match multiple passengers on same route. Benefits: lower cost for passengers (50%), higher driver revenue. Challenges: route optimization for N passengers, flexibility (detour tolerance). Charge 50-60% of full ride price.</p>
+<hr />
+<h2 id="demo-scenarios-5-examples">Demo Scenarios (5 Examples)</h2>
+<h3 id="demo-1-driver-search-matching">Demo 1: Driver Search &amp; Matching</h3>
+<pre class="codehilite"><code>- Passenger at (lat:40.7128, long:-74.0060) requests ride
+- Search radius: 10 km
+- Find 50 available drivers
+- Sort by: distance (nearest), rating (highest)
+- Offer to top 3 drivers (nearest first)
+- First to accept gets ride
+</code></pre>
+
+<h3 id="demo-2-fare-calculation">Demo 2: Fare Calculation</h3>
+<pre class="codehilite"><code>- Pickup: Downtown
+- Destination: Airport (20 km away, 25 min drive)
+- Base: $2
+- Distance: 20 × $0.80 = $16
+- Time: 25 × $0.15 = $3.75
+- Surge (2x): 21.75 × 2 = $43.50
+- Subtotal: $43.50
+- Tips: $5
+- Total: $48.50
+</code></pre>
+
+<h3 id="demo-3-real-time-ride-tracking">Demo 3: Real-Time Ride Tracking</h3>
+<pre class="codehilite"><code>- Driver accepts ride
+- Passenger sees driver location + ETA (5 min)
+- Driver en route to pickup
+- Real-time location updates every 5 seconds
+- Passenger sees driver approaching
+- Driver arrives + opens door
+- Passenger boards
+- Ride in progress (tracking continues)
+</code></pre>
+
+<h3 id="demo-4-cancellation-scenarios">Demo 4: Cancellation Scenarios</h3>
+<pre class="codehilite"><code>- Scenario 1: Passenger cancels &lt;30s after request
+  → No charge (driver not notified yet)
+- Scenario 2: Passenger cancels &lt;2min after acceptance
+  → 25% cancellation fee ($5-10)
+- Scenario 3: Passenger cancels during ride
+  → Full fare charge + penalty
+- Scenario 4: Driver cancels due to emergency
+  → Notify passenger + find next driver, rating impact
+</code></pre>
+
+<h3 id="demo-5-rating-payment">Demo 5: Rating &amp; Payment</h3>
+<pre class="codehilite"><code>- Ride completed at destination
+- Final fare calculated: $48.50
+- Payment processed (charged to card)
+- Receipt emailed
+- Passenger rates driver: 4.5 stars, comment: &quot;Great ride!&quot;
+- Driver rates passenger: 5 stars
+- Rating updates both profiles
+- Earnings credited to driver account (after fee)
+</code></pre>
+
+<hr />
+<h2 id="complete-implementation">Complete Implementation</h2>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+🚗 Ride Sharing System (Circinfo) - Interview Implementation
+Demonstrates:
+1. Location-based driver search
+2. Matching algorithm (nearest, rating-based)
+3. Dynamic pricing (surge, distance, time)
+4. Ride state machine
+5. Real-time location tracking
+&quot;&quot;&quot;
+
+from enum import Enum
+from abc import ABC, abstractmethod
+from typing import List, Optional, Dict, Tuple
+from dataclasses import dataclass, field
+import math
+import threading
+import time
+from collections import defaultdict
+import heapq
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class RideStatus(Enum):
+    REQUESTED = 1
+    ACCEPTED = 2
+    DRIVER_ARRIVED = 3
+    IN_PROGRESS = 4
+    COMPLETED = 5
+    CANCELLED = 6
+
+class DriverStatus(Enum):
+    OFFLINE = 0
+    ONLINE = 1
+    BUSY = 2
+
+# ============================================================================
+# DATA CLASSES
+# ============================================================================
+
+@dataclass
+class Location:
+    latitude: float
+    longitude: float
+
+    def distance_to(self, other: 'Location') -&gt; float:
+        &quot;&quot;&quot;Haversine formula for distance in km&quot;&quot;&quot;
+        R = 6371  # Earth radius in km
+        lat1, lon1 = math.radians(self.latitude), math.radians(self.longitude)
+        lat2, lon2 = math.radians(other.latitude), math.radians(other.longitude)
+
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+
+        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+        c = 2 * math.asin(math.sqrt(a))
+
+        return R * c
+
+    def __repr__(self):
+        return f&quot;({self.latitude:.4f}, {self.longitude:.4f})&quot;
+
+@dataclass
+class Vehicle:
+    make: str
+    model: str
+    license_plate: str
+    color: str
+
+@dataclass
+class Ride:
+    ride_id: str
+    driver: 'Driver'
+    passenger: 'Passenger'
+    pickup_location: Location
+    destination_location: Location
+    status: RideStatus = RideStatus.REQUESTED
+    fare: float = 0.0
+    start_time: float = field(default_factory=time.time)
+    end_time: Optional[float] = None
+
+    def __hash__(self):
+        return hash(self.ride_id)
+
+# ============================================================================
+# DRIVER &amp; PASSENGER
+# ============================================================================
+
+class Driver:
+    def __init__(self, driver_id: str, name: str, vehicle: Vehicle):
+        self.driver_id = driver_id
+        self.name = name
+        self.vehicle = vehicle
+        self.location = Location(40.7128, -74.0060)
+        self.status = DriverStatus.ONLINE
+        self.rating = 4.5
+        self.total_rides = 100
+        self.acceptance_rate = 0.95
+        self.earnings = 0.0
+        self.lock = threading.Lock()
+
+    def update_location(self, location: Location):
+        with self.lock:
+            self.location = location
+
+    def get_distance_to(self, location: Location) -&gt; float:
+        with self.lock:
+            return self.location.distance_to(location)
+
+    def set_busy(self):
+        with self.lock:
+            self.status = DriverStatus.BUSY
+
+    def set_online(self):
+        with self.lock:
+            self.status = DriverStatus.ONLINE
+
+    def __repr__(self):
+        return f&quot;Driver({self.name}, Rating: {self.rating}, Loc: {self.location})&quot;
+
+class Passenger:
+    def __init__(self, passenger_id: str, name: str):
+        self.passenger_id = passenger_id
+        self.name = name
+        self.location = Location(40.7580, -73.9855)
+        self.rating = 4.8
+        self.total_rides = 50
+        self.payment_method = &quot;Card&quot;
+
+    def __repr__(self):
+        return f&quot;Passenger({self.name}, Rating: {self.rating})&quot;
+
+# ============================================================================
+# PRICING STRATEGY
+# ============================================================================
+
+class PricingStrategy(ABC):
+    @abstractmethod
+    def calculate_fare(self, distance_km: float, duration_min: float, surge: float) -&gt; float:
+        pass
+
+class EconomyPricing(PricingStrategy):
+    def calculate_fare(self, distance_km: float, duration_min: float, surge: float) -&gt; float:
+        base = 2.0
+        distance_cost = distance_km * 0.80
+        time_cost = duration_min * 0.15
+        subtotal = base + distance_cost + time_cost
+        return round(subtotal * surge, 2)
+
+class PremiumPricing(PricingStrategy):
+    def calculate_fare(self, distance_km: float, duration_min: float, surge: float) -&gt; float:
+        base = 5.0
+        distance_cost = distance_km * 1.50
+        time_cost = duration_min * 0.30
+        subtotal = base + distance_cost + time_cost
+        return round(subtotal * surge, 2)
+
+# ============================================================================
+# RIDE SERVICE (SINGLETON)
+# ============================================================================
+
+class RideService:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+        self._initialized = True
+        self.drivers: Dict[str, Driver] = {}
+        self.passengers: Dict[str, Passenger] = {}
+        self.rides: Dict[str, Ride] = {}
+        self.active_rides: List[Ride] = []
+        self.pricing_strategy = EconomyPricing()
+        self.surge_multiplier = 1.0
+        self.lock = threading.Lock()
+        self.ride_counter = 0
+
+    def register_driver(self, driver: Driver):
+        with self.lock:
+            self.drivers[driver.driver_id] = driver
+
+    def register_passenger(self, passenger: Passenger):
+        with self.lock:
+            self.passengers[passenger.passenger_id] = passenger
+
+    def find_nearby_drivers(self, location: Location, radius_km: float = 10.0) -&gt; List[Driver]:
+        &quot;&quot;&quot;Find available drivers within radius&quot;&quot;&quot;
+        nearby = []
+        with self.lock:
+            for driver in self.drivers.values():
+                if driver.status == DriverStatus.ONLINE:
+                    distance = driver.get_distance_to(location)
+                    if distance &lt;= radius_km:
+                        nearby.append((distance, driver.rating, driver))
+
+        # Sort by distance, then rating
+        nearby.sort(key=lambda x: (x[0], -x[1]))
+        return [driver for _, _, driver in nearby[:5]]
+
+    def request_ride(self, passenger: Passenger, destination: Location, ride_type: str = &quot;economy&quot;) -&gt; Optional[Ride]:
+        &quot;&quot;&quot;Passenger requests a ride&quot;&quot;&quot;
+        available_drivers = self.find_nearby_drivers(passenger.location)
+
+        if not available_drivers:
+            print(&quot;✗ No drivers available&quot;)
+            return None
+
+        # Offer to first available driver
+        driver = available_drivers[0]
+
+        with self.lock:
+            self.ride_counter += 1
+            ride_id = f&quot;RIDE_{self.ride_counter}&quot;
+            ride = Ride(
+                ride_id=ride_id,
+                driver=driver,
+                passenger=passenger,
+                pickup_location=passenger.location,
+                destination_location=destination,
+                status=RideStatus.REQUESTED
+            )
+            self.rides[ride_id] = ride
+            self.active_rides.append(ride)
+
+        print(f&quot;✓ Ride requested: {ride_id}&quot;)
+        print(f&quot;  Passenger: {passenger.name} at {passenger.location}&quot;)
+        print(f&quot;  Destination: {destination}&quot;)
+        print(f&quot;  Offered to Driver: {driver.name}&quot;)
+
+        return ride
+
+    def accept_ride(self, ride: Ride) -&gt; bool:
+        &quot;&quot;&quot;Driver accepts ride&quot;&quot;&quot;
+        with self.lock:
+            if ride.status != RideStatus.REQUESTED:
+                return False
+
+            ride.driver.set_busy()
+            ride.status = RideStatus.ACCEPTED
+
+            # Calculate fare
+            distance = ride.pickup_location.distance_to(ride.destination_location)
+            duration = distance / 1.0  # Assume 1 km/min average speed
+            fare = self.pricing_strategy.calculate_fare(distance, duration, self.surge_multiplier)
+            ride.fare = fare
+
+        print(f&quot;✓ Ride {ride.ride_id} accepted by {ride.driver.name}&quot;)
+        print(f&quot;  Fare: ${ride.fare}&quot;)
+        print(f&quot;  Surge: {self.surge_multiplier}x&quot;)
+        return True
+
+    def arrive_at_pickup(self, ride: Ride) -&gt; bool:
+        &quot;&quot;&quot;Driver arrives at pickup location&quot;&quot;&quot;
+        with self.lock:
+            if ride.status != RideStatus.ACCEPTED:
+                return False
+            ride.status = RideStatus.DRIVER_ARRIVED
+
+        print(f&quot;✓ Driver {ride.driver.name} arrived at pickup&quot;)
+        return True
+
+    def start_ride(self, ride: Ride) -&gt; bool:
+        &quot;&quot;&quot;Passenger boards, ride starts&quot;&quot;&quot;
+        with self.lock:
+            if ride.status != RideStatus.DRIVER_ARRIVED:
+                return False
+            ride.status = RideStatus.IN_PROGRESS
+            ride.start_time = time.time()
+
+        print(f&quot;✓ Ride {ride.ride_id} started - en route to destination&quot;)
+        return True
+
+    def complete_ride(self, ride: Ride) -&gt; bool:
+        &quot;&quot;&quot;Ride completed, payment processed&quot;&quot;&quot;
+        with self.lock:
+            if ride.status != RideStatus.IN_PROGRESS:
+                return False
+
+            ride.status = RideStatus.COMPLETED
+            ride.end_time = time.time()
+
+            # Credit driver
+            ride.driver.earnings += ride.fare * 0.75  # Platform takes 25%
+            ride.driver.set_online()
+
+            if ride in self.active_rides:
+                self.active_rides.remove(ride)
+
+        print(f&quot;✓ Ride {ride.ride_id} completed&quot;)
+        print(f&quot;  Fare: ${ride.fare}&quot;)
+        print(f&quot;  Driver earned: ${ride.fare * 0.75}&quot;)
+        return True
+
+    def cancel_ride(self, ride: Ride, reason: str = &quot;Passenger cancelled&quot;) -&gt; bool:
+        &quot;&quot;&quot;Cancel ride with penalty calculation&quot;&quot;&quot;
+        with self.lock:
+            if ride.status == RideStatus.COMPLETED or ride.status == RideStatus.CANCELLED:
+                return False
+
+            penalty = 0
+            if ride.status == RideStatus.ACCEPTED:
+                penalty = ride.fare * 0.25
+            elif ride.status == RideStatus.IN_PROGRESS:
+                penalty = ride.fare  # Full charge
+
+            ride.status = RideStatus.CANCELLED
+            ride.driver.set_online()
+
+            if ride in self.active_rides:
+                self.active_rides.remove(ride)
+
+        print(f&quot;✗ Ride {ride.ride_id} cancelled: {reason}&quot;)
+        print(f&quot;  Cancellation fee: ${penalty}&quot;)
+        return True
+
+    def set_surge_pricing(self, multiplier: float):
+        &quot;&quot;&quot;Update surge pricing&quot;&quot;&quot;
+        self.surge_multiplier = min(multiplier, 3.0)  # Cap at 3x
+        print(f&quot;💰 Surge pricing updated: {self.surge_multiplier}x&quot;)
+
+    def display_status(self):
+        print(&quot;\n&quot; + &quot;=&quot;*70)
+        print(f&quot;RIDE SERVICE STATUS&quot;)
+        print(&quot;=&quot;*70)
+        print(f&quot;Registered drivers: {len(self.drivers)}&quot;)
+        print(f&quot;Registered passengers: {len(self.passengers)}&quot;)
+        print(f&quot;Active rides: {len(self.active_rides)}&quot;)
+        print(f&quot;Total completed: {len([r for r in self.rides.values() if r.status == RideStatus.COMPLETED])}&quot;)
+        print(f&quot;Surge multiplier: {self.surge_multiplier}x&quot;)
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def demo_1_setup():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 1: SYSTEM SETUP&quot;)
+    print(&quot;=&quot;*70)
+
+    service = RideService()
+
+    # Register drivers
+    drivers = [
+        Driver(&quot;D1&quot;, &quot;Alice&quot;, Vehicle(&quot;Toyota&quot;, &quot;Prius&quot;, &quot;ABC123&quot;, &quot;Blue&quot;)),
+        Driver(&quot;D2&quot;, &quot;Bob&quot;, Vehicle(&quot;Honda&quot;, &quot;Civic&quot;, &quot;XYZ789&quot;, &quot;Red&quot;)),
+        Driver(&quot;D3&quot;, &quot;Charlie&quot;, Vehicle(&quot;Tesla&quot;, &quot;Model 3&quot;, &quot;TSL456&quot;, &quot;White&quot;)),
+    ]
+
+    for driver in drivers:
+        service.register_driver(driver)
+        print(f&quot;✓ Registered: {driver}&quot;)
+
+    # Register passengers
+    passengers = [
+        Passenger(&quot;P1&quot;, &quot;John&quot;),
+        Passenger(&quot;P2&quot;, &quot;Sarah&quot;),
+    ]
+
+    for passenger in passengers:
+        service.register_passenger(passenger)
+        print(f&quot;✓ Registered: {passenger}&quot;)
+
+    service.display_status()
+
+def demo_2_request_and_accept():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 2: REQUEST RIDE &amp; ACCEPT&quot;)
+    print(&quot;=&quot;*70)
+
+    service = RideService()
+
+    # Setup
+    driver = Driver(&quot;D1&quot;, &quot;Alice&quot;, Vehicle(&quot;Toyota&quot;, &quot;Prius&quot;, &quot;ABC123&quot;, &quot;Blue&quot;))
+    driver.location = Location(40.7128, -74.0060)
+    service.register_driver(driver)
+
+    passenger = Passenger(&quot;P1&quot;, &quot;John&quot;)
+    passenger.location = Location(40.7128, -74.0060)
+    service.register_passenger(passenger)
+
+    # Request
+    destination = Location(40.7580, -73.9855)
+    ride = service.request_ride(passenger, destination)
+
+    if ride:
+        # Accept
+        service.accept_ride(ride)
+
+def demo_3_complete_ride():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 3: COMPLETE RIDE JOURNEY&quot;)
+    print(&quot;=&quot;*70)
+
+    service = RideService()
+
+    # Setup
+    driver = Driver(&quot;D1&quot;, &quot;Alice&quot;, Vehicle(&quot;Toyota&quot;, &quot;Prius&quot;, &quot;ABC123&quot;, &quot;Blue&quot;))
+    driver.location = Location(40.7128, -74.0060)
+    service.register_driver(driver)
+
+    passenger = Passenger(&quot;P1&quot;, &quot;John&quot;)
+    passenger.location = Location(40.7128, -74.0060)
+    service.register_passenger(passenger)
+
+    # Request
+    destination = Location(40.7580, -73.9855)
+    ride = service.request_ride(passenger, destination)
+
+    if ride:
+        print(&quot;\n--- Ride Journey ---&quot;)
+        service.accept_ride(ride)
+        print(&quot;(Driver driving to pickup...)&quot;)
+        service.arrive_at_pickup(ride)
+        print(&quot;(Passenger boarding...)&quot;)
+        service.start_ride(ride)
+        print(&quot;(Ride in progress...)&quot;)
+        service.complete_ride(ride)
+
+def demo_4_surge_pricing():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 4: SURGE PRICING&quot;)
+    print(&quot;=&quot;*70)
+
+    service = RideService()
+
+    driver = Driver(&quot;D1&quot;, &quot;Alice&quot;, Vehicle(&quot;Toyota&quot;, &quot;Prius&quot;, &quot;ABC123&quot;, &quot;Blue&quot;))
+    service.register_driver(driver)
+
+    passenger = Passenger(&quot;P1&quot;, &quot;John&quot;)
+    service.register_passenger(passenger)
+
+    destination = Location(40.7580, -73.9855)
+
+    print(&quot;\nNormal pricing (1.0x):&quot;)
+    ride1 = service.request_ride(passenger, destination)
+    if ride1:
+        service.accept_ride(ride1)
+        print(f&quot;Fare: ${ride1.fare}&quot;)
+
+    print(&quot;\nWith surge (2.5x):&quot;)
+    service.set_surge_pricing(2.5)
+    ride2 = service.request_ride(passenger, destination)
+    if ride2:
+        service.accept_ride(ride2)
+        print(f&quot;Fare: ${ride2.fare}&quot;)
+
+def demo_5_cancellation():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 5: CANCELLATION SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    service = RideService()
+
+    driver = Driver(&quot;D1&quot;, &quot;Alice&quot;, Vehicle(&quot;Toyota&quot;, &quot;Prius&quot;, &quot;ABC123&quot;, &quot;Blue&quot;))
+    service.register_driver(driver)
+
+    passenger = Passenger(&quot;P1&quot;, &quot;John&quot;)
+    service.register_passenger(passenger)
+
+    destination = Location(40.7580, -73.9855)
+
+    # Scenario 1: Cancel before acceptance
+    print(&quot;\nScenario 1: Cancel before driver accepts&quot;)
+    ride1 = service.request_ride(passenger, destination)
+    if ride1:
+        service.cancel_ride(ride1, &quot;Passenger changed mind&quot;)
+
+    # Scenario 2: Cancel after acceptance
+    print(&quot;\nScenario 2: Cancel after driver accepts&quot;)
+    ride2 = service.request_ride(passenger, destination)
+    if ride2:
+        service.accept_ride(ride2)
+        service.cancel_ride(ride2, &quot;Passenger cancelled&quot;)
+
+    # Scenario 3: Cancel during ride
+    print(&quot;\nScenario 3: Cancel during ride&quot;)
+    ride3 = service.request_ride(passenger, destination)
+    if ride3:
+        service.accept_ride(ride3)
+        service.arrive_at_pickup(ride3)
+        service.start_ride(ride3)
+        service.cancel_ride(ride3, &quot;Emergency&quot;)
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;🚗 RIDE SHARING SYSTEM - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_setup()
+    demo_2_request_and_accept()
+    demo_3_complete_ride()
+    demo_4_surge_pricing()
+    demo_5_cancellation()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;✅ ALL DEMOS COMPLETED&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<hr />
+<h2 id="design-patterns-explained">Design Patterns Explained</h2>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Usage</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td><code>RideService</code> manages all rides</td>
+<td>Centralized dispatch + coordination</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Notify driver/passenger on state changes</td>
+<td>Real-time updates, decoupled</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>PricingStrategy (economy, premium)</td>
+<td>Pluggable pricing algorithms</td>
+</tr>
+<tr>
+<td><strong>State Machine</strong></td>
+<td>Ride status (requested → accepted → completed)</td>
+<td>Clear lifecycle, prevents invalid transitions</td>
+</tr>
+<tr>
+<td><strong>Factory</strong></td>
+<td>Different ride types (economy, premium, shared)</td>
+<td>Flexible ride creation</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="key-system-rules-implemented">Key System Rules Implemented</h2>
+<ul>
+<li><strong>Location-Based Matching</strong>: Haversine formula for accurate distance</li>
+<li><strong>Nearest-Driver Priority</strong>: Sort by distance, then rating</li>
+<li><strong>Surge Pricing Cap</strong>: Max 3x to prevent gouging</li>
+<li><strong>Cancellation Penalties</strong>: 0% (&lt;30s), 25% (before pickup), 100% (during ride)</li>
+<li><strong>Real-Time Tracking</strong>: Location updates every 1-2 seconds</li>
+<li><strong>Payment After Completion</strong>: Charge only after successful dropoff</li>
+</ul>
+<hr />
+<h2 id="summary">Summary</h2>
+<p>✅ <strong>Singleton</strong> for system-wide ride coordination
+✅ <strong>Location-based search</strong> using Haversine formula
+✅ <strong>Matching algorithm</strong> (nearest + highest rating)
+✅ <strong>Dynamic pricing</strong> (surge, distance, time-based)
+✅ <strong>Ride state machine</strong> (requested → accepted → completed)
+✅ <strong>Real-time tracking</strong> of driver + passenger
+✅ <strong>Cancellation handling</strong> with penalty calculation
+✅ <strong>Payment processing</strong> and driver earnings
+✅ <strong>Scalable to 1M+ users</strong> with geographic sharding
+✅ <strong>Thread-safe operations</strong> for concurrency</p>
+<p><strong>Key Takeaway</strong>: Ride-sharing system demonstrates real-time location-based matching, dynamic pricing, state management, and geographic scalability. Core focus: optimal driver assignment, surge pricing calculation, and ride lifecycle management.</p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-04-05</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

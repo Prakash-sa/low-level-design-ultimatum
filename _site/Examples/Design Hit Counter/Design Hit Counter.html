@@ -1,0 +1,1199 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Design Hit Counter - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Insatance%20Variable.html">Class Variable vs Insatance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Airline%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Airline Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/">Airline Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/Airline%20Management%20System.html">Airline Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Locker System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/">Amazon Locker System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/Amazon%20Locker%20System.html">Amazon Locker System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Online Shopping System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/">Amazon Online Shopping System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/ATM/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle ATM" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/ATM/">ATM</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM/ATM.html">ATM</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Cache/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Cache" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Cache/">Cache</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache/Cache.html">Cache</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Car%20Rental%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Car Rental System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/">Car Rental System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/Car%20Rental%20System.html">Car Rental System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Chess%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Chess Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Chess%20Game/">Chess Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game/Chess%20Game.html">Chess Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circinfo (Ride Sharing)" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/">Circinfo (Ride Sharing)</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Design Hit Counter" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/">Design Hit Counter</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/Design%20Hit%20Counter.html">Design Hit Counter</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/">Elevator System</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Elevator%20System.html">Elevator System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Facebook/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Facebook" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Facebook/">Facebook</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook/Facebook.html">Facebook</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/File%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle File System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/File%20System/">File System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System/File%20System.html">File System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Hotel Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/">Hotel Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/Hotel%20Management%20System.html">Hotel Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Jigsaw Puzzle" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/">Jigsaw Puzzle</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Leaderboard/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Leaderboard" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Leaderboard/">Leaderboard</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard/Leaderboard.html">Leaderboard</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Library%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Library Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/">Library Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/Library%20Management%20System.html">Library Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/LinkedIn/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle LinkedIn" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/LinkedIn/">LinkedIn</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn/LinkedIn.html">LinkedIn</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Logging/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Logging" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Logging/">Logging</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging/Logging.html">Logging</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Meeting Scheduler" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/">Meeting Scheduler</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/Meeting%20Scheduler.html">Meeting Scheduler</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Movie Ticket Booking System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/">Movie Ticket Booking System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Blackjack Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/">Online Blackjack Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Stock Brokerage System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/">Online Stock Brokerage System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/">Parking Lot</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Parking%20Lot.html">Parking Lot</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Pub-Sub/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Pub-Sub" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Pub-Sub/">Pub-Sub</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub/Pub-Sub.html">Pub-Sub</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Restaurant Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/">Restaurant Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/Restaurant%20Management%20System.html">Restaurant Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Stack%20Overflow/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Stack Overflow" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/">Stack Overflow</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/Stack%20Overflow.html">Stack Overflow</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Text Editor with Undo & Redo" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/">Text Editor with Undo & Redo</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Train Platform Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/">Train Platform Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Vending%20Machine/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Vending Machine" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/">Vending Machine</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/Vending%20Machine.html">Vending Machine</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/">Design Hit Counter</a>
+            </div>
+            <div class="content">
+                <h1 id="design-hit-counter-75-minute-interview-guide">Design Hit Counter — 75-Minute Interview Guide</h1>
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>What is it?</strong> Time-windowed request counter supporting multiple strategies (fixed-window buckets, sliding-window precise, probabilistic approximate) for tracking per-endpoint hit rates with real-time queries, pruning, and observability.</p>
+<p><strong>Key Classes:</strong>
+- <code>HitCounter</code> (Singleton): Central coordinator
+- <code>CountingStrategy</code> (ABC): Pluggable counting implementations
+- <code>FixedWindowStrategy</code>: Bucket-based by window size
+- <code>SlidingWindowStrategy</code>: Per-hit timestamp list with pruning
+- <code>MorrisApproxStrategy</code>: Probabilistic counter (memory-efficient)
+- <code>Snapshot</code>: Memento for state rollback</p>
+<p><strong>Core Flows:</strong>
+1. <strong>Record Hit</strong>: Update counter → Optionally prune → Update metrics
+2. <strong>Query Count</strong>: Aggregate hits in time window → Return total
+3. <strong>Swap Strategy</strong>: Change counting approach → Reset incompatible state
+4. <strong>Snapshot/Restore</strong>: Capture state for rollback/testing
+5. <strong>Emit Events</strong>: Fire lifecycle notifications (recorded, pruned, swapped)</p>
+<p><strong>5 Design Patterns:</strong>
+- <strong>Singleton</strong>: One HitCounter instance
+- <strong>Strategy</strong>: Interchangeable counting semantics
+- <strong>Observer</strong>: Events for lifecycle tracking
+- <strong>Memento</strong>: Snapshot for state recovery
+- <strong>State Machine</strong>: Per-endpoint bucket/timestamp/counter management</p>
+<hr />
+<h2 id="system-overview">System Overview</h2>
+<p>In-memory hit counter for rate limiting, analytics, and request tracking with pluggable accuracy/performance trade-offs.</p>
+<h3 id="requirements">Requirements</h3>
+<p><strong>Functional:</strong>
+- Record hits per endpoint with timestamp
+- Query hit count for last X seconds
+- Support multiple counting strategies (fixed, sliding, approximate)
+- Swap strategies transparently
+- Prune old data to bound memory
+- Emit events for lifecycle observability
+- Snapshot state for testing/rollback</p>
+<p><strong>Non-Functional:</strong>
+- Record operation &lt; 1ms
+- Query operation &lt; 10ms
+- Memory bounded (pruning prevents unbounded growth)
+- Extensible for new strategies</p>
+<p><strong>Constraints:</strong>
+- Single-process in-memory (no distribution)
+- Fixed/sliding window strategies are exact; Morris is approximate
+- Strategy swap cannot convert old state (reset required)
+- No persistence (snapshots are in-memory only)</p>
+<hr />
+<h2 id="architecture-diagram-ascii-uml">Architecture Diagram (ASCII UML)</h2>
+<pre class="codehilite"><code>┌─────────────────────┐
+│ HitCounter          │
+│ (Singleton)         │
+└──────────┬──────────┘
+           │
+    ┌──────┼────────────────────┐
+    │      │                    │
+    ▼      ▼                    ▼
+┌──────────────────┐  ┌──────────────┐  ┌─────────────┐
+│CountingStrategy  │  │State         │  │Events       │
+│ (ABC)            │  │FixedWindow   │  │Listeners    │
+└────┬─────┬───────┘  │SlidingWindow │  └─────────────┘
+     │     │          │MorrisApprox  │
+     ▼     ▼          └──────────────┘
+┌──────────────┐   ┌──────────────┐
+│FixedWindow   │   │Sliding       │
+│Strategy      │   │Window        │
+├──────────────┤   │Strategy      │
+│- buckets     │   ├──────────────┤
+│- record()    │   │- timestamps  │
+│- query()     │   │- prune()     │
+│- memory()    │   │- query()     │
+└──────────────┘   └──────────────┘
+     │                    │
+     └────────┬───────────┘
+              ▼
+        ┌──────────────┐
+        │Morris Approx │
+        ├──────────────┤
+        │- c (counter) │
+        │- record()    │
+        │- query()     │
+        └──────────────┘
+
+Lifecycle:
+RECORD_HIT → STRATEGY_UPDATE → (PRUNE) → METRICS_UPDATE → QUERY
+                ↓
+            EMIT_EVENT (hit_recorded, pruned, strategy_swapped)
+                ↓
+            SNAPSHOT / RESTORE
+</code></pre>
+
+<hr />
+<h2 id="interview-qa-12-questions">Interview Q&amp;A (12 Questions)</h2>
+<h3 id="basic-level">Basic Level</h3>
+<p><strong>Q1: How do you record and query hits?</strong>
+A: Record: call strategy.record(endpoint, timestamp) → updates internal state. Query: call strategy.query(endpoint, now, last_seconds) → aggregates hits in time window. Different strategies use different representations (buckets vs timestamps vs probabilistic counters).</p>
+<p><strong>Q2: What's the difference between fixed and sliding window strategies?</strong>
+A: Fixed: divides time into buckets (e.g., 10-sec buckets). Record: increment bucket. Query: sum buckets overlapping window. Fast but coarse. Sliding: stores individual timestamps. Query: count timestamps &gt;= (now - last_seconds). Exact but memory-intensive.</p>
+<p><strong>Q3: What's Morris approximation?</strong>
+A: Probabilistic counter. On record: increment counter c with probability 1/(2^c). Estimate = 2^c - 1. Extremely memory-efficient (single int per endpoint) but has statistical error (~±50% for large counts). Used when memory is critical.</p>
+<p><strong>Q4: Why do you need pruning?</strong>
+A: Sliding window stores all timestamps. Without pruning, memory grows unbounded. Pruning: remove timestamps older than max_window_s. Called each record/query. Metrics track pruned_events.</p>
+<p><strong>Q5: How do you handle strategy swaps?</strong>
+A: Different strategies use incompatible internal representations (buckets vs lists vs ints). Strategy.swap(): if incompatible, reset state (document limitation). Cannot losslessly convert approximate state to exact. Emit strategy_swapped event.</p>
+<h3 id="intermediate-level">Intermediate Level</h3>
+<p><strong>Q6: How do you calculate fixed window bucket key?</strong>
+A: bucket_key = floor(timestamp / window_size_s). Example: ts=25.7s, window=10s → bucket=2. Multiple hits in same second go to same bucket. Query iterates buckets [floor((now-last_s)/window), floor(now/window)].</p>
+<p><strong>Q7: How do you prevent memory explosion in sliding window?</strong>
+A: Pruning policy: remove timestamps older than max_window_s. Example: max_window=60s. On query(endpoint, last_5s), also prune timestamps &lt; (now - 60). Cost: O(n) per prune. Trade-off: frequency of pruning vs memory growth.</p>
+<p><strong>Q8: What does snapshot capture?</strong>
+A: Deep copy of entire state dict + metrics dict. Snapshot.restore() replaces current state. Used for testing (apply hits, snapshot, try different queries, restore). Or rollback if strategy swap fails.</p>
+<p><strong>Q9: How are events useful?</strong>
+A: Listeners subscribe to events (hit_recorded, pruned, strategy_swapped, snapshot_taken, metrics_updated). Enables logging, monitoring, testing. Example: count pruned_events to tune pruning frequency.</p>
+<p><strong>Q10: How do you handle multiple endpoints?</strong>
+A: Each endpoint has separate state (bucket dict for fixed, timestamp list for sliding, counter int for morris). HitCounter.state: dict[endpoint] → strategy-specific representation. Query per endpoint.</p>
+<h3 id="advanced-level">Advanced Level</h3>
+<p><strong>Q11: How to optimize query for millions of endpoints?</strong>
+A: Partitioning: shard endpoints by hash(endpoint) % num_shards. Each shard is separate HitCounter instance. Query aggregates across shards. Fixed window: O(1) query (count hit buckets); sliding: O(n) where n = hits in window.</p>
+<p><strong>Q12: How to detect and handle clock skew (time going backwards)?</strong>
+A: Fixed window: bucket_key always increases or stays same. Issue: negative drift → lower bucket. Mitigate: require monotonic timestamps (use max(ts, last_ts)). Sliding: filter out future timestamps (ts &gt; now + delta). Log anomalies.</p>
+<hr />
+<h2 id="scaling-qa-12-questions">Scaling Q&amp;A (12 Questions)</h2>
+<p><strong>Q1: Can you handle 1M requests/second?</strong>
+A: Fixed window: O(1) record (hash lookup). Yes, easily. Sliding: O(1) append but memory grows 1M items/sec = 8 MB/sec. Need aggressive pruning (every 100ms). Morris: O(1) record, ~100 endpoints × 8 bytes = negligible. Choose strategy by SLA.</p>
+<p><strong>Q2: How much memory does each strategy use?</strong>
+A: Fixed window (10-sec bucket, 1M endpoints): 1M × 100 buckets × 8 bytes = 800 MB. Sliding (60-sec window, 1K QPS): 1K × 60 = 60K entries × 8 bytes = 480 KB. Morris: 1M × 8 bytes = 8 MB. Morris wins for scale.</p>
+<p><strong>Q3: How to distribute across multiple machines?</strong>
+A: Shard endpoints. Machine 1 handles endpoints A-M, Machine 2 handles N-Z, etc. Each machine runs independent HitCounter. Aggregation: query all shards, sum results. Scaling: add shard for each 10M hits/sec.</p>
+<p><strong>Q4: What if query arrives during pruning?</strong>
+A: Lock state during prune. Readers wait. Alternative: copy-on-write snapshot during prune, readers use old version. Trade-off: latency vs memory copy. For hit counter, lock acceptable (&lt;1ms prune).</p>
+<p><strong>Q5: How to persist state for recovery?</strong>
+A: Write-ahead log (WAL): append-only log of (record/query/strategy_swap) events. On restart: replay log → recover state. Or: checkpoint snapshots every N minutes + replay logs since last checkpoint.</p>
+<p><strong>Q6: Can you support sliding window for 100M requests/day?</strong>
+A: 100M requests/day = 1.2K QPS. Sliding (60-sec): 1.2K × 60 = 72K timestamps × 8 bytes = 576 KB. Manageable. Prune every 10 seconds removes stale data. Yes, feasible.</p>
+<p><strong>Q7: How to adapt strategy based on load?</strong>
+A: Monitor metrics (total_hits, memory_entries). If memory_entries &gt; threshold, swap to Morris (probabilistic). If high accuracy needed, swap to sliding (higher memory). Metrics inform strategy choice.</p>
+<p><strong>Q8: How to handle burst traffic?</strong>
+A: Burst: 10M hits in 1 second. Fixed window: increment bucket by 10M (single int, safe). Sliding: append 10M timestamps (memory spike). Prune immediately after to recover. Or use fixed window as buffer.</p>
+<p><strong>Q9: Can you support real-time leaderboards (top endpoints)?</strong>
+A: Track query counts per endpoint. Rank by (count DESC). Recompute every 5 minutes (batch sort). Cache top-100 in memory. Update on-demand if endpoint promoted/demoted. O(n log n) batch, O(log n) updates.</p>
+<p><strong>Q10: How to prevent double-counting (same request counted twice)?</strong>
+A: Request ID deduplication: maintain set of seen IDs (bloom filter for space efficiency). On record: check if ID seen. If yes, skip. Tradeoff: false negatives acceptable for hit counts.</p>
+<p><strong>Q11: How to handle clock skew across distributed systems?</strong>
+A: Use global clock (NTP-synchronized). Max clock delta: ±1 second. Sliding window: discard timestamps &gt; (now + 1s) or &lt; (now - max_window - 1s). Log anomalies. Alert on skew &gt; threshold.</p>
+<p><strong>Q12: How to support multi-level aggregation (per-second, per-minute, per-hour)?</strong>
+A: Maintain separate HitCounter instances: 1-sec window, 60-sec window, 3600-sec window. Each runs independently. Query aggregates level needed. Or: single 3600-sec counter with sub-buckets (3600 / 1-sec).</p>
+<hr />
+<h2 id="demo-scenarios-5-examples">Demo Scenarios (5 Examples)</h2>
+<h3 id="demo-1-fixed-window-baseline">Demo 1: Fixed Window Baseline</h3>
+<pre class="codehilite"><code>- Record hits for /api endpoint: t=0, 5, 8, 15, 18s
+- Window size: 10 seconds
+- Query last 10s at t=20s
+- Buckets: [0-10]: 3 hits, [10-20]: 2 hits
+- Result: 5 hits (all buckets overlap)
+</code></pre>
+
+<h3 id="demo-2-sliding-vs-fixed">Demo 2: Sliding vs Fixed</h3>
+<pre class="codehilite"><code>- Same hits: t=0, 5, 8, 15, 18s
+- Fixed window (10s): reports 5 hits
+- Sliding window: exact count = 5 hits
+- Fixed boundary effect: hit at t=9.99s vs t=10.00s differs
+- Sliding always accurate
+</code></pre>
+
+<h3 id="demo-3-strategy-swap-to-morris">Demo 3: Strategy Swap to Morris</h3>
+<pre class="codehilite"><code>- Start with fixed window
+- 1000 hits recorded
+- Swap to Morris approximation
+- State reset (incompatible repr)
+- Continue recording
+- Estimate ≈ actual (statistical error ±50%)
+</code></pre>
+
+<h3 id="demo-4-high-volume-pruning">Demo 4: High-Volume Pruning</h3>
+<pre class="codehilite"><code>- Sliding window, max_window=5s
+- Record 1000 hits over 10 seconds
+- Pruning fires every record
+- Memory entry count stays ≤ 5000 (5s × 1K QPS max)
+- Without prune: would be 10K entries
+</code></pre>
+
+<h3 id="demo-5-snapshot-restore">Demo 5: Snapshot &amp; Restore</h3>
+<pre class="codehilite"><code>- Record 50 hits
+- Take snapshot
+- Record 50 more hits
+- Query shows 100 hits
+- Restore snapshot
+- Query shows 50 hits again
+- Metrics rolled back
+</code></pre>
+
+<hr />
+<h2 id="complete-implementation">Complete Implementation</h2>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+⏱️ Design Hit Counter - Interview Implementation
+Demonstrates:
+1. Pluggable counting strategies (fixed, sliding, approximate)
+2. Per-endpoint state management
+3. Pruning for memory efficiency
+4. Event-driven lifecycle
+5. Snapshot/restore for testing
+&quot;&quot;&quot;
+
+from enum import Enum
+from typing import List, Optional, Dict, Any, Callable
+from dataclasses import dataclass, field
+from datetime import datetime
+import time
+import threading
+import random
+
+# ============================================================================
+# ENUMERATIONS &amp; DATA CLASSES
+# ============================================================================
+
+@dataclass
+class Snapshot:
+    &quot;&quot;&quot;Memento: captures entire state for rollback&quot;&quot;&quot;
+    state: Dict[str, Any]
+    metrics: Dict[str, int]
+
+# ============================================================================
+# COUNTING STRATEGIES (ABC)
+# ============================================================================
+
+class CountingStrategy:
+    &quot;&quot;&quot;Abstract base for counting implementations&quot;&quot;&quot;
+
+    def name(self) -&gt; str:
+        return self.__class__.__name__
+
+    def record(self, state: Dict[str, Any], endpoint: str, ts: float) -&gt; None:
+        raise NotImplementedError
+
+    def query(self, state: Dict[str, Any], endpoint: str, now: float, last_seconds: int) -&gt; int:
+        raise NotImplementedError
+
+    def prune(self, state: Dict[str, Any], endpoint: str, now: float) -&gt; int:
+        &quot;&quot;&quot;Returns number of entries pruned&quot;&quot;&quot;
+        return 0
+
+    def memory_entries(self, state: Dict[str, Any]) -&gt; int:
+        &quot;&quot;&quot;Returns total memory entries across all endpoints&quot;&quot;&quot;
+        raise NotImplementedError
+
+# ============================================================================
+# FIXED WINDOW STRATEGY
+# ============================================================================
+
+class FixedWindowStrategy(CountingStrategy):
+    &quot;&quot;&quot;Bucket aggregation: divide time into fixed windows&quot;&quot;&quot;
+
+    def __init__(self, window_size_s: int = 10):
+        self.window_size_s = window_size_s
+
+    def record(self, state: Dict[str, Any], endpoint: str, ts: float) -&gt; None:
+        &quot;&quot;&quot;Record hit in appropriate bucket&quot;&quot;&quot;
+        buckets = state.setdefault(endpoint, {})
+        bucket_key = int(ts // self.window_size_s)
+        buckets[bucket_key] = buckets.get(bucket_key, 0) + 1
+
+    def query(self, state: Dict[str, Any], endpoint: str, now: float, last_seconds: int) -&gt; int:
+        &quot;&quot;&quot;Query hits in time window (sum buckets)&quot;&quot;&quot;
+        buckets = state.get(endpoint, {})
+        if not buckets:
+            return 0
+
+        start_bucket = int((now - last_seconds) // self.window_size_s)
+        end_bucket = int(now // self.window_size_s)
+
+        return sum(count for b, count in buckets.items() if start_bucket &lt;= b &lt;= end_bucket)
+
+    def memory_entries(self, state: Dict[str, Any]) -&gt; int:
+        return sum(len(buckets) for buckets in state.values())
+
+# ============================================================================
+# SLIDING WINDOW STRATEGY
+# ============================================================================
+
+class SlidingWindowStrategy(CountingStrategy):
+    &quot;&quot;&quot;Per-hit timestamps with pruning&quot;&quot;&quot;
+
+    def __init__(self, max_window_s: int = 60):
+        self.max_window_s = max_window_s
+
+    def record(self, state: Dict[str, Any], endpoint: str, ts: float) -&gt; None:
+        &quot;&quot;&quot;Append hit timestamp&quot;&quot;&quot;
+        lst: List[float] = state.setdefault(endpoint, [])
+        lst.append(ts)
+
+    def prune(self, state: Dict[str, Any], endpoint: str, now: float) -&gt; int:
+        &quot;&quot;&quot;Remove timestamps older than max_window_s&quot;&quot;&quot;
+        lst: List[float] = state.get(endpoint, [])
+        if not lst:
+            return 0
+
+        cutoff = now - self.max_window_s
+        original_len = len(lst)
+
+        # Find first index &gt;= cutoff
+        keep_index = 0
+        for i, t in enumerate(lst):
+            if t &gt;= cutoff:
+                keep_index = i
+                break
+        else:
+            keep_index = original_len  # All old
+
+        removed = original_len - keep_index
+        lst[:] = lst[keep_index:]
+
+        return removed
+
+    def query(self, state: Dict[str, Any], endpoint: str, now: float, last_seconds: int) -&gt; int:
+        &quot;&quot;&quot;Count timestamps in window&quot;&quot;&quot;
+        lst: List[float] = state.get(endpoint, [])
+        if not lst:
+            return 0
+
+        cutoff = now - last_seconds
+        return sum(1 for t in lst if t &gt;= cutoff)
+
+    def memory_entries(self, state: Dict[str, Any]) -&gt; int:
+        return sum(len(lst) for lst in state.values())
+
+# ============================================================================
+# MORRIS APPROXIMATION STRATEGY
+# ============================================================================
+
+class MorrisApproxStrategy(CountingStrategy):
+    &quot;&quot;&quot;Probabilistic counter: increment with probability 1/2^c&quot;&quot;&quot;
+
+    def record(self, state: Dict[str, Any], endpoint: str, ts: float) -&gt; None:
+        &quot;&quot;&quot;Increment counter probabilistically&quot;&quot;&quot;
+        c = state.get(endpoint, 0)
+
+        # Increment with probability 1 / 2^c
+        prob = 1.0 / (2 ** c if c &gt; 0 else 1)
+        if random.random() &lt; prob:
+            c += 1
+
+        state[endpoint] = c
+
+    def query(self, state: Dict[str, Any], endpoint: str, now: float, last_seconds: int) -&gt; int:
+        &quot;&quot;&quot;Estimate count: 2^c - 1&quot;&quot;&quot;
+        c = state.get(endpoint, 0)
+        return int(2 ** c - 1) if c &gt; 0 else 0
+
+    def memory_entries(self, state: Dict[str, Any]) -&gt; int:
+        return len(state)
+
+# ============================================================================
+# HIT COUNTER (SINGLETON)
+# ============================================================================
+
+class HitCounter:
+    &quot;&quot;&quot;Central hit counter with pluggable strategies&quot;&quot;&quot;
+
+    _instance: Optional['HitCounter'] = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+
+        self._initialized = True
+        self.strategy: CountingStrategy = FixedWindowStrategy(window_size_s=10)
+        self.state: Dict[str, Any] = {}
+        self.metrics: Dict[str, int] = {
+            'total_hits': 0,
+            'endpoints_count': 0,
+            'pruned_events': 0,
+            'memory_entries': 0,
+        }
+        self.listeners: List[Callable[[str, Dict[str, Any]], None]] = []
+        self.lock = threading.Lock()
+        print(&quot;⏱️ HitCounter initialized&quot;)
+
+    def register_listener(self, fn: Callable[[str, Dict[str, Any]], None]) -&gt; None:
+        &quot;&quot;&quot;Subscribe to events&quot;&quot;&quot;
+        self.listeners.append(fn)
+
+    def _emit(self, event: str, payload: Dict[str, Any]) -&gt; None:
+        &quot;&quot;&quot;Emit event to all listeners&quot;&quot;&quot;
+        for listener_fn in self.listeners:
+            try:
+                listener_fn(event, payload)
+            except Exception as e:
+                print(f&quot;  [WARN] Listener error: {e}&quot;)
+
+    def record_hit(self, endpoint: str, ts: Optional[float] = None) -&gt; None:
+        &quot;&quot;&quot;Record a hit for endpoint&quot;&quot;&quot;
+        ts = ts or time.time()
+
+        with self.lock:
+            self.strategy.record(self.state, endpoint, ts)
+
+            # Prune if supported
+            removed = self.strategy.prune(self.state, endpoint, ts)
+            if removed &gt; 0:
+                self.metrics['pruned_events'] += removed
+                self._emit('pruned', {'endpoint': endpoint, 'removed': removed})
+
+            # Update metrics
+            self.metrics['total_hits'] += 1
+            self.metrics['endpoints_count'] = len(self.state)
+            self.metrics['memory_entries'] = self.strategy.memory_entries(self.state)
+
+            self._emit('hit_recorded', {'endpoint': endpoint, 'ts': ts})
+            self._emit('metrics_updated', {
+                'total_hits': self.metrics['total_hits'],
+                'memory_entries': self.metrics['memory_entries']
+            })
+
+    def query_hits(self, endpoint: str, last_seconds: int) -&gt; int:
+        &quot;&quot;&quot;Query hit count for endpoint in last_seconds&quot;&quot;&quot;
+        now = time.time()
+
+        with self.lock:
+            return self.strategy.query(self.state, endpoint, now, last_seconds)
+
+    def swap_strategy(self, strategy: CountingStrategy) -&gt; None:
+        &quot;&quot;&quot;Switch to different counting strategy&quot;&quot;&quot;
+        with self.lock:
+            old_name = self.strategy.name()
+            new_name = strategy.name()
+
+            # If incompatible, reset state
+            if type(strategy) is not type(self.strategy):
+                self.state = {}
+                self.metrics['endpoints_count'] = 0
+                self.metrics['pruned_events'] = 0
+                self._emit('strategy_reset', {
+                    'from': old_name,
+                    'to': new_name,
+                    'reason': 'incompatible_state_reset'
+                })
+
+            self.strategy = strategy
+            self.metrics['memory_entries'] = self.strategy.memory_entries(self.state)
+
+            self._emit('strategy_swapped', {'old': old_name, 'new': new_name})
+
+    def take_snapshot(self) -&gt; Snapshot:
+        &quot;&quot;&quot;Capture current state (Memento pattern)&quot;&quot;&quot;
+        with self.lock:
+            state_copy = {}
+            for endpoint, data in self.state.items():
+                if isinstance(data, dict):
+                    state_copy[endpoint] = data.copy()
+                elif isinstance(data, list):
+                    state_copy[endpoint] = data.copy()
+                else:
+                    state_copy[endpoint] = data
+
+            snap = Snapshot(state=state_copy, metrics=self.metrics.copy())
+            self._emit('snapshot_taken', {'endpoints_count': len(self.state)})
+            return snap
+
+    def restore_snapshot(self, snap: Snapshot) -&gt; None:
+        &quot;&quot;&quot;Restore state from snapshot&quot;&quot;&quot;
+        with self.lock:
+            self.state = {}
+            for endpoint, data in snap.state.items():
+                if isinstance(data, dict):
+                    self.state[endpoint] = data.copy()
+                elif isinstance(data, list):
+                    self.state[endpoint] = data.copy()
+                else:
+                    self.state[endpoint] = data
+
+            self.metrics = snap.metrics.copy()
+            self._emit('snapshot_restored', {})
+
+    def get_metrics(self) -&gt; Dict[str, int]:
+        &quot;&quot;&quot;Return current metrics&quot;&quot;&quot;
+        with self.lock:
+            return self.metrics.copy()
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def print_section(title: str):
+    print(f&quot;\n{'='*70}&quot;)
+    print(f&quot;  {title}&quot;)
+    print(f&quot;{'='*70}&quot;)
+
+def simple_listener(event: str, payload: Dict[str, Any]):
+    if event in ['pruned', 'strategy_swapped', 'strategy_reset']:
+        print(f&quot;  [EVENT] {event}: {payload}&quot;)
+
+def demo_1_fixed_window():
+    print_section(&quot;DEMO 1: FIXED WINDOW BASELINE&quot;)
+
+    hc = HitCounter()
+    hc.register_listener(simple_listener)
+
+    # Record hits at t=0, 5, 8, 15, 18
+    for i, t in enumerate([0, 5, 8, 15, 18]):
+        hc.record_hit(&quot;/api&quot;, ts=t)
+
+    # Query at different times
+    print(&quot;\n  Query at t=20s, last 10s:&quot;)
+    count = hc.query_hits(&quot;/api&quot;, last_seconds=10)
+    print(f&quot;  /api count: {count} hits&quot;)
+    print(f&quot;  Metrics: {hc.get_metrics()}&quot;)
+
+def demo_2_sliding_vs_fixed():
+    print_section(&quot;DEMO 2: SLIDING WINDOW VS FIXED&quot;)
+
+    hc = HitCounter()
+    hc.register_listener(simple_listener)
+
+    # Record same hits with sliding window
+    hc.swap_strategy(SlidingWindowStrategy(max_window_s=5))
+
+    for i, t in enumerate([0, 5, 8, 15, 18]):
+        hc.record_hit(&quot;/stream&quot;, ts=t)
+
+    print(&quot;\n  Sliding window queries:&quot;)
+    print(f&quot;  Last 1s:  {hc.query_hits('/stream', 1)} hits&quot;)
+    print(f&quot;  Last 5s:  {hc.query_hits('/stream', 5)} hits&quot;)
+    print(f&quot;  Last 20s: {hc.query_hits('/stream', 20)} hits&quot;)
+
+def demo_3_morris_approx():
+    print_section(&quot;DEMO 3: MORRIS APPROXIMATION&quot;)
+
+    hc = HitCounter()
+    hc.register_listener(simple_listener)
+    hc.swap_strategy(MorrisApproxStrategy())
+
+    # Record 1000 hits
+    print(&quot;  Recording 1000 hits...&quot;)
+    for i in range(1000):
+        hc.record_hit(&quot;/counter&quot;)
+
+    estimate = hc.query_hits(&quot;/counter&quot;, last_seconds=10)
+    print(f&quot;\n  Morris estimate: {estimate} ≈ 1000 (statistical error acceptable)&quot;)
+    print(f&quot;  Memory entries: {hc.get_metrics()['memory_entries']}&quot;)
+
+def demo_4_high_volume_prune():
+    print_section(&quot;DEMO 4: HIGH-VOLUME PRUNING&quot;)
+
+    hc = HitCounter()
+    hc.swap_strategy(SlidingWindowStrategy(max_window_s=1))
+
+    print(&quot;  Recording burst of 500 hits over 2 seconds...&quot;)
+    start = time.time()
+    i = 0
+    while time.time() - start &lt; 2.0:
+        hc.record_hit(&quot;/burst&quot;, ts=time.time())
+        i += 1
+
+    metrics = hc.get_metrics()
+    print(f&quot;\n  Total hits: {metrics['total_hits']}&quot;)
+    print(f&quot;  Memory entries: {metrics['memory_entries']}&quot;)
+    print(f&quot;  Pruned events: {metrics['pruned_events']}&quot;)
+    print(f&quot;  Last 1s count: {hc.query_hits('/burst', 1)}&quot;)
+
+def demo_5_snapshot_restore():
+    print_section(&quot;DEMO 5: SNAPSHOT &amp; RESTORE&quot;)
+
+    hc = HitCounter()
+    hc.swap_strategy(FixedWindowStrategy(window_size_s=10))
+
+    # Record 50 hits
+    for i in range(50):
+        hc.record_hit(&quot;/home&quot;, ts=i * 0.1)
+
+    snap = hc.take_snapshot()
+    before_count = hc.query_hits(&quot;/home&quot;, last_seconds=10)
+    before_metrics = hc.get_metrics()
+
+    print(f&quot;\n  After first batch: {before_count} hits&quot;)
+
+    # Record 50 more
+    for i in range(50):
+        hc.record_hit(&quot;/home&quot;, ts=5 + i * 0.1)
+
+    after_count = hc.query_hits(&quot;/home&quot;, last_seconds=10)
+    after_metrics = hc.get_metrics()
+
+    print(f&quot;  After second batch: {after_count} hits&quot;)
+    print(f&quot;  Total hits: {after_metrics['total_hits']}&quot;)
+
+    # Restore
+    hc.restore_snapshot(snap)
+    restored_count = hc.query_hits(&quot;/home&quot;, last_seconds=10)
+    restored_metrics = hc.get_metrics()
+
+    print(f&quot;\n  After restore: {restored_count} hits&quot;)
+    print(f&quot;  Total hits: {restored_metrics['total_hits']}&quot;)
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;⏱️ DESIGN HIT COUNTER - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_fixed_window()
+    demo_2_sliding_vs_fixed()
+    demo_3_morris_approx()
+    demo_4_high_volume_prune()
+    demo_5_snapshot_restore()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;✅ ALL DEMOS COMPLETED&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<hr />
+<h2 id="design-patterns">Design Patterns</h2>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Usage</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>One HitCounter instance</td>
+<td>Centralized state, no duplication</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>CountingStrategy subclasses</td>
+<td>Swap accuracy/performance trade-offs transparently</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Event listeners on lifecycle</td>
+<td>Observability, decoupled monitoring</td>
+</tr>
+<tr>
+<td><strong>Memento</strong></td>
+<td>Snapshot/Restore</td>
+<td>Fast state rollback for testing</td>
+</tr>
+<tr>
+<td><strong>State Machine</strong></td>
+<td>Per-endpoint buckets/lists/counters</td>
+<td>Clear separation of strategy concerns</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="summary">Summary</h2>
+<p>✅ <strong>Multiple strategies</strong> (fixed window, sliding window, probabilistic)
+✅ <strong>Pluggable counting logic</strong> with Strategy pattern
+✅ <strong>Pruning</strong> prevents unbounded memory growth in sliding window
+✅ <strong>Metrics tracking</strong> (total_hits, pruned_events, memory_entries)
+✅ <strong>Events</strong> (hit_recorded, pruned, strategy_swapped, snapshot_taken)
+✅ <strong>Snapshot/restore</strong> for testing and rollback
+✅ <strong>Per-endpoint state</strong> management
+✅ <strong>Scales</strong> from 1K to 1M+ requests/second
+✅ <strong>Memory-efficient</strong> options (Morris approximation)
+✅ <strong>Extensible</strong> for custom strategies</p>
+<p><strong>Key Takeaway</strong>: Hit counter demonstrates strategy pattern (swappable accuracy/performance), observability via events, and memory-bounded data structures. Core focus: understand windowing strategies, pruning discipline, and selecting strategy based on SLA (accuracy vs memory).</p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-04-05</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

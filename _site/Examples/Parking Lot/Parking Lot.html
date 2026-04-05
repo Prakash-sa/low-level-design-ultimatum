@@ -1,0 +1,1122 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parking Lot - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Insatance%20Variable.html">Class Variable vs Insatance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Airline%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Airline Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/">Airline Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System/Airline%20Management%20System.html">Airline Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Locker System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/">Amazon Locker System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System/Amazon%20Locker%20System.html">Amazon Locker System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Amazon Online Shopping System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/">Amazon Online Shopping System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/ATM/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle ATM" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/ATM/">ATM</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM/ATM.html">ATM</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Cache/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Cache" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Cache/">Cache</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache/Cache.html">Cache</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Car%20Rental%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Car Rental System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/">Car Rental System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System/Car%20Rental%20System.html">Car Rental System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Chess%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Chess Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Chess%20Game/">Chess Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game/Chess%20Game.html">Chess Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circinfo (Ride Sharing)" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/">Circinfo (Ride Sharing)</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Design Hit Counter" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/">Design Hit Counter</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter/Design%20Hit%20Counter.html">Design Hit Counter</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/">Elevator System</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System/Elevator%20System.html">Elevator System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Facebook/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Facebook" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Facebook/">Facebook</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook/Facebook.html">Facebook</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/File%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle File System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/File%20System/">File System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System/File%20System.html">File System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Hotel Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/">Hotel Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System/Hotel%20Management%20System.html">Hotel Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Jigsaw Puzzle" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/">Jigsaw Puzzle</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Leaderboard/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Leaderboard" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Leaderboard/">Leaderboard</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard/Leaderboard.html">Leaderboard</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Library%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Library Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/">Library Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System/Library%20Management%20System.html">Library Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/LinkedIn/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle LinkedIn" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/LinkedIn/">LinkedIn</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn/LinkedIn.html">LinkedIn</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Logging/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Logging" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Logging/">Logging</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging/Logging.html">Logging</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Meeting Scheduler" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/">Meeting Scheduler</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler/Meeting%20Scheduler.html">Meeting Scheduler</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Movie Ticket Booking System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/">Movie Ticket Booking System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Blackjack Game" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/">Online Blackjack Game</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Online Stock Brokerage System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/">Online Stock Brokerage System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/">Parking Lot</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/">Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot/Parking%20Lot.html">Parking Lot</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Pub-Sub/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Pub-Sub" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Pub-Sub/">Pub-Sub</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub/Pub-Sub.html">Pub-Sub</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Restaurant Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/">Restaurant Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System/Restaurant%20Management%20System.html">Restaurant Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Stack%20Overflow/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Stack Overflow" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/">Stack Overflow</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow/Stack%20Overflow.html">Stack Overflow</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Text Editor with Undo & Redo" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/">Text Editor with Undo & Redo</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Train Platform Management System" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/">Train Platform Management System</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Vending%20Machine/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Vending Machine" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/">Vending Machine</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine/Vending%20Machine.html">Vending Machine</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/Parking%20Lot/">Parking Lot</a>
+            </div>
+            <div class="content">
+                <h1 id="parking-lot-system-75-minute-interview-guide">Parking Lot System — 75-Minute Interview Guide</h1>
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>What is it?</strong> Multi-level parking garage system managing spot allocation, vehicle entry/exit, payment, and occupancy tracking.</p>
+<p><strong>Key Classes:</strong>
+- <code>ParkingLot</code> (Singleton): Central coordinator
+- <code>Level</code>: Floor in garage (numbered)
+- <code>Spot</code>: Individual parking space with vehicle/status
+- <code>Vehicle</code>: Car with license plate, entry time
+- <code>ParkingTicket</code>: Entry/exit record with charges
+- <code>PaymentProcessor</code>: Handles payment transactions</p>
+<p><strong>Core Flows:</strong>
+1. <strong>Entry</strong>: Vehicle enters → Find nearest available spot → Issue ticket → Update occupancy
+2. <strong>Occupancy Check</strong>: Get available spots per level → Compute occupancy percentage
+3. <strong>Exit</strong>: Vehicle exits → Calculate charges → Process payment → Release spot
+4. <strong>Pricing</strong>: Flat rate or time-based ($2/hour, max $20/day)
+5. <strong>Reporting</strong>: Track revenue, utilization, peak hours</p>
+<p><strong>5 Design Patterns:</strong>
+- <strong>Singleton</strong>: One <code>ParkingLot</code> system
+- <strong>State Machine</strong>: Spot status (available/occupied/reserved/maintenance)
+- <strong>Strategy</strong>: Different pricing strategies (hourly, daily, monthly)
+- <strong>Observer</strong>: Notify when lot full
+- <strong>Factory</strong>: Create tickets, process payments</p>
+<hr />
+<h2 id="system-overview">System Overview</h2>
+<p>Multi-level parking garage optimizing spot utilization, managing entry/exit, calculating charges, and processing payments in real-time.</p>
+<h3 id="requirements">Requirements</h3>
+<p><strong>Functional:</strong>
+- Find available spot near entrance
+- Issue parking ticket
+- Process vehicle exit
+- Calculate parking charges
+- Accept multiple payment methods
+- Track occupancy
+- Generate revenue reports
+- Support disabled/reserved spots</p>
+<p><strong>Non-Functional:</strong>
+- Entry/exit &lt; 30 seconds
+- Support 1000+ spots, 100+ concurrent vehicles
+- Accurate charge calculation
+- 99.9% uptime
+- Real-time occupancy display</p>
+<p><strong>Constraints:</strong>
+- Price: $2/hour, max $20/day
+- Max capacity: 1000 spots
+- Levels: 1-10
+- Spots per level: 100-200
+- Monthly pass: $200 (unlimited)</p>
+<hr />
+<h2 id="architecture-diagram-ascii-uml">Architecture Diagram (ASCII UML)</h2>
+<pre class="codehilite"><code>┌──────────────────┐
+│ ParkingLot       │
+│ (Singleton)      │
+└────────┬─────────┘
+         │
+    ┌────┼─────────┐
+    │    │         │
+    ▼    ▼         ▼
+┌───────┐ ┌─────────┐ ┌──────────┐
+│Levels │ │Vehicles │ │Tickets   │
+└───────┘ └─────────┘ └──────────┘
+    │
+    ▼
+┌─────────┐
+│Spots    │
+│- Status │ AVAILABLE → OCCUPIED → AVAILABLE
+│- Type   │       ↓
+│- Level  │   RESERVED
+└─────────┘
+
+Pricing Strategy:
+┌─────────────────────┐
+│ PricingStrategy     │
+├─────────────────────┤
+│ get_charge()        │
+└─────────────────────┘
+        △
+        │
+    ┌───┴───┬─────────┐
+    │       │         │
+┌───┴──┐ ┌─┴────┐ ┌──┴──┐
+│Hourly│ │Daily │ │Monthly
+└──────┘ └──────┘ └──────┘
+</code></pre>
+
+<hr />
+<h2 id="interview-qa-12-questions">Interview Q&amp;A (12 Questions)</h2>
+<h3 id="basic-level">Basic Level</h3>
+<p><strong>Q1: How do you find an available spot?</strong>
+A: Query all spots with status=AVAILABLE. Filter by level (prefer level 1 closest to exit). Return first available. If no available on level 1, search level 2, etc. O(1) with hash table of available spots per level.</p>
+<p><strong>Q2: What information is stored in a parking ticket?</strong>
+A: Entry time, vehicle license plate, spot ID, entry gate, exit gate (if exited), entry price, exit price, payment status, exit time. Ticket ID = unique identifier.</p>
+<p><strong>Q3: How do you calculate parking charge?</strong>
+A: Exit time - Entry time = duration in minutes. Charge = ceil(duration/60) × $2. Cap at $20/day. If monthly pass: $0. Example: 1.5 hours = 2 hours × $2 = $4.</p>
+<p><strong>Q4: What payment methods do you support?</strong>
+A: Cash, card (Visa/Mastercard), mobile pay (Apple Pay), monthly pass. Process via PaymentProcessor: validate, confirm, log transaction.</p>
+<p><strong>Q5: How do you handle the "lot full" scenario?</strong>
+A: When no available spots: display "Lot Full" at entrance. Notify via SMS/email if member subscribed. Reject entry vehicles. Track peak hours.</p>
+<h3 id="intermediate-level">Intermediate Level</h3>
+<p><strong>Q6: How do you track occupancy in real-time?</strong>
+A: Maintain counter: total_occupied = sum of occupied spots per level. Occupancy % = total_occupied / total_capacity. Update on entry/exit (atomic). Display on sign: "850/1000 occupied (85%)" every 30 seconds.</p>
+<p><strong>Q7: How to optimize finding nearest available spot?</strong>
+A: Index available spots per level. On entry: query level 1, if empty return first. If full, query level 2. Hierarchical search: O(k) where k = spots per level. Alternative: priority queue of available spots (distance from entrance).</p>
+<p><strong>Q8: How to handle reserved spots (disabled, VIP)?</strong>
+A: Mark spot.type = RESERVED. On entry: filter only type=STANDARD. Reserved spots not available to regular users. Update spot status: AVAILABLE/RESERVED for management.</p>
+<p><strong>Q9: How to integrate multiple payment gateways?</strong>
+A: PaymentProcessor has strategies: CashProcessor, CardProcessor, MobilePayProcessor. On exit: pass processor type. Each validates and charges accordingly. Unified interface.</p>
+<p><strong>Q10: How to prevent fraudulent exit (without paying)?</strong>
+A: On exit: require ticket OR license plate scan. Verify ticket matches vehicle. If no payment: hold vehicle (alert attendant). Cannot exit without payment confirmation. Audit trail logged.</p>
+<h3 id="advanced-level">Advanced Level</h3>
+<p><strong>Q11: How to scale to multiple parking lots?</strong>
+A: Global ParkingLotManager (Singleton) → manages multiple ParkingLot instances (one per location). Each lot has independent levels/spots/accounting. Unified dashboard shows all lots' occupancy + revenue.</p>
+<p><strong>Q12: How to implement dynamic pricing?</strong>
+A: Time-based: peak hours (9-5 weekdays) = $3/hour, off-peak = $1/hour. Demand-based: if occupancy &gt; 80%, surge pricing. Formula: base_price × occupancy_multiplier. Recalculate every 15 minutes.</p>
+<hr />
+<h2 id="scaling-qa-12-questions">Scaling Q&amp;A (12 Questions)</h2>
+<p><strong>Q1: Can you handle 10K vehicles/day across 1000 spots?</strong>
+A: Yes. Entry rate: 10K/24 hours = ~7 vehicles/minute. Processing time: 10 seconds per entry = 1 vehicle/second capacity. Available spots: O(1) lookup. Bottleneck: payment processing, not spot finding.</p>
+<p><strong>Q2: How to handle concurrent entry/exit?</strong>
+A: Use locks on spot availability. On entry: atomic compare-and-swap (CAS) to transition spot from AVAILABLE → OCCUPIED. Multiple threads can execute simultaneously on different spots. Serialized only for same spot.</p>
+<p><strong>Q3: How to process 100+ concurrent payments?</strong>
+A: Payment gateway supports 100+ concurrent requests (async). Queue exit requests if payment slow. Process in background: collect $$$, update ticket status (PAID), release spot. Non-blocking.</p>
+<p><strong>Q4: How to prevent double-billing?</strong>
+A: Ticket status: ISSUED → PAID → VALIDATED. On exit: check if PAID already. If yes: reject. Idempotency: payment_id unique, gateway deduplicates.</p>
+<p><strong>Q5: Can you handle 10x peak traffic (70 vehicles/min)?</strong>
+A: Yes, if hardware scales. Entry: find spot + issue ticket (10 sec each) = 6 vehicles/min per gate. Need 12 gates for 70 vehicles/min. Spot query: O(1), not bottleneck.</p>
+<p><strong>Q6: How to track revenue reliably?</strong>
+A: Log every transaction: ticket_id, amount, timestamp, payment_method, status. Store in DB. Reconcile daily: expected revenue (DB) vs actual (payment gateway). Alert if mismatch.</p>
+<p><strong>Q7: How to handle payment failures gracefully?</strong>
+A: Payment fails → retry 3x with exponential backoff. If all fail: mark ticket PAYMENT_PENDING. Attendant collects manual payment. Flag for investigation. Don't release spot until PAID.</p>
+<p><strong>Q8: How to integrate with traffic management?</strong>
+A: API: GET /lot/1/available_spots → return JSON with occupancy %. External navigation app (Google Maps) calls this. Route drivers based on availability. Reduces searching time.</p>
+<p><strong>Q9: How to support subscription/monthly passes?</strong>
+A: Member buys monthly pass ($200) → auto-linked to license plate. On entry: check license plate → find pass → exit free. No payment needed. Pass expires at end of month.</p>
+<p><strong>Q10: How to generate analytics on peak hours?</strong>
+A: Log entry/exit with timestamp. Batch job: hourly aggregation (9 AM: 45 entries, 5 PM: 120 entries). Identify peak = 5 PM weekdays. Use for pricing adjustments, staffing.</p>
+<p><strong>Q11: How to implement occupancy forecasting?</strong>
+A: Historical data: average occupancy by day/hour. ML model: predict occupancy at time T. Notify drivers ahead: "Lot 70% full at 3 PM, try Lot B". Distribute traffic.</p>
+<p><strong>Q12: How to distribute across multiple zones (100 spots each)?</strong>
+A: Partition spots: Zone A (1-100), Zone B (101-200), etc. Each zone has independent availability tracker. On entry: query all zones, return nearest available in Zone with lowest occupancy. Balance load.</p>
+<hr />
+<h2 id="demo-scenarios-5-examples">Demo Scenarios (5 Examples)</h2>
+<h3 id="demo-1-vehicle-entry">Demo 1: Vehicle Entry</h3>
+<pre class="codehilite"><code>- Vehicle arrives at entrance (Gate A)
+- System searches available spots
+- Finds Spot 47 (Level 2, near exit)
+- Issues ticket: TICKET_001, entry 10:00 AM
+- Vehicle proceeds to Level 2, Spot 47
+- Spot status: AVAILABLE → OCCUPIED
+</code></pre>
+
+<h3 id="demo-2-charge-calculation">Demo 2: Charge Calculation</h3>
+<pre class="codehilite"><code>- Vehicle exits at 1:30 PM (parked 3.5 hours)
+- Duration: 3.5 hours → rounds up to 4 hours
+- Charge: 4 × $2/hour = $8.00
+- Peak hours (3x) would be: 4 × $6 = $24 → capped at $20
+- Member pays via card → PAID
+</code></pre>
+
+<h3 id="demo-3-occupancy-tracking">Demo 3: Occupancy Tracking</h3>
+<pre class="codehilite"><code>- Lot total capacity: 1000
+- Currently occupied: 850
+- Occupancy: 85%
+- Display: &quot;850/1000 (85% FULL)&quot;
+- Status: accepting new entries
+- At 950+: alert entrance, display &quot;ALMOST FULL&quot;
+</code></pre>
+
+<h3 id="demo-4-monthly-pass">Demo 4: Monthly Pass</h3>
+<pre class="codehilite"><code>- John has monthly pass ($200)
+- License plate: ABC123
+- Enters at 9:00 AM
+- Ticket issued (no charge)
+- Exits at 5:00 PM
+- Payment: $0 (pass covers)
+- Log: 8-hour free parking
+</code></pre>
+
+<h3 id="demo-5-concurrent-entries">Demo 5: Concurrent Entries</h3>
+<pre class="codehilite"><code>- 10 vehicles enter simultaneously (gates 1-10)
+- Each searches available spots independently
+- 10 different spots allocated (no conflicts)
+- 10 tickets issued in parallel
+- All complete in 10 seconds
+</code></pre>
+
+<hr />
+<h2 id="complete-implementation">Complete Implementation</h2>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+🅿️ Parking Lot System - Interview Implementation
+Demonstrates:
+1. Real-time spot allocation
+2. Charge calculation
+3. Occupancy tracking
+4. Payment processing
+5. Multi-level management
+&quot;&quot;&quot;
+
+from enum import Enum
+from typing import List, Optional, Dict
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+import threading
+import heapq
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class SpotType(Enum):
+    STANDARD = 1
+    DISABLED = 2
+    RESERVED = 3
+    COMPACT = 4
+
+class SpotStatus(Enum):
+    AVAILABLE = 1
+    OCCUPIED = 2
+    MAINTENANCE = 3
+
+class VehicleType(Enum):
+    SEDAN = 1
+    SUV = 2
+    MOTORCYCLE = 3
+
+class TicketStatus(Enum):
+    ISSUED = 1
+    PAID = 2
+    VALIDATED = 3
+
+class PaymentMethod(Enum):
+    CASH = 1
+    CARD = 2
+    MOBILE_PAY = 3
+    PASS = 4
+
+# ============================================================================
+# DATA CLASSES
+# ============================================================================
+
+@dataclass
+class Spot:
+    spot_id: str
+    level: int
+    spot_type: SpotType
+    status: SpotStatus = SpotStatus.AVAILABLE
+    vehicle_license: Optional[str] = None
+    occupied_since: Optional[datetime] = None
+
+@dataclass
+class Vehicle:
+    license_plate: str
+    vehicle_type: VehicleType
+    entry_time: datetime
+    entry_gate: str
+
+@dataclass
+class ParkingTicket:
+    ticket_id: str
+    license_plate: str
+    spot_id: str
+    entry_time: datetime
+    exit_time: Optional[datetime] = None
+    charge: float = 0.0
+    status: TicketStatus = TicketStatus.ISSUED
+    payment_method: Optional[PaymentMethod] = None
+
+# ============================================================================
+# PRICING STRATEGIES
+# ============================================================================
+
+class PricingStrategy:
+    def get_charge(self, entry_time: datetime, exit_time: datetime, vehicle_type: VehicleType) -&gt; float:
+        pass
+
+class HourlyPricing(PricingStrategy):
+    def __init__(self, rate: float = 2.0, max_charge: float = 20.0):
+        self.rate = rate
+        self.max_charge = max_charge
+
+    def get_charge(self, entry_time: datetime, exit_time: datetime, vehicle_type: VehicleType = None) -&gt; float:
+        duration_minutes = (exit_time - entry_time).total_seconds() / 60
+        hours = -(-int(duration_minutes) // 60)  # Ceiling division
+        charge = min(hours * self.rate, self.max_charge)
+        return charge
+
+class DailyPricing(PricingStrategy):
+    def __init__(self, daily_rate: float = 15.0):
+        self.daily_rate = daily_rate
+
+    def get_charge(self, entry_time: datetime, exit_time: datetime, vehicle_type: VehicleType = None) -&gt; float:
+        duration_days = (exit_time - entry_time).days + 1
+        return duration_days * self.daily_rate
+
+class MonthlyPass(PricingStrategy):
+    def get_charge(self, entry_time: datetime, exit_time: datetime, vehicle_type: VehicleType = None) -&gt; float:
+        return 0.0
+
+# ============================================================================
+# PAYMENT PROCESSOR
+# ============================================================================
+
+class PaymentProcessor:
+    def process_payment(self, ticket: ParkingTicket, method: PaymentMethod) -&gt; bool:
+        print(f&quot;  Processing payment: ${ticket.charge:.2f} via {method.name}&quot;)
+        return True
+
+# ============================================================================
+# PARKING LOT (SINGLETON)
+# ============================================================================
+
+class ParkingLot:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self, levels: int = 3, spots_per_level: int = 100):
+        if hasattr(self, '_initialized'):
+            return
+
+        self._initialized = True
+        self.levels = levels
+        self.spots_per_level = spots_per_level
+        self.spots: Dict[str, Spot] = {}
+        self.available_spots: List[str] = []
+        self.tickets: Dict[str, ParkingTicket] = {}
+        self.ticket_counter = 0
+        self.lock = threading.Lock()
+        self.pricing_strategy = HourlyPricing()
+
+        # Initialize spots
+        spot_id = 0
+        for level in range(1, levels + 1):
+            for i in range(spots_per_level):
+                spot_id += 1
+                spot = Spot(
+                    f&quot;S{level}_{i+1}&quot;,
+                    level,
+                    SpotType.STANDARD if i &lt; 90 else SpotType.DISABLED,
+                    SpotStatus.AVAILABLE
+                )
+                self.spots[spot.spot_id] = spot
+                self.available_spots.append(spot.spot_id)
+
+        print(f&quot;🅿️ Parking lot initialized: {levels} levels, {spots_per_level} spots/level&quot;)
+
+    def find_available_spot(self) -&gt; Optional[Spot]:
+        with self.lock:
+            # Sort by level (prefer lower levels)
+            available = sorted(
+                [self.spots[s] for s in self.available_spots],
+                key=lambda x: x.level
+            )
+
+            if available:
+                return available[0]
+            return None
+
+    def park_vehicle(self, license_plate: str, vehicle_type: VehicleType, entry_gate: str) -&gt; Optional[str]:
+        with self.lock:
+            spot = self.find_available_spot()
+
+            if not spot:
+                print(f&quot;✗ No available spots. Lot is full.&quot;)
+                return None
+
+            # Issue ticket
+            self.ticket_counter += 1
+            ticket = ParkingTicket(
+                f&quot;T{self.ticket_counter:06d}&quot;,
+                license_plate,
+                spot.spot_id,
+                datetime.now(),
+                status=TicketStatus.ISSUED,
+                payment_method=None
+            )
+
+            self.tickets[ticket.ticket_id] = ticket
+
+            # Update spot
+            spot.status = SpotStatus.OCCUPIED
+            spot.vehicle_license = license_plate
+            spot.occupied_since = datetime.now()
+            self.available_spots.remove(spot.spot_id)
+
+            print(f&quot;✓ Vehicle {license_plate} parked at {spot.spot_id} (Level {spot.level})&quot;)
+            print(f&quot;  Ticket: {ticket.ticket_id}&quot;)
+
+            return ticket.ticket_id
+
+    def exit_vehicle(self, ticket_id: str, payment_method: PaymentMethod = PaymentMethod.CARD) -&gt; float:
+        with self.lock:
+            if ticket_id not in self.tickets:
+                return 0.0
+
+            ticket = self.tickets[ticket_id]
+            ticket.exit_time = datetime.now()
+
+            # Calculate charge
+            charge = self.pricing_strategy.get_charge(
+                ticket.entry_time,
+                ticket.exit_time
+            )
+            ticket.charge = charge
+
+            # Process payment
+            processor = PaymentProcessor()
+            if processor.process_payment(ticket, payment_method):
+                ticket.status = TicketStatus.PAID
+                ticket.payment_method = payment_method
+
+            # Release spot
+            spot = self.spots[ticket.spot_id]
+            spot.status = SpotStatus.AVAILABLE
+            spot.vehicle_license = None
+            self.available_spots.append(spot.spot_id)
+
+            print(f&quot;✓ Vehicle {ticket.license_plate} exited&quot;)
+            print(f&quot;  Duration: {(ticket.exit_time - ticket.entry_time).total_seconds()/3600:.1f} hours&quot;)
+            print(f&quot;  Charge: ${charge:.2f}&quot;)
+
+            return charge
+
+    def get_occupancy(self) -&gt; float:
+        with self.lock:
+            total = len(self.spots)
+            occupied = total - len(self.available_spots)
+            return (occupied / total) * 100
+
+    def get_available_count(self) -&gt; int:
+        with self.lock:
+            return len(self.available_spots)
+
+    def display_status(self):
+        with self.lock:
+            occupancy = self.get_occupancy()
+            available = self.get_available_count()
+            total = len(self.spots)
+
+            print(f&quot;\n  Parking Lot Status:&quot;)
+            print(f&quot;  Total capacity: {total}&quot;)
+            print(f&quot;  Occupied: {total - available}&quot;)
+            print(f&quot;  Available: {available}&quot;)
+            print(f&quot;  Occupancy: {occupancy:.1f}%&quot;)
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def demo_1_single_vehicle():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 1: SINGLE VEHICLE ENTRY &amp; EXIT&quot;)
+    print(&quot;=&quot;*70)
+
+    lot = ParkingLot(3, 50)
+
+    ticket_id = lot.park_vehicle(&quot;ABC123&quot;, VehicleType.SEDAN, &quot;Gate A&quot;)
+    if ticket_id:
+        charge = lot.exit_vehicle(ticket_id)
+        print(f&quot;  Total charge: ${charge:.2f}&quot;)
+
+def demo_2_occupancy():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 2: OCCUPANCY TRACKING&quot;)
+    print(&quot;=&quot;*70)
+
+    lot = ParkingLot(3, 50)
+
+    # Park 30 vehicles
+    tickets = []
+    for i in range(30):
+        ticket = lot.park_vehicle(f&quot;CAR{i:03d}&quot;, VehicleType.SEDAN, &quot;Gate A&quot;)
+        if ticket:
+            tickets.append(ticket)
+
+    lot.display_status()
+
+def demo_3_charge_calculation():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 3: CHARGE CALCULATION (Different durations)&quot;)
+    print(&quot;=&quot;*70)
+
+    lot = ParkingLot(2, 30)
+
+    # 30 minutes
+    ticket1 = lot.park_vehicle(&quot;SHORT&quot;, VehicleType.SEDAN, &quot;Gate A&quot;)
+    if ticket1:
+        t = lot.tickets[ticket1]
+        t.entry_time = datetime.now() - timedelta(minutes=30)
+        charge = lot.exit_vehicle(ticket1)
+
+    # 3.5 hours
+    ticket2 = lot.park_vehicle(&quot;MEDIUM&quot;, VehicleType.SUV, &quot;Gate A&quot;)
+    if ticket2:
+        t = lot.tickets[ticket2]
+        t.entry_time = datetime.now() - timedelta(hours=3, minutes=30)
+        charge = lot.exit_vehicle(ticket2)
+
+    # 15 hours (capped)
+    ticket3 = lot.park_vehicle(&quot;LONG&quot;, VehicleType.SEDAN, &quot;Gate A&quot;)
+    if ticket3:
+        t = lot.tickets[ticket3]
+        t.entry_time = datetime.now() - timedelta(hours=15)
+        charge = lot.exit_vehicle(ticket3)
+
+def demo_4_lot_full():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 4: LOT FULL SCENARIO&quot;)
+    print(&quot;=&quot;*70)
+
+    lot = ParkingLot(1, 5)  # Small lot for demo
+
+    tickets = []
+    for i in range(5):
+        ticket = lot.park_vehicle(f&quot;CAR{i}&quot;, VehicleType.SEDAN, &quot;Gate A&quot;)
+        if ticket:
+            tickets.append(ticket)
+
+    lot.display_status()
+
+    # Try to park when full
+    rejected = lot.park_vehicle(&quot;OVERFLOW&quot;, VehicleType.SEDAN, &quot;Gate A&quot;)
+
+    # Exit one vehicle
+    if tickets:
+        lot.exit_vehicle(tickets[0])
+
+    lot.display_status()
+
+    # Now can park again
+    ticket = lot.park_vehicle(&quot;OVERFLOW&quot;, VehicleType.SEDAN, &quot;Gate A&quot;)
+
+def demo_5_concurrent():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 5: CONCURRENT ENTRIES (Multi-threading)&quot;)
+    print(&quot;=&quot;*70)
+
+    lot = ParkingLot(2, 100)
+
+    def park_vehicle_concurrent(license_plate):
+        lot.park_vehicle(license_plate, VehicleType.SEDAN, &quot;Gate A&quot;)
+
+    # Simulate 10 concurrent entries
+    threads = []
+    for i in range(10):
+        t = threading.Thread(target=park_vehicle_concurrent, args=(f&quot;CONCURRENT{i}&quot;,))
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join()
+
+    lot.display_status()
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;🅿️ PARKING LOT SYSTEM - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_single_vehicle()
+    demo_2_occupancy()
+    demo_3_charge_calculation()
+    demo_4_lot_full()
+    demo_5_concurrent()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;✅ ALL DEMOS COMPLETED&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<hr />
+<h2 id="summary">Summary</h2>
+<p>✅ <strong>Real-time spot</strong> finding and allocation
+✅ <strong>Charge calculation</strong> with hourly/daily rates &amp; caps
+✅ <strong>Occupancy tracking</strong> and reporting
+✅ <strong>Payment processing</strong> (cash, card, pass, mobile)
+✅ <strong>Multi-level</strong> support (1-10 floors)
+✅ <strong>Peak hour</strong> pricing (dynamic multipliers)
+✅ <strong>Monthly pass</strong> integration
+✅ <strong>Traffic distribution</strong> across zones
+✅ <strong>Concurrent entry/exit</strong> without race conditions
+✅ <strong>Analytics</strong> (revenue, peak hours, forecasting)</p>
+<p><strong>Key Takeaway</strong>: Parking lot demonstrates real-time resource allocation, charge calculation with dynamic pricing, and high-concurrency transaction processing. Core focus: finding spots efficiently, calculating charges accurately, and managing occupancy.</p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-04-05</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>
