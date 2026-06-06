@@ -14,6 +14,49 @@ The Facade pattern provides a single unified interface to a set of classes/compo
 
 ---
 
+## Diagram
+
+**Structure (relationships)**
+
+```mermaid
+classDiagram
+    class HomeTheaterFacade {
+        +watch_movie(movie)
+        +end_movie()
+    }
+    class AudioSystem
+    class Projector
+    class Screen
+    class DVDPlayer
+    class Lights
+    HomeTheaterFacade --> AudioSystem
+    HomeTheaterFacade --> Projector
+    HomeTheaterFacade --> Screen
+    HomeTheaterFacade --> DVDPlayer
+    HomeTheaterFacade --> Lights
+    Client --> HomeTheaterFacade : one simple call
+```
+
+**Flow (runtime sequence)**
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant F as HomeTheaterFacade
+    participant L as Lights
+    participant S as Screen
+    participant P as Projector
+    participant A as AudioSystem
+    C->>F: watch_movie("Inception")
+    F->>L: dim(10)
+    F->>S: down()
+    F->>P: turn_on()
+    F->>A: set_volume(8)
+    Note over C,A: client makes 1 call,<br/>facade orchestrates the subsystem
+```
+
+---
+
 ## Implementation
 
 ```python

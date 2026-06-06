@@ -5,6 +5,7 @@ Converts markdown files to HTML with navigation
 """
 
 import os
+import re
 import sys
 from pathlib import Path
 import markdown
@@ -120,10 +121,36 @@ class SiteGenerator:
     
     def convert_to_html(self, markdown_content):
         """Convert markdown to HTML"""
+        # Pull out ```mermaid blocks before markdown/codehilite touches them,
+        # so they render as diagrams (via Mermaid.js) instead of escaped code.
+        mermaid_blocks = []
+
+        def _stash(match):
+            mermaid_blocks.append(match.group(1).strip())
+            return f"\n\nMERMAIDBLOCK{len(mermaid_blocks) - 1}ENDMERMAID\n\n"
+
+        markdown_content = re.sub(
+            r"```mermaid\s*\n(.*?)```",
+            _stash,
+            markdown_content,
+            flags=re.DOTALL,
+        )
+
         html_content = markdown.markdown(
             markdown_content,
             extensions=['extra', 'codehilite', 'toc']
         )
+
+        # Re-insert each diagram as a <pre class="mermaid"> that Mermaid.js renders.
+        for i, block in enumerate(mermaid_blocks):
+            escaped = (block.replace("&", "&amp;")
+                            .replace("<", "&lt;")
+                            .replace(">", "&gt;"))
+            placeholder = f"<p>MERMAIDBLOCK{i}ENDMERMAID</p>"
+            html_content = html_content.replace(
+                placeholder, f'<pre class="mermaid">{escaped}</pre>'
+            )
+
         return html_content
     
     def get_nav_items(self, current_path=None):
@@ -523,6 +550,11 @@ class SiteGenerator:
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({{ startOnLoad: true, theme: dark ? 'dark' : 'default' }});
+    </script>
     <script>
     // 1. DARK MODE
     (function() {{
@@ -553,6 +585,7 @@ class SiteGenerator:
     // 3. COPY CODE BUTTONS
     (function() {{
         document.querySelectorAll('pre').forEach(function(pre) {{
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
             var wrapper = document.createElement('div');
             wrapper.className = 'code-block-wrapper';
             pre.parentNode.insertBefore(wrapper, pre);

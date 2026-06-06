@@ -14,6 +14,56 @@ The Command pattern encapsulates requests as objects. This allows treating comma
 
 ---
 
+## Diagram
+
+**Structure (relationships)**
+
+```mermaid
+classDiagram
+    class Command {
+        <<interface>>
+        +execute()
+        +undo()
+    }
+    class InsertCommand
+    class DeleteCommand
+    class Editor {
+        -undo_stack
+        -redo_stack
+        +execute(cmd)
+        +undo()
+        +redo()
+    }
+    class TextDocument {
+        +insert(s)
+        +delete_last(n)
+    }
+    Command <|-- InsertCommand
+    Command <|-- DeleteCommand
+    Editor --> Command : invokes and stores
+    InsertCommand --> TextDocument : acts on receiver
+    DeleteCommand --> TextDocument : acts on receiver
+```
+
+**Flow (runtime sequence)**
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant E as Editor (Invoker)
+    participant Cmd as InsertCommand
+    participant D as TextDocument (Receiver)
+    C->>E: execute(InsertCommand)
+    E->>Cmd: execute()
+    Cmd->>D: insert("hi")
+    E->>E: push to undo_stack
+    C->>E: undo()
+    E->>Cmd: undo()
+    Cmd->>D: delete_last(2)
+```
+
+---
+
 ## Implementation
 
 ```python

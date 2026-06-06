@@ -14,6 +14,49 @@ The Builder pattern separates construction logic into a builder class, allowing 
 
 ---
 
+## Diagram
+
+**Structure (relationships)**
+
+```mermaid
+classDiagram
+    class Burger {
+        +buns
+        +patty
+        +cheese
+        +lettuce
+    }
+    class BurgerBuilder {
+        -burger: Burger
+        +add_buns() BurgerBuilder
+        +add_patty() BurgerBuilder
+        +add_cheese() BurgerBuilder
+        +build() Burger
+    }
+    BurgerBuilder --> Burger : builds step by step
+    Client --> BurgerBuilder : chains calls
+```
+
+**Flow (runtime sequence)**
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant B as BurgerBuilder
+    participant P as Burger (Product)
+    C->>B: new BurgerBuilder()
+    C->>B: add_buns("sesame")
+    B-->>C: self (for chaining)
+    C->>B: add_patty("beef")
+    B-->>C: self
+    C->>B: add_cheese("cheddar")
+    B-->>C: self
+    C->>B: build()
+    B-->>C: finished Burger
+```
+
+---
+
 ## Implementation
 
 ```python

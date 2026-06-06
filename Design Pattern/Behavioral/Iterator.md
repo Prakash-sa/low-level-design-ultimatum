@@ -14,6 +14,50 @@ The Iterator pattern abstracts iteration logic into a separate object that knows
 
 ---
 
+## Diagram
+
+**Structure (relationships)**
+
+```mermaid
+classDiagram
+    class Iterable {
+        <<interface>>
+        +create_iterator() Iterator
+    }
+    class Iterator {
+        <<interface>>
+        +has_next() bool
+        +next() T
+    }
+    class LinkedList
+    class LinkedListIterator
+    Iterable <|-- LinkedList
+    Iterator <|-- LinkedListIterator
+    LinkedList ..> LinkedListIterator : creates
+    LinkedListIterator --> LinkedList : traverses
+```
+
+**Flow (runtime sequence)**
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant L as LinkedList
+    participant It as LinkedListIterator
+    C->>L: create_iterator()
+    L-->>C: iterator
+    loop while has_next()
+        C->>It: has_next()
+        It-->>C: True
+        C->>It: next()
+        It-->>C: element
+    end
+    C->>It: has_next()
+    It-->>C: False (stop)
+```
+
+---
+
 ## Implementation
 
 ```python

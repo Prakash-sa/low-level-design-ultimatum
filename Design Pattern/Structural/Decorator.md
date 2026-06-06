@@ -14,6 +14,49 @@ The Decorator pattern uses composition to wrap objects with decorators that add 
 
 ---
 
+## Diagram
+
+**Structure (relationships)**
+
+```mermaid
+classDiagram
+    class Beverage {
+        <<abstract>>
+        +get_description()
+        +get_cost()
+    }
+    class SimpleCoffee
+    class BeverageDecorator {
+        -beverage: Beverage
+    }
+    class MilkDecorator
+    class SugarDecorator
+    Beverage <|-- SimpleCoffee
+    Beverage <|-- BeverageDecorator
+    BeverageDecorator <|-- MilkDecorator
+    BeverageDecorator <|-- SugarDecorator
+    BeverageDecorator o--> Beverage : wraps
+```
+
+**Flow (runtime sequence)**
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant M as MilkDecorator
+    participant S as SugarDecorator
+    participant Co as SimpleCoffee
+    Note over C: MilkDecorator(SugarDecorator(SimpleCoffee()))
+    C->>M: get_cost()
+    M->>S: get_cost()
+    S->>Co: get_cost()
+    Co-->>S: 2.0
+    S-->>M: 2.0 + 0.25
+    M-->>C: 2.25 + 0.5 = 2.75
+```
+
+---
+
 ## Implementation
 
 ```python

@@ -14,6 +14,47 @@ The Factory pattern abstracts object creation into a factory method or factory c
 
 ---
 
+## Diagram
+
+**Structure (relationships)**
+
+```mermaid
+classDiagram
+    class Burger {
+        <<abstract>>
+        +prepare()
+        +get_price()
+    }
+    class CheeseBurger
+    class VeganBurger
+    class SpecialBurger
+    class BurgerFactory {
+        +create_burger(type) Burger$
+    }
+    Burger <|-- CheeseBurger
+    Burger <|-- VeganBurger
+    Burger <|-- SpecialBurger
+    BurgerFactory ..> Burger : creates
+    Client --> BurgerFactory : create_burger(type)
+```
+
+**Flow (runtime sequence)**
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant F as BurgerFactory
+    participant P as VeganBurger
+    C->>F: create_burger("vegan")
+    Note over F: decides which class<br/>to instantiate
+    F->>P: new VeganBurger()
+    F-->>C: Burger reference
+    C->>P: prepare()
+    P-->>C: result
+```
+
+---
+
 ## Implementation
 
 ```python

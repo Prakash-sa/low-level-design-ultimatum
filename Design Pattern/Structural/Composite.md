@@ -14,6 +14,49 @@ The Composite pattern represents part-whole hierarchies as tree structures compo
 
 ---
 
+## Diagram
+
+**Structure (relationships)**
+
+```mermaid
+classDiagram
+    class FileSystemComponent {
+        <<abstract>>
+        +get_size()
+        +display()
+    }
+    class File {
+        +get_size()
+        +display()
+    }
+    class Folder {
+        -children
+        +add_component(c)
+        +get_size()
+    }
+    FileSystemComponent <|-- File
+    FileSystemComponent <|-- Folder
+    Folder o--> FileSystemComponent : children (many)
+```
+
+**Flow (runtime sequence)**
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant F as Folder (root)
+    participant Sub as Folder (sub)
+    participant Fi as File
+    C->>F: get_size()
+    F->>Sub: get_size()
+    Sub->>Fi: get_size()
+    Fi-->>Sub: 10
+    Sub-->>F: 10
+    F-->>C: total (recursive sum)
+```
+
+---
+
 ## Implementation
 
 ```python

@@ -14,6 +14,59 @@ The Abstract Factory pattern provides an interface for creating families of rela
 
 ---
 
+## Diagram
+
+**Structure (relationships)**
+
+```mermaid
+classDiagram
+    class GUIFactory {
+        <<abstract>>
+        +create_button() Button
+        +create_checkbox() Checkbox
+    }
+    class WindowsFactory
+    class MacFactory
+    class Button {
+        <<abstract>>
+        +render()
+    }
+    class Checkbox {
+        <<abstract>>
+        +render()
+    }
+    GUIFactory <|-- WindowsFactory
+    GUIFactory <|-- MacFactory
+    Button <|-- WindowsButton
+    Button <|-- MacButton
+    Checkbox <|-- WindowsCheckbox
+    Checkbox <|-- MacCheckbox
+    WindowsFactory ..> WindowsButton : creates
+    WindowsFactory ..> WindowsCheckbox : creates
+    MacFactory ..> MacButton : creates
+    MacFactory ..> MacCheckbox : creates
+    Client --> GUIFactory : uses
+```
+
+**Flow (runtime sequence)**
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant F as WindowsFactory
+    participant B as WindowsButton
+    participant Ch as WindowsCheckbox
+    C->>F: create_button()
+    F->>B: new WindowsButton()
+    F-->>C: Button
+    C->>F: create_checkbox()
+    F->>Ch: new WindowsCheckbox()
+    F-->>C: Checkbox
+    Note over C,Ch: all products belong to<br/>the same family (Windows)
+```
+
+---
+
 ## Implementation
 
 ```python

@@ -14,6 +14,45 @@ The Circuit Breaker pattern monitors for failures and automatically stops sendin
 
 ---
 
+## Diagram
+
+**State transitions**
+
+```mermaid
+stateDiagram-v2
+    [*] --> CLOSED
+    CLOSED --> OPEN : failures >= threshold
+    OPEN --> HALF_OPEN : timeout elapsed
+    HALF_OPEN --> CLOSED : successes >= threshold
+    HALF_OPEN --> OPEN : a trial call fails
+    CLOSED --> CLOSED : success (reset count)
+```
+
+**Flow (runtime sequence)**
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant CB as CircuitBreaker
+    participant S as Service
+    C->>CB: call(func)
+    alt state == OPEN
+        CB-->>C: raise "Circuit OPEN" (fail fast)
+    else state == CLOSED or HALF_OPEN
+        CB->>S: func()
+        alt success
+            S-->>CB: result
+            CB-->>C: result
+        else failure
+            S-->>CB: exception
+            Note over CB: failure_count++,<br/>may trip to OPEN
+            CB-->>C: error
+        end
+    end
+```
+
+---
+
 ## Implementation
 
 ```python

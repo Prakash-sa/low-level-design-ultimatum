@@ -14,6 +14,45 @@ The Adapter pattern converts one interface to another by wrapping the incompatib
 
 ---
 
+## Diagram
+
+**Structure (relationships)**
+
+```mermaid
+classDiagram
+    class PaymentProcessor {
+        <<interface>>
+        +pay(amount) bool
+    }
+    class LegacyPaymentProcessor {
+        +process_payment(amount) dict
+    }
+    class PaymentAdapterComposition {
+        -legacy_processor
+        +pay(amount) bool
+    }
+    PaymentProcessor <|-- PaymentAdapterComposition
+    PaymentAdapterComposition o--> LegacyPaymentProcessor : wraps and translates
+    Client --> PaymentProcessor : expects pay()
+```
+
+**Flow (runtime sequence)**
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as PaymentAdapterComposition
+    participant L as LegacyPaymentProcessor
+    C->>A: pay(100)
+    Note over A: translate call to<br/>legacy interface
+    A->>L: process_payment(100)
+    L-->>A: {"status": "completed"}
+    Note over A: translate result<br/>dict to bool
+    A-->>C: True
+```
+
+---
+
 ## Implementation
 
 ```python

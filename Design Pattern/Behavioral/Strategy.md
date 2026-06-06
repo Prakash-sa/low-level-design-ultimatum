@@ -14,6 +14,47 @@ The Strategy pattern extracts algorithms into separate Strategy classes that imp
 
 ---
 
+## Diagram
+
+**Structure (relationships)**
+
+```mermaid
+classDiagram
+    class PaymentStrategy {
+        <<interface>>
+        +pay(amount) bool
+    }
+    class CreditCardPayment
+    class PayPalPayment
+    class CryptocurrencyPayment
+    class ShoppingCart {
+        -payment_strategy
+        +set_payment_strategy(s)
+        +checkout()
+    }
+    PaymentStrategy <|-- CreditCardPayment
+    PaymentStrategy <|-- PayPalPayment
+    PaymentStrategy <|-- CryptocurrencyPayment
+    ShoppingCart o--> PaymentStrategy : uses
+```
+
+**Flow (runtime sequence)**
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant Cart as ShoppingCart (Context)
+    participant S as PaymentStrategy
+    C->>Cart: set_payment_strategy(PayPalPayment)
+    C->>Cart: checkout()
+    Cart->>S: pay(total)
+    Note over S: algorithm chosen<br/>at runtime
+    S-->>Cart: True
+    Cart-->>C: success
+```
+
+---
+
 ## Implementation
 
 ```python

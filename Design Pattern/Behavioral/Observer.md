@@ -14,6 +14,47 @@ The Observer pattern defines a Subject that maintains a list of Observers. When 
 
 ---
 
+## Diagram
+
+**Structure (relationships)**
+
+```mermaid
+classDiagram
+    class Subject {
+        -observers: List~Observer~
+        +attach(o)
+        +detach(o)
+        +notify(event, data)
+    }
+    class Observer {
+        <<abstract>>
+        +update(event, data)
+    }
+    class YouTubeChannel
+    class YouTubeUser
+    class EmailNotifier
+    Subject <|-- YouTubeChannel
+    Observer <|-- YouTubeUser
+    Observer <|-- EmailNotifier
+    Subject o--> Observer : notifies many
+```
+
+**Flow (runtime sequence)**
+
+```mermaid
+sequenceDiagram
+    participant Ch as YouTubeChannel (Subject)
+    participant U as YouTubeUser
+    participant E as EmailNotifier
+    U->>Ch: attach(self)
+    E->>Ch: attach(self)
+    Note over Ch: upload_video("LLD")<br/>triggers notify()
+    Ch->>U: update("video_uploaded", data)
+    Ch->>E: update("video_uploaded", data)
+```
+
+---
+
 ## Implementation
 
 ```python

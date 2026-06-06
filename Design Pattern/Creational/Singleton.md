@@ -14,6 +14,39 @@ The Singleton pattern restricts instantiation to a single object and provides a 
 
 ---
 
+## Diagram
+
+**Structure (relationships)**
+
+```mermaid
+classDiagram
+    class Singleton {
+        -instance: Singleton$
+        -lock
+        +get_instance() Singleton$
+        +business_method()
+    }
+    Singleton ..> Singleton : creates and caches
+    Client --> Singleton : get_instance()
+```
+
+**Flow (runtime sequence)**
+
+```mermaid
+sequenceDiagram
+    participant C1 as Client A
+    participant C2 as Client B
+    participant S as Singleton
+    C1->>S: get_instance()
+    Note over S: instance is None,<br/>create and cache it
+    S-->>C1: instance #1
+    C2->>S: get_instance()
+    Note over S: instance exists,<br/>return cached one
+    S-->>C2: instance #1 (same object)
+```
+
+---
+
 ## Implementation
 
 ```python
