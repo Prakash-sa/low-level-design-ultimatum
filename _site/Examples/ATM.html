@@ -1,0 +1,1966 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ATM - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="atm-system-complete-design-guide">ATM System — Complete Design Guide</h1>
+<blockquote>
+<p>Card-based authentication, PIN verification, cash withdrawal/deposit with daily limits, session management with auto-logout, and concurrent multi-user access.</p>
+</blockquote>
+<p><strong>Scale</strong>: 1,000+ concurrent users, 100+ ATM machines, 99.9% uptime
+<strong>Duration</strong>: 75-minute interview guide
+<strong>Focus</strong>: Secure authentication, limit enforcement, session lifecycle, thread-safe balance updates</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>A user inserts a card → enters PIN (3 attempts max before block) → system creates a timed session → user does balance inquiry / withdrawal / deposit under daily and per-transaction limits → session auto-expires after inactivity. Core concerns: security, correctness (no double-spend), and state management.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>Insert Card → Verify PIN (3 tries) → SESSION (5 min) → Withdraw / Deposit / Balance
+                    ↓ 3 failures              ↓ inactivity
+              CARD BLOCKED (30 min)      SESSION EXPIRED (auto-logout)
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Single machine or networked?</strong> → "Networked, 100+ ATMs sharing one backing system"</li>
+<li><strong>Multiple cards/accounts per user?</strong> → "Yes, a user can hold several cards and accounts"</li>
+<li><strong>Real bank integration?</strong> → "Mock backing service for the interview"</li>
+<li><strong>Security depth (encryption/hashing)?</strong> → "Discuss it; implement plaintext PIN for brevity"</li>
+<li><strong>Offline mode?</strong> → "Out of scope for the core; mention as a scaling concern"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Cardholder</strong></td>
+<td>Authenticates &amp; transacts</td>
+<td>Insert card, enter PIN, withdraw, deposit, check balance</td>
+</tr>
+<tr>
+<td><strong>Bank Admin</strong></td>
+<td>Manages users &amp; machines</td>
+<td>Register users, issue cards, create accounts, register ATMs</td>
+</tr>
+<tr>
+<td><strong>System</strong></td>
+<td>Coordinator &amp; notifier</td>
+<td>Verify PIN, enforce limits, expire sessions, send notifications</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Authentication</strong>
+  - Validate card + PIN with a 3-attempt limit
+  - Block card for 30 minutes after 3 failed attempts</p>
+<p>✅ <strong>Balance &amp; Transactions</strong>
+  - Real-time balance inquiry
+  - Cash withdrawal with per-transaction and daily limits
+  - Cash deposit
+  - Record full transaction history</p>
+<p>✅ <strong>Session Management</strong>
+  - Create a session on successful login
+  - Auto-logout after 5 minutes of inactivity
+  - Reject operations on expired sessions</p>
+<p>✅ <strong>Notifications</strong>
+  - Notify on login, transaction success, logout
+  - Support multiple channels (email, SMS, push)</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Concurrency</strong>: Support 1000+ simultaneous users
+✅ <strong>Consistency</strong>: No double-spend; atomic balance updates
+✅ <strong>Latency</strong>: O(1) authentication and balance lookups
+✅ <strong>Availability</strong>: 99.9% uptime with redundant machines
+✅ <strong>Security</strong>: Card blocking, session timeout, limit enforcement
+✅ <strong>Cleanup</strong>: Expired sessions reclaimed automatically</p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Max PIN attempts</strong></td>
+<td>3 (then block card 30 min)</td>
+</tr>
+<tr>
+<td><strong>Daily withdrawal limit</strong></td>
+<td>$2,000 per account</td>
+</tr>
+<tr>
+<td><strong>Per-transaction limit</strong></td>
+<td>$500</td>
+</tr>
+<tr>
+<td><strong>Session timeout</strong></td>
+<td>5 minutes inactivity</td>
+</tr>
+<tr>
+<td><strong>Multiple cards per user</strong></td>
+<td>YES</td>
+</tr>
+<tr>
+<td><strong>Real payment network</strong></td>
+<td>NO — mock backing service</td>
+</tr>
+<tr>
+<td><strong>PIN storage</strong></td>
+<td>Plaintext for demo (hash in production)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on the whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<pre class="codehilite"><code>User, Card, Account, Session, ATMMachine, Transaction, Notification, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="card-a-physical-atm-card"><strong>Card</strong> — A physical ATM card</h4>
+<pre class="codehilite"><code>Properties:
+  - card_number: str
+  - pin: str
+  - user_id: str
+  - status: CardStatus (ACTIVE, BLOCKED, EXPIRED)
+  - failed_attempts: int
+  - blocked_until: Optional[datetime]
+
+Behaviors:
+  - is_valid(): Check active &amp; not blocked/expired
+  - verify_pin(pin): Compare PIN, increment attempts, block on 3rd failure
+  - block_card(): Set BLOCKED for 30 minutes
+</code></pre>
+
+<h4 id="user-an-atm-user-profile"><strong>User</strong> — An ATM user profile</h4>
+<pre class="codehilite"><code>Properties:
+  - user_id: str
+  - name: str
+  - cards: List[Card]
+  - accounts: List[Account]
+
+Behaviors:
+  - add_card(card) / add_account(account)
+  - get_primary_account(): Default account for transactions
+</code></pre>
+
+<h4 id="account-a-bank-account-with-limits"><strong>Account</strong> — A bank account with limits</h4>
+<pre class="codehilite"><code>Properties:
+  - account_id: str
+  - user_id: str
+  - balance: float
+  - daily_withdrawal_limit: float ($2000)
+  - daily_withdrawal_used: float
+  - transaction_limit: float ($500)
+  - transactions: List[Transaction]
+  - lock: threading.Lock
+
+Behaviors:
+  - can_withdraw(amount): Validate limits + balance
+  - withdraw(amount) / deposit(amount): Atomic balance change
+  - reset_daily_limits(): Zero daily usage at midnight
+  - get_balance(): Thread-safe read
+</code></pre>
+
+<h4 id="session-a-users-active-session-at-an-atm"><strong>Session</strong> — A user's active session at an ATM</h4>
+<pre class="codehilite"><code>Properties:
+  - session_id: str
+  - user: User
+  - card: Card
+  - atm_machine: ATMMachine
+  - state: SessionState (LOGGED_IN, LOGGED_OUT, EXPIRED)
+  - last_activity: datetime
+  - timeout_duration: timedelta (5 min)
+
+Behaviors:
+  - is_expired(): Check inactivity timeout
+  - update_activity(): Refresh last_activity
+  - logout(): End session
+</code></pre>
+
+<h4 id="atmmachine-a-physical-atm"><strong>ATMMachine</strong> — A physical ATM</h4>
+<pre class="codehilite"><code>Properties:
+  - machine_id: str
+  - location: str
+  - cash_balance: float
+  - sessions: Dict[str, Session]
+  - transactions: List[Transaction]
+
+Behaviors:
+  - has_cash(amount): Check available cash
+  - dispense_cash(amount) / accept_deposit(amount)
+</code></pre>
+
+<h4 id="transaction-a-single-operation-record"><strong>Transaction</strong> — A single operation record</h4>
+<pre class="codehilite"><code>Properties:
+  - transaction_id: str
+  - account_id: str
+  - type: TransactionType (BALANCE_INQUIRY, WITHDRAWAL, DEPOSIT)
+  - amount: float
+  - status: TransactionStatus (PENDING, SUCCESS, FAILED)
+  - created_at: datetime
+
+Behaviors:
+  - execute(account): Apply to account, set status
+</code></pre>
+
+<h4 id="atmsystem-main-controller-singleton"><strong>ATMSystem</strong> — Main controller (Singleton)</h4>
+<pre class="codehilite"><code>Properties:
+  - users / accounts / machines: Dict
+  - observers: List[TransactionObserver]
+  - lock: threading.Lock
+
+Behaviors:
+  - register_user / create_account / issue_card / register_machine
+  - login(card_number, pin, machine_id): Authenticate + create session
+  - process_transaction(session, type, amount): Validate + execute
+  - logout(session): End session
+  - add_observer / notify_observers
+</code></pre>
+
+<h3 id="step-23-define-enumerations-state-type">Step 2.3: Define Enumerations (State &amp; Type)</h3>
+<pre class="codehilite"><code class="language-python">class TransactionType(Enum):
+    BALANCE_INQUIRY = 1
+    WITHDRAWAL = 2
+    DEPOSIT = 3
+
+class TransactionStatus(Enum):
+    PENDING = 1
+    SUCCESS = 2
+    FAILED = 3
+
+class SessionState(Enum):
+    LOGGED_OUT = 1
+    LOGGED_IN = 2
+    SESSION_LOCKED = 3
+    EXPIRED = 4
+
+class CardStatus(Enum):
+    ACTIVE = 1
+    BLOCKED = 2
+    EXPIRED = 3
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Card</strong></td>
+<td>Authentication + blocking</td>
+<td>No brute-force protection</td>
+</tr>
+<tr>
+<td><strong>User</strong></td>
+<td>Owns cards/accounts</td>
+<td>Can't link cards to balances</td>
+</tr>
+<tr>
+<td><strong>Account</strong></td>
+<td>Balance + limit tracking</td>
+<td>Can't enforce limits or prevent overdraft</td>
+</tr>
+<tr>
+<td><strong>Session</strong></td>
+<td>Timed access control</td>
+<td>Abandoned ATM stays logged in</td>
+</tr>
+<tr>
+<td><strong>ATMMachine</strong></td>
+<td>Physical cash management</td>
+<td>Can't prevent cash overdraft</td>
+</tr>
+<tr>
+<td><strong>Transaction</strong></td>
+<td>Audit + history</td>
+<td>No traceability</td>
+</tr>
+<tr>
+<td><strong>ATMSystem</strong></td>
+<td>Central coordination</td>
+<td>No thread-safe single source of truth</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-login-critical"><strong>1. Login</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def login(card_number: str, pin: str, machine_id: str) -&gt; Tuple[bool, Optional[Session]]:
+    &quot;&quot;&quot;
+    Authenticate cardholder and open a session.
+
+    Precondition: card is ACTIVE and not blocked
+    Postcondition: session.state == LOGGED_IN on success
+
+    Returns: (True, Session) on success, (False, None) on failure.
+
+    Failure causes:
+      - Card not found / invalid / blocked
+      - Wrong PIN (increments failed_attempts; blocks card on 3rd)
+      - Machine not found
+
+    Concurrency: THREAD-SAFE (guarded by system lock)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="2-process-transaction-critical"><strong>2. Process Transaction</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def process_transaction(session: Session, trans_type: TransactionType,
+                        amount: float = 0.0) -&gt; Tuple[bool, str]:
+    &quot;&quot;&quot;
+    Execute a balance inquiry, withdrawal, or deposit.
+
+    Precondition: session not expired
+    Postcondition: account balance updated atomically on success
+
+    Returns: (True, message) or (False, reason).
+
+    Failure causes:
+      - Session expired
+      - No linked account
+      - ATM has insufficient cash (withdrawal)
+      - Per-transaction / daily limit exceeded
+      - Insufficient funds
+
+    Side Effects: dispenses cash, records transaction, notifies observers
+    Concurrency: THREAD-SAFE (account lock)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="3-logout"><strong>3. Logout</strong></h4>
+<pre class="codehilite"><code class="language-python">def logout(session: Session) -&gt; None:
+    &quot;&quot;&quot;
+    End a session and remove it from the machine.
+    Postcondition: session.state == LOGGED_OUT
+    Side Effects: notifies observers
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="4-setup-apis"><strong>4. Setup APIs</strong></h4>
+<pre class="codehilite"><code class="language-python">def register_user(user_id: str, name: str) -&gt; User: ...
+def create_account(account_id: str, user_id: str, balance: float = 1000.0) -&gt; Account: ...
+def issue_card(card_number: str, pin: str, user_id: str) -&gt; Card: ...
+def register_machine(machine_id: str, location: str) -&gt; ATMMachine: ...
+</code></pre>
+
+<h4 id="5-register-observer-for-notifications"><strong>5. Register Observer</strong> (For Notifications)</h4>
+<pre class="codehilite"><code class="language-python">def add_observer(observer: TransactionObserver) -&gt; None:
+    &quot;&quot;&quot;
+    Register a callback for ATM events (login, transaction, logout).
+    Observer is called: observer.update(event, data)
+    Example: Add EmailNotifier + SMSNotifier for multi-channel alerts.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-32-exception-failure-model">Step 3.2: Exception / Failure Model</h3>
+<p>This design returns <code>(bool, message)</code> tuples rather than raising, keeping the demo interview-friendly. A production version would raise a typed hierarchy:</p>
+<pre class="codehilite"><code class="language-python">class ATMException(Exception): ...
+class CardBlockedError(ATMException): ...
+class InvalidPinError(ATMException): ...
+class InsufficientFundsError(ATMException): ...
+class DailyLimitExceededError(ATMException): ...
+class SessionExpiredError(ATMException): ...
+class ATMOutOfCashError(ATMException): ...
+</code></pre>
+
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">system = ATMSystem()
+
+# 1. Setup
+system.register_user(&quot;U001&quot;, &quot;John Doe&quot;)
+account = system.create_account(&quot;ACC001&quot;, &quot;U001&quot;, balance=1500.0)
+system.issue_card(&quot;4532123456789012&quot;, &quot;1234&quot;, &quot;U001&quot;)
+system.register_machine(&quot;ATM001&quot;, &quot;Main Street&quot;)
+system.add_observer(EmailNotifier())
+
+# 2. Login
+ok, session = system.login(&quot;4532123456789012&quot;, &quot;1234&quot;, &quot;ATM001&quot;)
+
+# 3. Withdraw
+ok, msg = system.process_transaction(session, TransactionType.WITHDRAWAL, 300.0)
+
+# 4. Logout
+system.logout(session)
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and association. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>ATMSystem HAS-A users / accounts / machines (1:N Composition)
+  └─ System owns and manages lifecycle of all entities
+
+User HAS-A cards (1:N Composition)
+  └─ User owns multiple cards
+
+User HAS-A accounts (1:N Composition)
+  └─ User owns multiple accounts
+
+Session REFERENCES user, card, machine (1:1 Association)
+  └─ Session links to existing entities (no ownership)
+
+ATMMachine HAS-A sessions (1:N Composition)
+  └─ Machine tracks active sessions
+
+Account HAS-A transactions (1:N Composition)
+  └─ Account owns its transaction history
+
+ATMSystem NOTIFIES TransactionObserver (1:N Association)
+  └─ Multiple observers listen to events
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌────────────────────────────────────┐
+│     ATMSystem (Singleton)          │
+├────────────────────────────────────┤
+│ - users: Dict[str, User]           │
+│ - accounts: Dict[str, Account]     │
+│ - machines: Dict[str, ATMMachine]  │
+│ - observers: List[Observer]        │
+│ - lock: threading.Lock             │
+├────────────────────────────────────┤
+│ + login(...): (bool, Session)      │
+│ + process_transaction(...): (bool) │
+│ + logout(session): void            │
+│ + add_observer(observer): void     │
+└──────────────┬─────────────────────┘
+       manages 1:N
+   ┌──────────┼───────────┐
+   ▼          ▼           ▼
+┌────────┐ ┌─────────┐ ┌──────────┐
+│  User  │ │ Account │ │ATMMachine│
+├────────┤ ├─────────┤ ├──────────┤
+│user_id │ │balance  │ │cash      │
+│cards[] │ │daily$   │ │sessions[]│
+│accts[] │ │limit    │ │txns[]    │
+└───┬────┘ └────┬────┘ └────┬─────┘
+    │           │           │
+    ▼           ▼           ▼
+┌────────┐ ┌────────────┐ ┌──────────┐
+│  Card  │ │Transaction │ │ Session  │
+├────────┤ ├────────────┤ ├──────────┤
+│number  │ │type: Enum  │ │state:Enum│
+│pin     │ │amount      │ │last_act  │
+│status  │ │status      │ │timeout   │
+│blocked │ │created_at  │ │is_expired│
+└────────┘ └────────────┘ └──────────┘
+
+OBSERVER PATTERN (Notifications):
+┌────────────────────────────────────┐
+│ TransactionObserver (Abstract)     │
+├────────────────────────────────────┤
+│ + update(event, data)              │
+└──┬─────────────────────────────────┘
+   │ implemented by
+   ├─→ EmailNotifier
+   ├─→ SMSNotifier
+   └─→ PushNotifier
+
+STATE MACHINE (Session):
+LOGGED_OUT ──login──→ LOGGED_IN ──timeout/logout──→ EXPIRED
+      ▲                                                │
+      └────────────────────────────────────────────────┘
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ATMSystem → Users</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System owns all users</td>
+</tr>
+<tr>
+<td>ATMSystem → Accounts</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System owns all accounts</td>
+</tr>
+<tr>
+<td>ATMSystem → Machines</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System owns all ATMs</td>
+</tr>
+<tr>
+<td>User → Cards</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>A user holds many cards</td>
+</tr>
+<tr>
+<td>User → Accounts</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>A user holds many accounts</td>
+</tr>
+<tr>
+<td>Account → Transactions</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Account owns its history</td>
+</tr>
+<tr>
+<td>ATMMachine → Sessions</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Machine tracks active sessions</td>
+</tr>
+<tr>
+<td>Session → User/Card/Machine</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Session references entities</td>
+</tr>
+<tr>
+<td>ATMSystem → Observers</td>
+<td>1:N</td>
+<td>Association</td>
+<td>System notifies many listeners</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-singleton-for-atmsystem">Pattern 1: <strong>Singleton</strong> (For ATMSystem)</h3>
+<p><strong>Problem</strong>: Many threads/machines need one consistent view of users, accounts, and machines.</p>
+<p><strong>Solution</strong>: One global ATMSystem instance with thread-safe initialization.</p>
+<pre class="codehilite"><code class="language-python">class ATMSystem:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Single source of truth, ✅ Thread-safe (double-checked lock), ✅ Global access
+<strong>Trade-off</strong>: ⚠️ Global state (harder to test), ⚠️ Harder to scale across machines</p>
+<hr />
+<h3 id="pattern-2-state-for-session-lifecycle">Pattern 2: <strong>State</strong> (For Session Lifecycle)</h3>
+<p><strong>Problem</strong>: A session must move LOGGED_IN → EXPIRED / LOGGED_OUT and reject operations once invalid.</p>
+<p><strong>Solution</strong>: Explicit <code>SessionState</code> enum with timeout-driven transitions.</p>
+<pre class="codehilite"><code class="language-python">def is_expired(self) -&gt; bool:
+    if self.state == SessionState.EXPIRED:
+        return True
+    if datetime.now() - self.last_activity &gt; self.timeout_duration:
+        self.state = SessionState.EXPIRED
+        return True
+    return False
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Explicit lifecycle, ✅ Invalid operations blocked
+<strong>Trade-off</strong>: ⚠️ Must check state before each operation</p>
+<hr />
+<h3 id="pattern-3-observer-for-notifications">Pattern 3: <strong>Observer</strong> (For Notifications)</h3>
+<p><strong>Problem</strong>: Login/withdrawal/logout events must trigger email/SMS/push without coupling.</p>
+<p><strong>Solution</strong>: Observer pattern decouples event producer from consumers.</p>
+<pre class="codehilite"><code class="language-python">class TransactionObserver(ABC):
+    @abstractmethod
+    def update(self, event: str, data: dict): pass
+
+class EmailNotifier(TransactionObserver):
+    def update(self, event: str, data: dict):
+        print(f&quot;📧 Email: {event} - {data}&quot;)
+
+# Usage
+system.add_observer(EmailNotifier())
+system.add_observer(SMSNotifier())
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Loose coupling, ✅ Easy to add new channels
+<strong>Trade-off</strong>: ⚠️ Observer lifecycle management</p>
+<hr />
+<h3 id="pattern-4-strategy-for-transaction-types">Pattern 4: <strong>Strategy</strong> (For Transaction Types)</h3>
+<p><strong>Problem</strong>: Withdrawal, deposit, and inquiry behave differently and the set may grow.</p>
+<p><strong>Solution</strong>: <code>TransactionType</code> selects behavior in <code>execute()</code>; can graduate to a class-per-type strategy.</p>
+<pre class="codehilite"><code class="language-python">def execute(self, account: Account) -&gt; bool:
+    if self.type == TransactionType.WITHDRAWAL:
+        success = account.withdraw(self.amount)
+    elif self.type == TransactionType.DEPOSIT:
+        success = account.deposit(self.amount)
+    else:
+        success = True
+    self.status = TransactionStatus.SUCCESS if success else TransactionStatus.FAILED
+    return success
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Add new transaction types without touching core flow
+<strong>Trade-off</strong>: ⚠️ Enum branch grows; promote to classes if it gets large</p>
+<hr />
+<h3 id="pattern-5-factory-for-creating-transactions">Pattern 5: <strong>Factory</strong> (For Creating Transactions)</h3>
+<p><strong>Problem</strong>: Creating a transaction requires consistent ID generation and initialization.</p>
+<p><strong>Solution</strong>: Centralize creation inside <code>process_transaction()</code>.</p>
+<pre class="codehilite"><code class="language-python">trans_id = f&quot;TRX_{datetime.now().timestamp()}&quot;
+transaction = Transaction(trans_id, account.account_id, trans_type, amount)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Centralized, consistent initialization
+<strong>Trade-off</strong>: ⚠️ If it grows, consider a dedicated factory/builder</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>Need single global ATMSystem</td>
+<td>Consistent state across all clients</td>
+</tr>
+<tr>
+<td><strong>State</strong></td>
+<td>Session lifecycle correctness</td>
+<td>Invalid operations blocked</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Events trigger notifications</td>
+<td>Loose coupling, event-driven</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Varying transaction behavior</td>
+<td>Pluggable, easy to extend</td>
+</tr>
+<tr>
+<td><strong>Factory</strong></td>
+<td>Consistent transaction creation</td>
+<td>Centralized, consistent IDs</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+🏧 ATM System - Interview Implementation
+Demonstrates:
+1. Setup &amp; login
+2. Successful withdrawal
+3. Failed withdrawal (insufficient funds)
+4. Daily limit exceeded
+5. Card blocking after 3 failed PIN attempts
+&quot;&quot;&quot;
+
+from enum import Enum
+from abc import ABC, abstractmethod
+from typing import Optional, Tuple
+from datetime import datetime, timedelta
+import threading
+import uuid
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class TransactionType(Enum):
+    BALANCE_INQUIRY = 1
+    WITHDRAWAL = 2
+    DEPOSIT = 3
+
+class TransactionStatus(Enum):
+    PENDING = 1
+    SUCCESS = 2
+    FAILED = 3
+
+class SessionState(Enum):
+    LOGGED_OUT = 1
+    LOGGED_IN = 2
+    SESSION_LOCKED = 3
+    EXPIRED = 4
+
+class CardStatus(Enum):
+    ACTIVE = 1
+    BLOCKED = 2
+    EXPIRED = 3
+
+# ============================================================================
+# CORE ENTITIES - USER &amp; CARD
+# ============================================================================
+
+class Card:
+    &quot;&quot;&quot;Represents physical ATM card&quot;&quot;&quot;
+    def __init__(self, card_number: str, pin: str, user_id: str):
+        self.card_number = card_number
+        self.pin = pin
+        self.user_id = user_id
+        self.status = CardStatus.ACTIVE
+        self.created_at = datetime.now()
+        self.failed_attempts = 0
+        self.blocked_until = None
+
+    def is_valid(self) -&gt; bool:
+        &quot;&quot;&quot;Check if card is valid and not blocked/expired&quot;&quot;&quot;
+        if self.status != CardStatus.ACTIVE:
+            return False
+        if self.blocked_until and datetime.now() &lt; self.blocked_until:
+            return False
+        return True
+
+    def verify_pin(self, entered_pin: str) -&gt; bool:
+        &quot;&quot;&quot;Verify PIN with 3-attempt limit&quot;&quot;&quot;
+        if not self.is_valid():
+            return False
+
+        if entered_pin == self.pin:
+            self.failed_attempts = 0
+            return True
+        else:
+            self.failed_attempts += 1
+            if self.failed_attempts &gt;= 3:
+                self.block_card()
+            return False
+
+    def block_card(self):
+        &quot;&quot;&quot;Block card for 30 minutes after 3 failed attempts&quot;&quot;&quot;
+        self.status = CardStatus.BLOCKED
+        self.blocked_until = datetime.now() + timedelta(minutes=30)
+
+class User:
+    &quot;&quot;&quot;Represents ATM user&quot;&quot;&quot;
+    def __init__(self, user_id: str, name: str):
+        self.user_id = user_id
+        self.name = name
+        self.cards = []
+        self.accounts = []
+        self.created_at = datetime.now()
+
+    def add_card(self, card: Card):
+        self.cards.append(card)
+
+    def add_account(self, account: 'Account'):
+        self.accounts.append(account)
+
+    def get_primary_account(self) -&gt; Optional['Account']:
+        return self.accounts[0] if self.accounts else None
+
+# ============================================================================
+# CORE ENTITIES - ACCOUNT
+# ============================================================================
+
+class Account:
+    &quot;&quot;&quot;Represents bank account&quot;&quot;&quot;
+    def __init__(self, account_id: str, user_id: str, balance: float = 0.0):
+        self.account_id = account_id
+        self.user_id = user_id
+        self.balance = balance
+        self.daily_withdrawal_limit = 2000.0
+        self.daily_withdrawal_used = 0.0
+        self.transaction_limit = 500.0
+        self.transactions = []
+        self.created_at = datetime.now()
+        self.last_reset_date = datetime.now().date()
+        self.lock = threading.RLock()
+
+    def reset_daily_limits(self):
+        &quot;&quot;&quot;Reset daily limits at midnight&quot;&quot;&quot;
+        today = datetime.now().date()
+        if today &gt; self.last_reset_date:
+            self.daily_withdrawal_used = 0.0
+            self.last_reset_date = today
+
+    def can_withdraw(self, amount: float) -&gt; Tuple[bool, str]:
+        &quot;&quot;&quot;Check if withdrawal is allowed&quot;&quot;&quot;
+        with self.lock:
+            self.reset_daily_limits()
+            if amount &lt;= 0:
+                return False, &quot;Amount must be positive&quot;
+            if amount &gt; self.transaction_limit:
+                return False, f&quot;Amount exceeds per-transaction limit ${self.transaction_limit}&quot;
+            if self.daily_withdrawal_used + amount &gt; self.daily_withdrawal_limit:
+                remaining = self.daily_withdrawal_limit - self.daily_withdrawal_used
+                return False, f&quot;Daily limit exceeded. Remaining: ${remaining}&quot;
+            if amount &gt; self.balance:
+                return False, &quot;Insufficient funds&quot;
+            return True, &quot;OK&quot;
+
+    def withdraw(self, amount: float) -&gt; bool:
+        &quot;&quot;&quot;Execute withdrawal (atomic check + debit)&quot;&quot;&quot;
+        with self.lock:
+            can_withdraw, msg = self.can_withdraw(amount)
+            if not can_withdraw:
+                return False
+            self.balance -= amount
+            self.daily_withdrawal_used += amount
+            return True
+
+    def deposit(self, amount: float) -&gt; bool:
+        &quot;&quot;&quot;Execute deposit&quot;&quot;&quot;
+        with self.lock:
+            if amount &lt;= 0:
+                return False
+            self.balance += amount
+            return True
+
+    def get_balance(self) -&gt; float:
+        &quot;&quot;&quot;Get current balance&quot;&quot;&quot;
+        with self.lock:
+            return self.balance
+
+# ============================================================================
+# TRANSACTIONS &amp; SESSIONS
+# ============================================================================
+
+class Transaction:
+    &quot;&quot;&quot;Represents single transaction&quot;&quot;&quot;
+    def __init__(self, transaction_id: str, account_id: str,
+                 trans_type: TransactionType, amount: float):
+        self.transaction_id = transaction_id
+        self.account_id = account_id
+        self.type = trans_type
+        self.amount = amount
+        self.status = TransactionStatus.PENDING
+        self.created_at = datetime.now()
+
+    def execute(self, account: Account) -&gt; bool:
+        &quot;&quot;&quot;Execute transaction&quot;&quot;&quot;
+        if self.type == TransactionType.WITHDRAWAL:
+            success = account.withdraw(self.amount)
+        elif self.type == TransactionType.DEPOSIT:
+            success = account.deposit(self.amount)
+        else:
+            success = True
+
+        self.status = TransactionStatus.SUCCESS if success else TransactionStatus.FAILED
+        if success:
+            account.transactions.append(self)
+        return success
+
+    def __repr__(self) -&gt; str:
+        return f&quot;[{self.type.name}] ${self.amount} - {self.status.name}&quot;
+
+class Session:
+    &quot;&quot;&quot;Represents user session at ATM&quot;&quot;&quot;
+    def __init__(self, session_id: str, user: User, card: Card,
+                 atm_machine: 'ATMMachine', timeout_minutes: int = 5):
+        self.session_id = session_id
+        self.user = user
+        self.card = card
+        self.atm_machine = atm_machine
+        self.state = SessionState.LOGGED_IN
+        self.created_at = datetime.now()
+        self.last_activity = datetime.now()
+        self.timeout_duration = timedelta(minutes=timeout_minutes)
+
+    def is_expired(self) -&gt; bool:
+        &quot;&quot;&quot;Check if session timeout&quot;&quot;&quot;
+        if self.state == SessionState.EXPIRED:
+            return True
+        elapsed = datetime.now() - self.last_activity
+        if elapsed &gt; self.timeout_duration:
+            self.state = SessionState.EXPIRED
+            return True
+        return False
+
+    def update_activity(self):
+        &quot;&quot;&quot;Update last activity timestamp&quot;&quot;&quot;
+        self.last_activity = datetime.now()
+
+    def logout(self):
+        &quot;&quot;&quot;End session&quot;&quot;&quot;
+        self.state = SessionState.LOGGED_OUT
+
+# ============================================================================
+# ATM MACHINE
+# ============================================================================
+
+class ATMMachine:
+    &quot;&quot;&quot;Represents physical ATM machine&quot;&quot;&quot;
+    def __init__(self, machine_id: str, location: str, cash_balance: float = 10000.0):
+        self.machine_id = machine_id
+        self.location = location
+        self.cash_balance = cash_balance
+        self.sessions = {}
+        self.transactions = []
+        self.lock = threading.Lock()
+
+    def has_cash(self, amount: float) -&gt; bool:
+        &quot;&quot;&quot;Check if ATM has sufficient cash&quot;&quot;&quot;
+        with self.lock:
+            return amount &lt;= self.cash_balance
+
+    def dispense_cash(self, amount: float) -&gt; bool:
+        &quot;&quot;&quot;Dispense cash from ATM (atomic check + debit)&quot;&quot;&quot;
+        with self.lock:
+            if amount &lt;= self.cash_balance:
+                self.cash_balance -= amount
+                return True
+            return False
+
+    def accept_deposit(self, amount: float):
+        &quot;&quot;&quot;Accept deposit into ATM&quot;&quot;&quot;
+        with self.lock:
+            self.cash_balance += amount
+
+# ============================================================================
+# OBSERVER PATTERN
+# ============================================================================
+
+class TransactionObserver(ABC):
+    @abstractmethod
+    def update(self, event: str, data: dict):
+        pass
+
+class EmailNotifier(TransactionObserver):
+    def update(self, event: str, data: dict):
+        print(f&quot;    📧 Email: {event} - {data}&quot;)
+
+class SMSNotifier(TransactionObserver):
+    def update(self, event: str, data: dict):
+        print(f&quot;    📱 SMS: {event} - {data}&quot;)
+
+class PushNotifier(TransactionObserver):
+    def update(self, event: str, data: dict):
+        print(f&quot;    🔔 Push: {event} - {data}&quot;)
+
+# ============================================================================
+# ATM SYSTEM (SINGLETON)
+# ============================================================================
+
+class ATMSystem:
+    &quot;&quot;&quot;Singleton: Central coordinator for all ATM operations&quot;&quot;&quot;
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+        self._initialized = True
+        self.users = {}
+        self.accounts = {}
+        self.machines = {}
+        self.observers = []
+        self.lock = threading.Lock()
+
+    def register_user(self, user_id: str, name: str) -&gt; User:
+        &quot;&quot;&quot;Register new user&quot;&quot;&quot;
+        with self.lock:
+            user = User(user_id, name)
+            self.users[user_id] = user
+            return user
+
+    def create_account(self, account_id: str, user_id: str, balance: float = 1000.0) -&gt; Account:
+        &quot;&quot;&quot;Create account for user&quot;&quot;&quot;
+        with self.lock:
+            account = Account(account_id, user_id, balance)
+            self.accounts[account_id] = account
+            if user_id in self.users:
+                self.users[user_id].add_account(account)
+            return account
+
+    def issue_card(self, card_number: str, pin: str, user_id: str) -&gt; Card:
+        &quot;&quot;&quot;Issue card to user&quot;&quot;&quot;
+        with self.lock:
+            card = Card(card_number, pin, user_id)
+            if user_id in self.users:
+                self.users[user_id].add_card(card)
+            return card
+
+    def register_machine(self, machine_id: str, location: str) -&gt; ATMMachine:
+        &quot;&quot;&quot;Register ATM machine&quot;&quot;&quot;
+        with self.lock:
+            machine = ATMMachine(machine_id, location)
+            self.machines[machine_id] = machine
+            return machine
+
+    def login(self, card_number: str, pin: str, machine_id: str) -&gt; Tuple[bool, Optional[Session]]:
+        &quot;&quot;&quot;Authenticate user and create session&quot;&quot;&quot;
+        with self.lock:
+            user_found = None
+            card_found = None
+
+            for user in self.users.values():
+                for card in user.cards:
+                    if card.card_number == card_number:
+                        user_found = user
+                        card_found = card
+                        break
+                if card_found:
+                    break
+
+            if not card_found or not user_found:
+                return False, None
+
+            if not card_found.is_valid():
+                return False, None
+
+            if not card_found.verify_pin(pin):
+                return False, None
+
+            machine = self.machines.get(machine_id)
+            if not machine:
+                return False, None
+
+            session_id = str(uuid.uuid4())
+            session = Session(session_id, user_found, card_found, machine)
+            machine.sessions[card_found.card_number] = session
+
+            self._notify_observers(f&quot;User {user_found.name} logged in&quot;, {
+                &quot;user_id&quot;: user_found.user_id
+            })
+
+            return True, session
+
+    def process_transaction(self, session: Session, trans_type: TransactionType,
+                           amount: float = 0.0) -&gt; Tuple[bool, str]:
+        &quot;&quot;&quot;Process transaction&quot;&quot;&quot;
+        if session.is_expired():
+            return False, &quot;Session expired&quot;
+
+        session.update_activity()
+
+        account = session.user.get_primary_account()
+        if not account:
+            return False, &quot;No account linked&quot;
+
+        trans_id = f&quot;TRX_{datetime.now().timestamp()}&quot;
+        transaction = Transaction(trans_id, account.account_id, trans_type, amount)
+
+        if trans_type == TransactionType.WITHDRAWAL:
+            if not session.atm_machine.has_cash(amount):
+                return False, &quot;ATM has insufficient cash&quot;
+
+        success = transaction.execute(account)
+
+        if success:
+            session.atm_machine.transactions.append(transaction)
+            if trans_type == TransactionType.WITHDRAWAL:
+                session.atm_machine.dispense_cash(amount)
+
+            self._notify_observers(f&quot;{trans_type.name} successful: ${amount}&quot;, {
+                &quot;user_id&quot;: session.user.user_id,
+                &quot;type&quot;: trans_type.name,
+                &quot;amount&quot;: amount
+            })
+            return True, f&quot;{trans_type.name} successful&quot;
+
+        return False, f&quot;{trans_type.name} failed&quot;
+
+    def logout(self, session: Session):
+        &quot;&quot;&quot;End user session&quot;&quot;&quot;
+        session.logout()
+        if session.card.card_number in session.atm_machine.sessions:
+            del session.atm_machine.sessions[session.card.card_number]
+
+        self._notify_observers(f&quot;User {session.user.user_id} logged out&quot;, {
+            &quot;user_id&quot;: session.user.user_id
+        })
+
+    def add_observer(self, observer: TransactionObserver):
+        &quot;&quot;&quot;Add observer for notifications&quot;&quot;&quot;
+        self.observers.append(observer)
+
+    def _notify_observers(self, event: str, data: dict):
+        &quot;&quot;&quot;Notify all observers of events&quot;&quot;&quot;
+        for observer in self.observers:
+            observer.update(event, data)
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def demo_1_setup_and_login():
+    &quot;&quot;&quot;Demo 1: System setup and successful login&quot;&quot;&quot;
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 1: SETUP AND SUCCESSFUL LOGIN&quot;)
+    print(&quot;=&quot;*70)
+
+    system = ATMSystem()
+
+    user = system.register_user(&quot;U001&quot;, &quot;John Doe&quot;)
+    print(f&quot;✓ User registered: {user.name}&quot;)
+
+    account = system.create_account(&quot;ACC001&quot;, &quot;U001&quot;, balance=1500.0)
+    print(f&quot;✓ Account created: ${account.get_balance()}&quot;)
+
+    card = system.issue_card(&quot;4532123456789012&quot;, &quot;1234&quot;, &quot;U001&quot;)
+    print(f&quot;✓ Card issued: {card.card_number}&quot;)
+
+    machine = system.register_machine(&quot;ATM001&quot;, &quot;Main Street&quot;)
+    print(f&quot;✓ ATM registered: {machine.location}&quot;)
+
+    system.add_observer(EmailNotifier())
+    system.add_observer(SMSNotifier())
+
+    success, session = system.login(&quot;4532123456789012&quot;, &quot;1234&quot;, &quot;ATM001&quot;)
+    print(f&quot;\n✓ Login successful: {success}&quot;)
+    print(f&quot;  Session state: {session.state.name}&quot;)
+    print(f&quot;  User: {session.user.name}&quot;)
+
+    balance = account.get_balance()
+    print(f&quot;\n✓ Balance inquiry: ${balance}&quot;)
+
+    system.logout(session)
+    print(f&quot;\n✓ Logout successful&quot;)
+
+def demo_2_successful_withdrawal():
+    &quot;&quot;&quot;Demo 2: Successful withdrawal&quot;&quot;&quot;
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 2: SUCCESSFUL WITHDRAWAL&quot;)
+    print(&quot;=&quot;*70)
+
+    system = ATMSystem()
+
+    user = system.register_user(&quot;U002&quot;, &quot;Jane Smith&quot;)
+    account = system.create_account(&quot;ACC002&quot;, &quot;U002&quot;, balance=2000.0)
+    card = system.issue_card(&quot;4532111111111111&quot;, &quot;5678&quot;, &quot;U002&quot;)
+    machine = system.register_machine(&quot;ATM002&quot;, &quot;Downtown&quot;)
+    system.add_observer(EmailNotifier())
+
+    print(f&quot;Initial balance: ${account.get_balance()}&quot;)
+
+    success, session = system.login(&quot;4532111111111111&quot;, &quot;5678&quot;, &quot;ATM002&quot;)
+    print(f&quot;✓ Login successful&quot;)
+
+    print(f&quot;\nAttempting withdrawal: $300&quot;)
+    success, msg = system.process_transaction(session, TransactionType.WITHDRAWAL, 300.0)
+    print(f&quot;✓ {msg}&quot;)
+    print(f&quot;  New balance: ${account.get_balance()}&quot;)
+    print(f&quot;  ATM cash: ${machine.cash_balance}&quot;)
+
+    system.logout(session)
+
+def demo_3_failed_withdrawal():
+    &quot;&quot;&quot;Demo 3: Failed withdrawal (insufficient funds)&quot;&quot;&quot;
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 3: FAILED WITHDRAWAL (INSUFFICIENT FUNDS)&quot;)
+    print(&quot;=&quot;*70)
+
+    system = ATMSystem()
+
+    user = system.register_user(&quot;U003&quot;, &quot;Bob Johnson&quot;)
+    account = system.create_account(&quot;ACC003&quot;, &quot;U003&quot;, balance=200.0)
+    card = system.issue_card(&quot;4532222222222222&quot;, &quot;9999&quot;, &quot;U003&quot;)
+    machine = system.register_machine(&quot;ATM003&quot;, &quot;Uptown&quot;)
+    system.add_observer(EmailNotifier())
+
+    print(f&quot;Current balance: ${account.get_balance()}&quot;)
+
+    success, session = system.login(&quot;4532222222222222&quot;, &quot;9999&quot;, &quot;ATM003&quot;)
+    print(f&quot;✓ Login successful&quot;)
+
+    print(f&quot;\nAttempting withdrawal: $500&quot;)
+    success, msg = system.process_transaction(session, TransactionType.WITHDRAWAL, 500.0)
+    print(f&quot;✗ {msg}&quot;)
+    print(f&quot;  Balance unchanged: ${account.get_balance()}&quot;)
+
+    system.logout(session)
+
+def demo_4_daily_limit():
+    &quot;&quot;&quot;Demo 4: Daily limit exceeded&quot;&quot;&quot;
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 4: DAILY WITHDRAWAL LIMIT EXCEEDED&quot;)
+    print(&quot;=&quot;*70)
+
+    system = ATMSystem()
+
+    user = system.register_user(&quot;U004&quot;, &quot;Alice Brown&quot;)
+    account = system.create_account(&quot;ACC004&quot;, &quot;U004&quot;, balance=3000.0)
+    card = system.issue_card(&quot;4532333333333333&quot;, &quot;1111&quot;, &quot;U004&quot;)
+    machine = system.register_machine(&quot;ATM004&quot;, &quot;Airport&quot;)
+
+    print(f&quot;Daily limit: ${account.daily_withdrawal_limit}&quot;)
+    print(f&quot;Current balance: ${account.get_balance()}&quot;)
+
+    success, session = system.login(&quot;4532333333333333&quot;, &quot;1111&quot;, &quot;ATM004&quot;)
+    print(f&quot;✓ Login successful&quot;)
+
+    print(f&quot;\nFirst withdrawal: $1800&quot;)
+    success, msg = system.process_transaction(session, TransactionType.WITHDRAWAL, 1800.0)
+    print(f&quot;✓ {msg}&quot;)
+    print(f&quot;  Balance: ${account.get_balance()}, Used today: ${account.daily_withdrawal_used}&quot;)
+
+    print(f&quot;\nSecond withdrawal: $300 (total would be $2100)&quot;)
+    success, msg = system.process_transaction(session, TransactionType.WITHDRAWAL, 300.0)
+    print(f&quot;✗ {msg}&quot;)
+    print(f&quot;  Balance: ${account.get_balance()}&quot;)
+
+    system.logout(session)
+
+def demo_5_card_blocking():
+    &quot;&quot;&quot;Demo 5: Card blocking after 3 failed attempts&quot;&quot;&quot;
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 5: CARD BLOCKING (3 FAILED PIN ATTEMPTS)&quot;)
+    print(&quot;=&quot;*70)
+
+    system = ATMSystem()
+
+    user = system.register_user(&quot;U005&quot;, &quot;Charlie Davis&quot;)
+    account = system.create_account(&quot;ACC005&quot;, &quot;U005&quot;, balance=1000.0)
+    card = system.issue_card(&quot;4532444444444444&quot;, &quot;2222&quot;, &quot;U005&quot;)
+    machine = system.register_machine(&quot;ATM005&quot;, &quot;Mall&quot;)
+
+    print(&quot;Attempt 1: Wrong PIN entered&quot;)
+    success, session = system.login(&quot;4532444444444444&quot;, &quot;9999&quot;, &quot;ATM005&quot;)
+    print(f&quot;✗ Login failed&quot;)
+    print(f&quot;  Card status: {card.status.name}, Attempts: {card.failed_attempts}&quot;)
+
+    print(&quot;\nAttempt 2: Wrong PIN entered&quot;)
+    success, session = system.login(&quot;4532444444444444&quot;, &quot;3333&quot;, &quot;ATM005&quot;)
+    print(f&quot;✗ Login failed&quot;)
+    print(f&quot;  Card status: {card.status.name}, Attempts: {card.failed_attempts}&quot;)
+
+    print(&quot;\nAttempt 3: Wrong PIN entered&quot;)
+    success, session = system.login(&quot;4532444444444444&quot;, &quot;4444&quot;, &quot;ATM005&quot;)
+    print(f&quot;✗ Login failed&quot;)
+    print(f&quot;  Card status: {card.status.name}, Attempts: {card.failed_attempts}&quot;)
+
+    print(&quot;\nAttempt 4: Correct PIN but card now blocked&quot;)
+    success, session = system.login(&quot;4532444444444444&quot;, &quot;2222&quot;, &quot;ATM005&quot;)
+    print(f&quot;✗ Login failed&quot;)
+    print(f&quot;  Card status: {card.status.name}&quot;)
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;🏧 ATM SYSTEM - INTERVIEW IMPLEMENTATION - 5 DEMOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_setup_and_login()
+    demo_2_successful_withdrawal()
+    demo_3_failed_withdrawal()
+    demo_4_daily_limit()
+    demo_5_card_blocking()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;✅ ALL DEMOS COMPLETED SUCCESSFULLY&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>login</strong></td>
+<td>System lock</td>
+<td>Atomic card lookup + PIN verify + session creation</td>
+</tr>
+<tr>
+<td><strong>withdraw</strong></td>
+<td>Account RLock</td>
+<td>Atomic check-limit + debit (no double-spend)</td>
+</tr>
+<tr>
+<td><strong>dispense_cash</strong></td>
+<td>Machine lock</td>
+<td>No cash overdraft across concurrent withdrawals</td>
+</tr>
+<tr>
+<td><strong>deposit</strong></td>
+<td>Account RLock</td>
+<td>Atomic balance increment</td>
+</tr>
+<tr>
+<td><strong>Singleton init</strong></td>
+<td>Class lock</td>
+<td>Double-checked locking, single instance</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. ✅ Locks guard critical sections (check + modify together)
+2. ✅ Account uses a re-entrant lock so <code>withdraw</code> can call <code>can_withdraw</code> safely
+3. ✅ Double-checked locking for the Singleton
+4. ✅ Notifications fire after state changes to keep critical sections short</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="scenario-1-setup-successful-login">Scenario 1: Setup &amp; Successful Login</h3>
+<pre class="codehilite"><code>✓ User registered: John Doe
+✓ Account created: $1500
+✓ Card issued: 4532123456789012
+✓ Login successful → Session: LOGGED_IN
+✓ Balance inquiry: $1500
+</code></pre>
+
+<h3 id="scenario-2-successful-withdrawal">Scenario 2: Successful Withdrawal</h3>
+<pre class="codehilite"><code>Withdraw $300 → Balance: $1500 → $1200, ATM cash: $10000 → $9700
+📧 Email: WITHDRAWAL successful: $300
+</code></pre>
+
+<h3 id="scenario-3-failed-withdrawal-insufficient-funds">Scenario 3: Failed Withdrawal (Insufficient Funds)</h3>
+<pre class="codehilite"><code>Balance $200, attempt $500 → &quot;Insufficient funds&quot;, balance unchanged
+</code></pre>
+
+<h3 id="scenario-4-daily-limit-exceeded">Scenario 4: Daily Limit Exceeded</h3>
+<pre class="codehilite"><code>Daily limit $2000, already used $1800, attempt $300 (total $2100)
+→ &quot;Daily limit exceeded. Remaining: $200&quot;, transaction rejected
+</code></pre>
+
+<h3 id="scenario-5-card-blocking-3-failed-pin-attempts">Scenario 5: Card Blocking (3 Failed PIN Attempts)</h3>
+<pre class="codehilite"><code>Wrong PIN ×3 → card BLOCKED (30 min)
+Correct PIN afterward → still blocked, login rejected
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-questions">Basic Questions</h3>
+<p><strong>Q1: What is the main purpose of the ATMSystem?</strong></p>
+<p>A: Singleton ensures one global instance managing all ATM operations across machines, users, accounts, sessions, and transactions — preventing conflicts and keeping state coherent.</p>
+<p><strong>Q2: Why block a card after 3 failed PIN attempts?</strong></p>
+<p>A: Security against brute-force attacks. A 30-minute block deters attackers while limiting inconvenience to legitimate users. Trade-off: convenience vs security.</p>
+<p><strong>Q3: What is a session and why a 5-minute timeout?</strong></p>
+<p>A: A session tracks the user's authenticated state. Inactivity timeout prevents unauthorized access if the user walks away; auto-logout blocks operations on an abandoned ATM.</p>
+<p><strong>Q4: How are daily withdrawal limits enforced?</strong></p>
+<p>A: Each account tracks <code>daily_withdrawal_used</code>. Before withdrawal it checks <code>used + amount ≤ $2000</code> and resets at midnight.</p>
+<h3 id="intermediate-questions">Intermediate Questions</h3>
+<p><strong>Q5: How does the system prevent double-spending?</strong></p>
+<p>A: A per-account re-entrant lock guards the check-and-debit so two concurrent withdrawals can't both read a stale balance: <code>with account.lock: validate; balance -= amount</code>.</p>
+<p><strong>Q6: What happens if the ATM runs out of cash?</strong></p>
+<p>A: <code>has_cash()</code> is checked before dispensing; if insufficient the transaction fails with "ATM has insufficient cash" and the balance is untouched.</p>
+<p><strong>Q7: How does the Observer pattern handle notifications?</strong></p>
+<p>A: Email/SMS/Push observers are notified independently on events, decoupling notifications from core logic so new channels need no core changes.</p>
+<p><strong>Q8: How is session timeout checked?</strong></p>
+<p>A: <code>is_expired()</code> compares now − last_activity to the timeout; if exceeded it marks the session EXPIRED. It's checked before each operation.</p>
+<h3 id="advanced-questions">Advanced Questions</h3>
+<p><strong>Q9: What thread-safety issues exist and how are they solved?</strong></p>
+<p>A: Balance update races, session contention, and card-block state races. Solution: locks on shared resources (Account RLock, Machine lock, System lock).</p>
+<p><strong>Q10: What security vulnerabilities exist in this demo?</strong></p>
+<p>A: Plaintext PIN, no card encryption, no audit log, non-random session tokens, no login rate limiting. Fixes: hash PIN, encrypt card, audit all transactions, UUID/randomized tokens, rate limit.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<h3 id="q1-how-to-enforce-daily-limits-across-100k-users">Q1: How to enforce daily limits across 100K users?</h3>
+<p>Each account tracks <code>daily_used</code> independently; shard users by ID across databases, each shard accounting independently. Watch for the midnight-reset synchronization spike.</p>
+<h3 id="q2-how-to-prevent-double-withdrawal-across-distributed-atms">Q2: How to prevent double-withdrawal across distributed ATMs?</h3>
+<p>Pessimistic locking (lock account before withdrawal) or optimistic concurrency (version check + retry). Pessimistic = slower but simpler; optimistic = more retries under contention.</p>
+<h3 id="q3-how-to-scale-to-10k-concurrent-sessions">Q3: How to scale to 10K concurrent sessions?</h3>
+<p>Move sessions to Redis for O(1) lookup by session_id; shard Redis for 100K+; periodically clean expired sessions.</p>
+<h3 id="q4-how-to-handle-peak-traffic-10k-withdrawalsmin">Q4: How to handle peak traffic (10K withdrawals/min)?</h3>
+<p>Replace the global lock with sharded per-account locks, process transactions in parallel, and make notifications asynchronous via a queue.</p>
+<h3 id="q5-how-would-you-handle-offline-atm-mode-network-down">Q5: How would you handle offline ATM mode (network down)?</h3>
+<p>Cache user/account data locally, debit and dispense locally, queue transactions, and replay on reconnect with conflict detection. Trade-off: consistency window vs availability.</p>
+<h3 id="q6-what-if-a-card-is-reported-stolen-mid-session">Q6: What if a card is reported stolen mid-session?</h3>
+<p>Subscribe to a card-block event stream; mark the card blocked globally (e.g., Redis) so the next ATM check rejects it.</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw the UML class diagram with all relationships</li>
+<li>[ ] Walk through the login → session → transaction → logout lifecycle</li>
+<li>[ ] Explain card blocking after 3 failed PIN attempts</li>
+<li>[ ] Explain daily + per-transaction limit enforcement and midnight reset</li>
+<li>[ ] Explain how locks prevent double-spending and cash overdraft</li>
+<li>[ ] Run the complete implementation (5 demos) without errors</li>
+<li>[ ] Answer 5+ scaling Q&amp;A questions</li>
+<li>[ ] Mention thread safety in Singleton, withdraw, and dispense_cash</li>
+<li>[ ] Discuss security gaps (PIN hashing, encryption, audit logging)</li>
+</ul>
+<hr />
+<p><strong>Ready for interview? Authenticate and withdraw! 🏧</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

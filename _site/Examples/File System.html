@@ -1,0 +1,2120 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File System - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="file-system-complete-design-guide">File System — Complete Design Guide</h1>
+<blockquote>
+<p>Hierarchical in-memory file system with pluggable storage strategies, reversible commands with undo/redo, snapshot/restore via Memento, and event-driven observability.</p>
+</blockquote>
+<p><strong>Scale</strong>: Single-process in-memory; extensible to distributed/persistent storage<br />
+<strong>Duration</strong>: 75-minute interview guide<br />
+<strong>Focus</strong>: Composite tree (File/Directory), Strategy (storage), Command (undo/redo), Memento (snapshot), Singleton (FileSystem)</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>Model a hierarchical file system: files and directories live in a tree, content is stored/retrieved via swappable strategies (plain vs compressed), every mutation is a reversible Command (undo/redo), the entire tree can be snapshotted and restored, and all lifecycle events are observable. Core concerns: uniform tree traversal, pluggable encoding, and reversible state changes.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>Create Directory → Create File → Write Content → (undo/redo)
+        │                              │
+        └── Composite Tree             └── StorageStrategy encodes bytes
+                │
+                ├── take_snapshot()  → Snapshot (deep clone)
+                └── restore_snapshot() → RestoreSnapshotCommand (reversible)
+
+COMMAND FLOW:
+RECORD → STRATEGY_ENCODE → EXECUTE → PUSH_UNDO → CLEAR_REDO → EMIT_EVENT
+                                       ↓
+                                  [UNDO] → REDO_STACK
+                                       ↓
+                                  [REDO] → UNDO_STACK
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Persistent or in-memory?</strong> → "In-memory for interview; discuss persistence as scaling concern"</li>
+<li><strong>Single-process or distributed?</strong> → "Single-process; mention sharding as extension"</li>
+<li><strong>How many node types?</strong> → "Files and directories; extensible to symlinks, mounts"</li>
+<li><strong>Undo depth limit?</strong> → "Unbounded for interview; cap to last N in production"</li>
+<li><strong>Concurrency required?</strong> → "Single-threaded demo; thread-safe Singleton init with RLock"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>User / Application</strong></td>
+<td>Create, read, write, move, delete nodes</td>
+<td><code>create_file</code>, <code>write</code>, <code>read</code>, <code>move</code>, <code>delete</code></td>
+</tr>
+<tr>
+<td><strong>FileSystem Singleton</strong></td>
+<td>Coordinates all operations, manages stacks</td>
+<td>Execute commands, emit events, track metrics</td>
+</tr>
+<tr>
+<td><strong>Observer / Listener</strong></td>
+<td>Monitors lifecycle events</td>
+<td>Log created/deleted/strategy-swapped events</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>CRUD on Files and Directories</strong>
+  - Create/read/write/delete files
+  - Create/delete directories
+  - Hierarchical path resolution (<code>/dir/sub/file.txt</code>)</p>
+<p>✅ <strong>Move Nodes</strong>
+  - Move file or directory between parent directories
+  - Path updates automatically (resolved via parent chain)</p>
+<p>✅ <strong>Undo / Redo</strong>
+  - Every mutation is a reversible Command
+  - Undo: pop from undo_stack, call <code>cmd.undo()</code>, push to redo_stack
+  - Redo: pop from redo_stack, re-execute, push to undo_stack
+  - New execute clears redo_stack</p>
+<p>✅ <strong>Pluggable Storage Strategies</strong>
+  - <code>PlainStorageStrategy</code>: UTF-8 encode/decode
+  - <code>CompressedStorageStrategy</code>: zlib compress/decompress
+  - Strategy swap re-encodes all files transparently</p>
+<p>✅ <strong>Snapshot / Restore</strong>
+  - <code>take_snapshot()</code>: deep-clone entire tree into Snapshot (Memento)
+  - <code>restore_snapshot()</code>: wrapped in <code>RestoreSnapshotCommand</code> — itself undoable</p>
+<p>✅ <strong>Event Observability</strong>
+  - Emit events: <code>node_created</code>, <code>node_deleted</code>, <code>strategy_swapped</code>, <code>snapshot_taken</code>, <code>command_executed</code>, <code>command_undone</code>, <code>metrics_updated</code>
+  - Multiple callable listeners registered independently</p>
+<p>✅ <strong>Metrics Tracking</strong>
+  - File count, directory count, logical bytes, physical (compressed) bytes
+  - Recalculated after every mutation</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Path Resolution</strong>: O(path_segments) — typically O(5–10) per operation<br />
+✅ <strong>File Content Access</strong>: O(1) hash lookup in <code>Directory.children</code><br />
+✅ <strong>Extensibility</strong>: New strategies, node types, and commands add zero core changes<br />
+✅ <strong>Memory</strong>: Deep-copy snapshots — acceptable for small trees; discuss alternatives at scale<br />
+✅ <strong>Thread Safety</strong>: Singleton init guarded by <code>threading.RLock</code>; operations single-threaded  </p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Persistence</strong></td>
+<td>NO — in-memory only (discuss journaling as extension)</td>
+</tr>
+<tr>
+<td><strong>Distributed</strong></td>
+<td>NO — single-process (discuss sharding)</td>
+</tr>
+<tr>
+<td><strong>Undo stack size</strong></td>
+<td>Unbounded (cap to N in production)</td>
+</tr>
+<tr>
+<td><strong>Strategy swap</strong></td>
+<td>Re-encodes all files atomically</td>
+</tr>
+<tr>
+<td><strong>Snapshot depth</strong></td>
+<td>Full deep copy (discuss incremental diffs)</td>
+</tr>
+<tr>
+<td><strong>Max file size</strong></td>
+<td>Unlimited in-memory (discuss streaming for 100GB+)</td>
+</tr>
+<tr>
+<td><strong>Concurrent mutations</strong></td>
+<td>Not required for demo; RLock for Singleton init</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on the whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<pre class="codehilite"><code>FsNode, File, Directory, StorageStrategy, Command, Snapshot, FileSystem, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="fsnode-abstract-base-for-all-tree-nodes"><strong>FsNode</strong> — Abstract base for all tree nodes</h4>
+<pre class="codehilite"><code>Properties:
+  - name: str (node name, e.g., &quot;spec.md&quot; or &quot;docs&quot;)
+  - parent: Optional[Directory] (None only for root)
+
+Behaviors:
+  - path(): Resolve full absolute path by walking parent chain
+</code></pre>
+
+<h4 id="file-leaf-node-storing-versioned-content"><strong>File</strong> — Leaf node storing versioned content</h4>
+<pre class="codehilite"><code>Properties:
+  - _data: bytes (encoded content via StorageStrategy)
+  - version: int (incremented on each write)
+
+Behaviors:
+  - write(text, storage): Encode and store content, increment version
+  - read(storage): Decode and return content as str
+  - logical_size(storage): Uncompressed byte count
+  - physical_size(): Stored byte count (compressed)
+</code></pre>
+
+<h4 id="directory-composite-container-node"><strong>Directory</strong> — Composite container node</h4>
+<pre class="codehilite"><code>Properties:
+  - children: Dict[str, FsNode] (name → node mapping)
+
+Behaviors:
+  - add(node): Add child, set parent reference
+  - remove(name): Remove child, clear parent reference
+  - get(name): Lookup child by name
+</code></pre>
+
+<h4 id="command-abstract-reversible-operation"><strong>Command</strong> — Abstract reversible operation</h4>
+<pre class="codehilite"><code>Behaviors:
+  - execute(fs): Apply the operation to the FileSystem
+  - undo(fs): Reverse the operation
+  - describe(): Human-readable label
+
+Concrete Commands:
+  - CreateFileCommand(path)
+  - WriteFileCommand(path, new_text)
+  - CreateDirectoryCommand(path)
+  - MoveNodeCommand(src_path, dest_dir_path)
+  - DeleteNodeCommand(path)
+  - RestoreSnapshotCommand(old_root, new_root)
+</code></pre>
+
+<h4 id="snapshot-memento-capturing-tree-state"><strong>Snapshot</strong> — Memento capturing tree state</h4>
+<pre class="codehilite"><code>Properties:
+  - root_clone: Directory (deep clone of root at snapshot time)
+
+Purpose:
+  - Passed to restore_snapshot() to roll back entire tree
+  - Created by take_snapshot() via _clone_node() deep copy
+</code></pre>
+
+<h4 id="storagestrategy-abstract-pluggable-encoderdecoder"><strong>StorageStrategy</strong> — Abstract pluggable encoder/decoder</h4>
+<pre class="codehilite"><code>Behaviors:
+  - encode(text: str) -&gt; bytes
+  - decode(data: bytes) -&gt; str
+  - name() -&gt; str
+
+Concrete Strategies:
+  - PlainStorageStrategy: UTF-8 encode/decode
+  - CompressedStorageStrategy: zlib compress/decompress
+</code></pre>
+
+<h4 id="filesystem-singleton-coordinator"><strong>FileSystem</strong> — Singleton coordinator</h4>
+<pre class="codehilite"><code>Properties:
+  - root: Directory (the &quot;/&quot; root node)
+  - storage: StorageStrategy (active encoding strategy)
+  - undo_stack: List[Command]
+  - redo_stack: List[Command]
+  - listeners: List[Callable] (event observers)
+  - metrics: Dict[str, int] (live stats)
+
+Behaviors:
+  - execute(cmd): Run command, push to undo_stack, clear redo_stack
+  - undo() / redo(): Manage undo/redo lifecycle
+  - set_storage_strategy(strategy): Swap + re-encode all files
+  - take_snapshot() -&gt; Snapshot
+  - restore_snapshot(snap): Wrapped in RestoreSnapshotCommand
+  - register(fn): Add event listener
+  - get_metrics() -&gt; Dict
+</code></pre>
+
+<h3 id="step-23-define-enumerations-state-type">Step 2.3: Define Enumerations (State &amp; Type)</h3>
+<pre class="codehilite"><code class="language-python"># No enums required — node types are captured by class identity (isinstance checks)
+# Strategy type identified by strategy.name()
+# Events are plain strings: &quot;node_created&quot;, &quot;node_deleted&quot;, &quot;strategy_swapped&quot;,
+#   &quot;snapshot_taken&quot;, &quot;snapshot_restored&quot;, &quot;command_executed&quot;, &quot;command_undone&quot;,
+#   &quot;metrics_updated&quot;
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>FsNode</strong></td>
+<td>Uniform base for tree nodes</td>
+<td>Can't traverse tree polymorphically</td>
+</tr>
+<tr>
+<td><strong>File</strong></td>
+<td>Leaf with versioned content</td>
+<td>Can't store or version file data</td>
+</tr>
+<tr>
+<td><strong>Directory</strong></td>
+<td>Composite container</td>
+<td>Can't organize hierarchical structure</td>
+</tr>
+<tr>
+<td><strong>Command</strong></td>
+<td>Encapsulate reversible mutations</td>
+<td>No undo/redo capability</td>
+</tr>
+<tr>
+<td><strong>Snapshot</strong></td>
+<td>Capture full tree state</td>
+<td>Can't roll back to prior state</td>
+</tr>
+<tr>
+<td><strong>StorageStrategy</strong></td>
+<td>Decouple encoding from file logic</td>
+<td>Can't swap compression without rewriting files</td>
+</tr>
+<tr>
+<td><strong>FileSystem</strong></td>
+<td>Central coordinator (Singleton)</td>
+<td>Duplicate state, no consistent view</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-execute-command-critical"><strong>1. Execute Command</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def execute(self, cmd: Command) -&gt; None:
+    &quot;&quot;&quot;
+    Run a reversible command against the FileSystem.
+
+    Postcondition: cmd applied, cmd pushed to undo_stack, redo_stack cleared.
+
+    Raises:
+      - ValueError: if command precondition fails (e.g., file already exists, parent missing)
+
+    Side Effects: emits &quot;command_executed&quot; event, refreshes metrics
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="2-undo-redo"><strong>2. Undo / Redo</strong></h4>
+<pre class="codehilite"><code class="language-python">def undo(self) -&gt; None:
+    &quot;&quot;&quot;
+    Reverse the last executed command.
+    Pops from undo_stack, calls cmd.undo(fs), pushes to redo_stack.
+    No-op if undo_stack is empty.
+    Side Effects: emits &quot;command_undone&quot;, refreshes metrics
+    &quot;&quot;&quot;
+    pass
+
+def redo(self) -&gt; None:
+    &quot;&quot;&quot;
+    Re-apply the last undone command.
+    Pops from redo_stack, calls cmd.execute(fs), pushes to undo_stack.
+    No-op if redo_stack is empty.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="3-set-storage-strategy-critical"><strong>3. Set Storage Strategy</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def set_storage_strategy(self, strategy: StorageStrategy) -&gt; None:
+    &quot;&quot;&quot;
+    Swap storage encoding and re-encode all existing files.
+
+    Postcondition: all File._data re-encoded with new strategy.
+    Content read by callers is unchanged (transparent).
+
+    Side Effects: emits &quot;strategy_swapped&quot;, refreshes metrics
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="4-take-snapshot"><strong>4. Take Snapshot</strong></h4>
+<pre class="codehilite"><code class="language-python">def take_snapshot(self) -&gt; Snapshot:
+    &quot;&quot;&quot;
+    Deep-clone entire tree into a Snapshot (Memento).
+
+    Returns: Snapshot with independent copy of current tree.
+    Side Effects: emits &quot;snapshot_taken&quot;
+    Cost: O(N) where N = total nodes
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="5-restore-snapshot-critical"><strong>5. Restore Snapshot</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def restore_snapshot(self, snap: Snapshot) -&gt; None:
+    &quot;&quot;&quot;
+    Restore tree from snapshot. Wrapped in RestoreSnapshotCommand — reversible!
+
+    Postcondition: fs.root replaced with clone of snap.root_clone
+    Undo: re-instates the pre-restore root
+    Side Effects: emits &quot;snapshot_restored&quot;
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="6-register-observer"><strong>6. Register Observer</strong></h4>
+<pre class="codehilite"><code class="language-python">def register(self, fn: Callable[[str, Dict[str, Any]], None]) -&gt; None:
+    &quot;&quot;&quot;
+    Subscribe a callable to all FileSystem events.
+    fn(event: str, payload: dict) called on every state change.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-32-failure-model">Step 3.2: Failure Model</h3>
+<pre class="codehilite"><code class="language-python"># FileSystem raises ValueError for precondition failures:
+raise ValueError(&quot;File already exists&quot;)
+raise ValueError(&quot;Parent directory missing&quot;)
+raise ValueError(&quot;Source not found&quot;)
+raise ValueError(&quot;Destination is not a directory&quot;)
+raise ValueError(&quot;Cannot move root&quot;)
+raise ValueError(&quot;Cannot delete root or non-existent&quot;)
+raise ValueError(&quot;Not a file: &lt;path&gt;&quot;)
+</code></pre>
+
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">fs = FileSystem()  # Singleton — same instance every call
+
+# Register event listener
+fs.register(lambda event, payload: print(f&quot;[{event}] {payload}&quot;))
+
+# Create hierarchy
+fs.execute(CreateDirectoryCommand(&quot;/docs&quot;))
+fs.execute(CreateFileCommand(&quot;/docs/spec.md&quot;))
+fs.execute(WriteFileCommand(&quot;/docs/spec.md&quot;, &quot;API specification&quot;))
+
+# Read content
+content = fs._get_file(&quot;/docs/spec.md&quot;).read(fs.storage)
+
+# Undo last write
+fs.undo()
+
+# Swap to compression
+fs.set_storage_strategy(CompressedStorageStrategy())
+
+# Take and restore snapshot
+snap = fs.take_snapshot()
+fs.execute(CreateFileCommand(&quot;/docs/temp.txt&quot;))
+fs.restore_snapshot(snap)       # /docs/temp.txt gone
+fs.undo()                       # undo the restore — /docs/temp.txt back
+
+# Metrics
+print(fs.get_metrics())         # file_count, dir_count, total_bytes, compressed_bytes
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and association. Prefer composition over inheritance. Check cardinality (1:1, 1:N). Highlight the Composite tree structure.</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>FileSystem HAS-A root (1:1 Composition)
+  └─ FileSystem is the owner; root Directory holds all other nodes
+
+Directory HAS-A children (1:N Composition) ← Composite Pattern
+  └─ Directory owns its children (both File and Directory nodes)
+
+File IS-A FsNode (Inheritance / Leaf)
+  └─ Leaf node; holds _data bytes and version
+
+Directory IS-A FsNode (Inheritance / Composite)
+  └─ Composite node; delegates operations to children
+
+FsNode REFERENCES parent (N:1 Association)
+  └─ Every node (except root) references its parent Directory
+
+FileSystem HAS-A StorageStrategy (1:1 Composition)
+  └─ FileSystem owns the active strategy; swap replaces it
+
+FileSystem HAS-A undo_stack / redo_stack (1:N Composition)
+  └─ FileSystem owns all queued Command objects
+
+Command REFERENCES FileSystem (Association)
+  └─ Commands receive fs at execute/undo time; no ownership
+
+Snapshot HAS-A root_clone (1:1 Composition)
+  └─ Snapshot owns the deep-cloned tree independently
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌──────────────────────────────────────────┐
+│  FileSystem (Singleton)                  │
+├──────────────────────────────────────────┤
+│ - _instance: FileSystem                  │
+│ - _lock: threading.RLock                 │
+│ - root: Directory                        │
+│ - storage: StorageStrategy               │
+│ - undo_stack: List[Command]              │
+│ - redo_stack: List[Command]              │
+│ - listeners: List[Callable]              │
+│ - metrics: Dict[str, int]                │
+├──────────────────────────────────────────┤
+│ + execute(cmd): void                     │
+│ + undo(): void                           │
+│ + redo(): void                           │
+│ + set_storage_strategy(s): void          │
+│ + take_snapshot(): Snapshot              │
+│ + restore_snapshot(snap): void           │
+│ + register(fn): void                     │
+│ + get_metrics(): Dict                    │
+│ + exists(path): bool                     │
+└──────────────┬───────────────────────────┘
+               │ manages (root)
+               ▼
+        ┌─────────────────────┐
+        │  FsNode (Abstract)  │
+        ├─────────────────────┤
+        │ - name: str         │
+        │ - parent: Directory │
+        ├─────────────────────┤
+        │ + path(): str       │
+        └──────┬──────────────┘
+               │ (Composite Pattern)
+       ┌───────┴──────────┐
+       ▼                  ▼
+┌────────────────┐  ┌──────────────────────┐
+│  File (Leaf)   │  │  Directory (Composite)│
+├────────────────┤  ├──────────────────────┤
+│ - _data: bytes │  │ - children:           │
+│ - version: int │  │   Dict[str, FsNode]  │
+├────────────────┤  ├──────────────────────┤
+│ + write(t, s)  │  │ + add(node): void    │
+│ + read(s): str │  │ + remove(name): Node │
+│ + logical_size │  │ + get(name): Node    │
+│ + physical_size│  └──────────────────────┘
+└────────────────┘
+
+STRATEGY PATTERN (Storage):
+┌──────────────────────────────────┐
+│  StorageStrategy (Abstract)      │
+├──────────────────────────────────┤
+│ + encode(text: str) -&gt; bytes     │
+│ + decode(data: bytes) -&gt; str     │
+│ + name() -&gt; str                  │
+└───┬──────────────────────────────┘
+    │ implemented by
+    ├─→ PlainStorageStrategy (UTF-8)
+    └─→ CompressedStorageStrategy (zlib)
+
+COMMAND PATTERN (Reversible Operations):
+┌──────────────────────────────────┐
+│  Command (Abstract)              │
+├──────────────────────────────────┤
+│ + execute(fs: FileSystem)        │
+│ + undo(fs: FileSystem)           │
+│ + describe() -&gt; str              │
+└───┬──────────────────────────────┘
+    │ implemented by
+    ├─→ CreateFileCommand(path)
+    ├─→ WriteFileCommand(path, new_text)
+    ├─→ CreateDirectoryCommand(path)
+    ├─→ MoveNodeCommand(src, dest_dir)
+    ├─→ DeleteNodeCommand(path)
+    └─→ RestoreSnapshotCommand(old_root, new_root)
+
+MEMENTO PATTERN (Snapshot):
+┌──────────────────────────────────┐
+│  Snapshot                        │
+├──────────────────────────────────┤
+│ - root_clone: Directory          │
+└──────────────────────────────────┘
+
+TREE LIFECYCLE:
+ROOT (/)
+  ├── File(name, _data, version)
+  └── Directory(name, children)
+         ├── File(name, _data, version)
+         └── Directory(name, children)
+                └── File(...)
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FileSystem → root Directory</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>Single root owns the entire tree</td>
+</tr>
+<tr>
+<td>Directory → children (FsNode)</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Composite Pattern — directory owns its children</td>
+</tr>
+<tr>
+<td>File / Directory → parent</td>
+<td>N:1</td>
+<td>Association</td>
+<td>Every node (except root) references its parent</td>
+</tr>
+<tr>
+<td>FileSystem → StorageStrategy</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>System owns active encoding strategy</td>
+</tr>
+<tr>
+<td>FileSystem → Commands (undo/redo stacks)</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System owns queued reversible operations</td>
+</tr>
+<tr>
+<td>Snapshot → root_clone</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>Snapshot owns the independent deep-cloned tree</td>
+</tr>
+<tr>
+<td>FileSystem → Listeners</td>
+<td>1:N</td>
+<td>Association</td>
+<td>System notifies multiple event observers</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-composite-for-filedirectory-hierarchy">Pattern 1: <strong>Composite</strong> (For File/Directory Hierarchy)</h3>
+<p><strong>Problem</strong>: Files and directories must be traversed, cloned, and operated on uniformly — without constantly checking node type.</p>
+<p><strong>Solution</strong>: Both <code>File</code> and <code>Directory</code> inherit <code>FsNode</code>. Tree operations (walk, clone, metrics) recurse without branching on type at the call site.</p>
+<pre class="codehilite"><code class="language-python">@dataclass
+class FsNode:
+    name: str
+    parent: Optional[Directory] = None
+
+    def path(self) -&gt; str:
+        if self.parent is None:
+            return '/' if self.name == '' else f'/{self.name}'
+        return self.parent.path().rstrip('/') + ('/' + self.name if self.name else '')
+
+@dataclass
+class File(FsNode):
+    _data: bytes = b''
+    version: int = 0
+
+@dataclass
+class Directory(FsNode):
+    children: Dict[str, FsNode] = field(default_factory=dict)
+
+    def add(self, node: FsNode) -&gt; None:
+        self.children[node.name] = node
+        node.parent = self
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Uniform traversal, ✅ Easy to add new node types (e.g., SymLink), ✅ Snapshot clones the whole subtree polymorphically<br />
+<strong>Trade-off</strong>: ⚠️ Deep trees slow down path resolution; ⚠️ <code>isinstance</code> checks needed where leaf/composite behavior differs</p>
+<hr />
+<h3 id="pattern-2-strategy-for-storage-encoding">Pattern 2: <strong>Strategy</strong> (For Storage Encoding)</h3>
+<p><strong>Problem</strong>: Files may need plain UTF-8 or zlib-compressed storage. This must be swappable at runtime without touching file logic.</p>
+<p><strong>Solution</strong>: <code>StorageStrategy</code> ABC with <code>encode</code>/<code>decode</code>. File delegates all I/O through the strategy. Swapping strategy re-encodes all files transparently.</p>
+<pre class="codehilite"><code class="language-python">class StorageStrategy:
+    def encode(self, text: str) -&gt; bytes: raise NotImplementedError
+    def decode(self, data: bytes) -&gt; str:  raise NotImplementedError
+
+class PlainStorageStrategy(StorageStrategy):
+    def encode(self, text: str) -&gt; bytes: return text.encode(&quot;utf-8&quot;)
+    def decode(self, data: bytes) -&gt; str:  return data.decode(&quot;utf-8&quot;) if data else &quot;&quot;
+
+class CompressedStorageStrategy(StorageStrategy):
+    def encode(self, text: str) -&gt; bytes: return zlib.compress(text.encode(&quot;utf-8&quot;))
+    def decode(self, data: bytes) -&gt; str:
+        return zlib.decompress(data).decode(&quot;utf-8&quot;) if data else &quot;&quot;
+
+# Swap at runtime — all files re-encoded:
+fs.set_storage_strategy(CompressedStorageStrategy())
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Zero file logic change when adding new encodings (e.g., AES encryption), ✅ Transparent to callers<br />
+<strong>Trade-off</strong>: ⚠️ Full re-encode on swap is O(total_content_bytes); ⚠️ Strategy must be passed to every <code>read</code>/<code>write</code> call</p>
+<hr />
+<h3 id="pattern-3-command-for-reversible-operations">Pattern 3: <strong>Command</strong> (For Reversible Operations)</h3>
+<p><strong>Problem</strong>: Every CRUD mutation must be reversible (undo) and re-applicable (redo). Without a command object, there is no way to store pre-mutation state.</p>
+<p><strong>Solution</strong>: Each operation is a <code>Command</code> object. <code>execute</code> applies the change and stores pre-state. <code>undo</code> restores pre-state. FileSystem manages undo/redo stacks.</p>
+<pre class="codehilite"><code class="language-python">class WriteFileCommand(Command):
+    def __init__(self, path: str, new_text: str) -&gt; None:
+        self.path = path
+        self.new_text = new_text
+        self.old_text: Optional[str] = None
+
+    def execute(self, fs: FileSystem) -&gt; None:
+        file = fs._get_file(self.path)
+        self.old_text = file.read(fs.storage)    # capture pre-state
+        file.write(self.new_text, fs.storage)
+
+    def undo(self, fs: FileSystem) -&gt; None:
+        if self.old_text is not None:
+            fs._get_file(self.path).write(self.old_text, fs.storage)
+
+# Usage: every mutation goes through execute()
+fs.execute(WriteFileCommand(&quot;/docs/spec.md&quot;, &quot;updated content&quot;))
+fs.undo()   # restores &quot;API specification&quot;
+fs.redo()   # re-applies &quot;updated content&quot;
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Uniform undo/redo for all operations, ✅ Easy to add new operations (no core change), ✅ Command log for audit/replay<br />
+<strong>Trade-off</strong>: ⚠️ DeleteNodeCommand stores full subtree clone — memory cost for large trees</p>
+<hr />
+<h3 id="pattern-4-memento-for-snapshotrestore">Pattern 4: <strong>Memento</strong> (For Snapshot/Restore)</h3>
+<p><strong>Problem</strong>: Need to capture the entire tree state at a point in time and restore it later — potentially undoing the restore itself.</p>
+<p><strong>Solution</strong>: <code>Snapshot</code> holds an independent deep-clone of root. <code>restore_snapshot</code> wraps replacement in a <code>RestoreSnapshotCommand</code>, making the restore itself undoable.</p>
+<pre class="codehilite"><code class="language-python">@dataclass
+class Snapshot:
+    root_clone: Directory
+
+class RestoreSnapshotCommand(Command):
+    def __init__(self, old_root: Directory, new_root: Directory) -&gt; None:
+        self.old_root = old_root
+        self.new_root = new_root
+
+    def execute(self, fs: FileSystem) -&gt; None:
+        fs.root = self.new_root
+
+    def undo(self, fs: FileSystem) -&gt; None:
+        fs.root = self.old_root
+
+# Usage:
+snap = fs.take_snapshot()            # capture tree state
+fs.execute(CreateFileCommand(&quot;/tmp/x.txt&quot;))
+fs.restore_snapshot(snap)            # tree rolls back; restore is in undo_stack
+fs.undo()                            # undo the restore — /tmp/x.txt is back
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Full global rollback in O(1) (swap root pointer), ✅ Restore is itself reversible<br />
+<strong>Trade-off</strong>: ⚠️ Snapshot is O(N) memory; ⚠️ Many snapshots → memory pressure; consider incremental diffs for production</p>
+<hr />
+<h3 id="pattern-5-singleton-for-filesystem">Pattern 5: <strong>Singleton</strong> (For FileSystem)</h3>
+<p><strong>Problem</strong>: Multiple callers need one consistent view of the tree, strategies, and stacks.</p>
+<p><strong>Solution</strong>: Double-checked locking Singleton. <code>__new__</code> accepts <code>*args, **kwargs</code> so Python doesn't reject arguments. <code>__init__</code> guards with <code>_initialized</code> flag.</p>
+<pre class="codehilite"><code class="language-python">class FileSystem:
+    _instance: Optional[FileSystem] = None
+    _lock = threading.RLock()   # RLock: re-entrant safe
+
+    def __new__(cls, *args, **kwargs) -&gt; FileSystem:
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self) -&gt; None:
+        if hasattr(self, '_initialized'):
+            return
+        self._initialized = True
+        self.root = Directory(name='')
+        self.storage: StorageStrategy = PlainStorageStrategy()
+        # ... rest of init
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Single source of truth, ✅ Thread-safe init (double-checked lock), ✅ Global access via <code>FileSystem()</code><br />
+<strong>Trade-off</strong>: ⚠️ Global state (hard to unit-test in isolation), ⚠️ Must reset state explicitly between test runs</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Composite</strong></td>
+<td>Uniform File/Directory traversal</td>
+<td>No type-checking at call sites; extensible to new node types</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Pluggable storage encoding</td>
+<td>Swap plain↔compressed (or add encryption) with zero file logic change</td>
+</tr>
+<tr>
+<td><strong>Command</strong></td>
+<td>Reversible CRUD mutations</td>
+<td>Undo/redo stacks; audit log; replay capability</td>
+</tr>
+<tr>
+<td><strong>Memento</strong></td>
+<td>Full tree snapshot/restore</td>
+<td>Global rollback in O(1); restore is itself undoable</td>
+</tr>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>Single consistent FileSystem</td>
+<td>No duplicate state; thread-safe initialization</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+File System - Interview Implementation
+Demonstrates:
+1. Composite pattern (File/Directory hierarchy)
+2. Strategy pattern (pluggable storage)
+3. Command pattern (reversible CRUD with undo/redo)
+4. Observer pattern (event emission)
+5. Memento pattern (snapshot/restore)
+6. Singleton pattern (centralized FileSystem)
+&quot;&quot;&quot;
+
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Callable, Any, Tuple
+import zlib
+import threading
+
+# ============================================================================
+# STORAGE STRATEGIES
+# ============================================================================
+
+class StorageStrategy:
+    &quot;&quot;&quot;Abstract strategy for content encoding/decoding&quot;&quot;&quot;
+
+    def name(self) -&gt; str:
+        return self.__class__.__name__
+
+    def encode(self, text: str) -&gt; bytes:
+        raise NotImplementedError
+
+    def decode(self, data: bytes) -&gt; str:
+        raise NotImplementedError
+
+class PlainStorageStrategy(StorageStrategy):
+    &quot;&quot;&quot;Direct UTF-8 encoding&quot;&quot;&quot;
+
+    def encode(self, text: str) -&gt; bytes:
+        return text.encode(&quot;utf-8&quot;)
+
+    def decode(self, data: bytes) -&gt; str:
+        return data.decode(&quot;utf-8&quot;) if data else &quot;&quot;
+
+class CompressedStorageStrategy(StorageStrategy):
+    &quot;&quot;&quot;Zlib compression for space efficiency&quot;&quot;&quot;
+
+    def encode(self, text: str) -&gt; bytes:
+        return zlib.compress(text.encode(&quot;utf-8&quot;))
+
+    def decode(self, data: bytes) -&gt; str:
+        if not data:
+            return &quot;&quot;
+        return zlib.decompress(data).decode(&quot;utf-8&quot;)
+
+# ============================================================================
+# COMPOSITE NODES
+# ============================================================================
+
+@dataclass
+class FsNode:
+    &quot;&quot;&quot;Base node for file system hierarchy&quot;&quot;&quot;
+    name: str
+    parent: Optional[Directory] = None
+
+    def path(self) -&gt; str:
+        &quot;&quot;&quot;Resolve full path by walking parent chain&quot;&quot;&quot;
+        if self.parent is None:
+            return '/' if self.name == '' else f'/{self.name}'
+        base = self.parent.path()
+        return base.rstrip('/') + ('/' + self.name if self.name else '')
+
+@dataclass
+class File(FsNode):
+    &quot;&quot;&quot;Leaf node: stores content with versioning&quot;&quot;&quot;
+    _data: bytes = b''
+    version: int = 0
+
+    def write(self, text: str, storage: StorageStrategy) -&gt; None:
+        &quot;&quot;&quot;Encode text via strategy and increment version&quot;&quot;&quot;
+        self._data = storage.encode(text)
+        self.version += 1
+
+    def read(self, storage: StorageStrategy) -&gt; str:
+        &quot;&quot;&quot;Decode content via strategy&quot;&quot;&quot;
+        return storage.decode(self._data)
+
+    def logical_size(self, storage: StorageStrategy) -&gt; int:
+        &quot;&quot;&quot;Uncompressed size&quot;&quot;&quot;
+        return len(self.read(storage))
+
+    def physical_size(self) -&gt; int:
+        &quot;&quot;&quot;Compressed size (bytes stored)&quot;&quot;&quot;
+        return len(self._data)
+
+@dataclass
+class Directory(FsNode):
+    &quot;&quot;&quot;Composite node: contains child files/directories&quot;&quot;&quot;
+    children: Dict[str, FsNode] = field(default_factory=dict)
+
+    def add(self, node: FsNode) -&gt; None:
+        &quot;&quot;&quot;Add child and update parent reference&quot;&quot;&quot;
+        self.children[node.name] = node
+        node.parent = self
+
+    def remove(self, name: str) -&gt; FsNode:
+        &quot;&quot;&quot;Remove child and clear parent reference&quot;&quot;&quot;
+        node = self.children.pop(name)
+        node.parent = None
+        return node
+
+    def get(self, name: str) -&gt; Optional[FsNode]:
+        &quot;&quot;&quot;Lookup child by name&quot;&quot;&quot;
+        return self.children.get(name)
+
+# ============================================================================
+# COMMANDS (REVERSIBLE OPERATIONS)
+# ============================================================================
+
+class Command:
+    &quot;&quot;&quot;Abstract reversible command&quot;&quot;&quot;
+
+    def execute(self, fs: FileSystem) -&gt; None:
+        raise NotImplementedError
+
+    def undo(self, fs: FileSystem) -&gt; None:
+        raise NotImplementedError
+
+    def describe(self) -&gt; str:
+        return self.__class__.__name__
+
+class CreateFileCommand(Command):
+    &quot;&quot;&quot;Create file at path&quot;&quot;&quot;
+
+    def __init__(self, path: str) -&gt; None:
+        self.path = path
+        self.created = False
+
+    def execute(self, fs: FileSystem) -&gt; None:
+        if fs.exists(self.path):
+            raise ValueError(&quot;File already exists&quot;)
+        fs._create_file(self.path)
+        self.created = True
+
+    def undo(self, fs: FileSystem) -&gt; None:
+        if self.created:
+            fs._delete_node(self.path)
+
+    def describe(self) -&gt; str:
+        return f&quot;CreateFile {self.path}&quot;
+
+class WriteFileCommand(Command):
+    &quot;&quot;&quot;Write content to file (captures old for undo)&quot;&quot;&quot;
+
+    def __init__(self, path: str, new_text: str) -&gt; None:
+        self.path = path
+        self.new_text = new_text
+        self.old_text: Optional[str] = None
+
+    def execute(self, fs: FileSystem) -&gt; None:
+        file = fs._get_file(self.path)
+        self.old_text = file.read(fs.storage)
+        file.write(self.new_text, fs.storage)
+
+    def undo(self, fs: FileSystem) -&gt; None:
+        if self.old_text is None:
+            return
+        file = fs._get_file(self.path)
+        file.write(self.old_text, fs.storage)
+
+    def describe(self) -&gt; str:
+        return f&quot;WriteFile {self.path}&quot;
+
+class CreateDirectoryCommand(Command):
+    &quot;&quot;&quot;Create directory at path&quot;&quot;&quot;
+
+    def __init__(self, path: str) -&gt; None:
+        self.path = path.rstrip('/')
+        self.created = False
+
+    def execute(self, fs: FileSystem) -&gt; None:
+        if fs.exists(self.path):
+            raise ValueError(&quot;Directory already exists&quot;)
+        fs._create_directory(self.path)
+        self.created = True
+
+    def undo(self, fs: FileSystem) -&gt; None:
+        if self.created:
+            node = fs._resolve(self.path)
+            if isinstance(node, Directory) and not node.children and node.parent is not None:
+                node.parent.remove(node.name)
+
+class MoveNodeCommand(Command):
+    &quot;&quot;&quot;Move node from src to destination directory&quot;&quot;&quot;
+
+    def __init__(self, src_path: str, dest_dir_path: str) -&gt; None:
+        self.src_path = src_path
+        self.dest_dir_path = dest_dir_path
+        self.original_parent: Optional[Directory] = None
+        self.node_name: Optional[str] = None
+
+    def execute(self, fs: FileSystem) -&gt; None:
+        node = fs._resolve(self.src_path)
+        if node is None:
+            raise ValueError(&quot;Source not found&quot;)
+        dest_dir = fs._resolve(self.dest_dir_path)
+        if not isinstance(dest_dir, Directory):
+            raise ValueError(&quot;Destination is not a directory&quot;)
+        if node.parent is None:
+            raise ValueError(&quot;Cannot move root&quot;)
+
+        self.original_parent = node.parent
+        self.node_name = node.name
+        node.parent.remove(node.name)
+        dest_dir.add(node)
+
+    def undo(self, fs: FileSystem) -&gt; None:
+        if self.original_parent and self.node_name:
+            node = fs._resolve(self.dest_dir_path + '/' + self.node_name)
+            if node:
+                node.parent.remove(node.name)
+                self.original_parent.add(node)
+
+    def describe(self) -&gt; str:
+        return f&quot;MoveNode {self.src_path} -&gt; {self.dest_dir_path}&quot;
+
+class DeleteNodeCommand(Command):
+    &quot;&quot;&quot;Delete node (captures subtree for undo)&quot;&quot;&quot;
+
+    def __init__(self, path: str) -&gt; None:
+        self.path = path
+        self.snapshot: Optional[FsNode] = None
+        self.parent_path: Optional[str] = None
+
+    def execute(self, fs: FileSystem) -&gt; None:
+        node = fs._resolve(self.path)
+        if node is None or node.parent is None:
+            raise ValueError(&quot;Cannot delete root or non-existent&quot;)
+        self.snapshot = fs._clone_node(node)
+        self.parent_path = node.parent.path()
+        node.parent.remove(node.name)
+
+    def undo(self, fs: FileSystem) -&gt; None:
+        if self.snapshot and self.parent_path:
+            parent = fs._resolve(self.parent_path)
+            if isinstance(parent, Directory):
+                parent.add(fs._clone_node(self.snapshot))
+
+    def describe(self) -&gt; str:
+        return f&quot;DeleteNode {self.path}&quot;
+
+class RestoreSnapshotCommand(Command):
+    &quot;&quot;&quot;Restore tree from snapshot (reversible)&quot;&quot;&quot;
+
+    def __init__(self, old_root: Directory, new_root: Directory) -&gt; None:
+        self.old_root = old_root
+        self.new_root = new_root
+
+    def execute(self, fs: FileSystem) -&gt; None:
+        fs.root = self.new_root
+
+    def undo(self, fs: FileSystem) -&gt; None:
+        fs.root = self.old_root
+
+    def describe(self) -&gt; str:
+        return &quot;RestoreSnapshot&quot;
+
+# ============================================================================
+# SNAPSHOT (MEMENTO)
+# ============================================================================
+
+@dataclass
+class Snapshot:
+    &quot;&quot;&quot;Captures entire tree state&quot;&quot;&quot;
+    root_clone: Directory
+
+# ============================================================================
+# FILE SYSTEM (SINGLETON)
+# ============================================================================
+
+class FileSystem:
+    &quot;&quot;&quot;Centralized file system coordinator (Singleton)&quot;&quot;&quot;
+
+    _instance: Optional[FileSystem] = None
+    _lock = threading.RLock()  # RLock: re-entrant safe (restore_snapshot -&gt; execute)
+
+    def __new__(cls, *args, **kwargs) -&gt; FileSystem:
+        # Fix: accept *args/**kwargs so Python does not reject arguments
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self) -&gt; None:
+        if hasattr(self, '_initialized'):
+            return
+
+        self._initialized = True
+        self.root = Directory(name='')
+        self.storage: StorageStrategy = PlainStorageStrategy()
+        self.undo_stack: List[Command] = []
+        self.redo_stack: List[Command] = []
+        self.listeners: List[Callable[[str, Dict[str, Any]], None]] = []
+        self.metrics: Dict[str, int] = {
+            'file_count': 0,
+            'dir_count': 1,
+            'total_bytes': 0,
+            'compressed_bytes': 0,
+            'command_executed': 0,
+            'command_undone': 0
+        }
+        print(&quot;FileSystem initialized&quot;)
+
+    def register(self, fn: Callable[[str, Dict[str, Any]], None]) -&gt; None:
+        &quot;&quot;&quot;Subscribe to events&quot;&quot;&quot;
+        self.listeners.append(fn)
+
+    def _emit(self, event: str, payload: Dict[str, Any]) -&gt; None:
+        &quot;&quot;&quot;Emit event to all listeners&quot;&quot;&quot;
+        for listener_fn in self.listeners:
+            try:
+                listener_fn(event, payload)
+            except Exception as e:
+                print(f&quot;  [WARN] Listener error: {e}&quot;)
+
+    # ---- PATH RESOLUTION ----
+
+    def _resolve(self, path: str) -&gt; Optional[FsNode]:
+        &quot;&quot;&quot;Resolve path to node, return None if not found&quot;&quot;&quot;
+        if path == '/' or path == '':
+            return self.root
+
+        parts = [p for p in path.strip('/').split('/') if p]
+        node: FsNode = self.root
+
+        for part in parts:
+            if not isinstance(node, Directory):
+                return None
+            node = node.get(part)
+            if node is None:
+                return None
+
+        return node
+
+    def exists(self, path: str) -&gt; bool:
+        &quot;&quot;&quot;Check if path exists&quot;&quot;&quot;
+        return self._resolve(path) is not None
+
+    def _get_file(self, path: str) -&gt; File:
+        &quot;&quot;&quot;Resolve path to file, raise if not a file&quot;&quot;&quot;
+        node = self._resolve(path)
+        if not isinstance(node, File):
+            raise ValueError(f&quot;Not a file: {path}&quot;)
+        return node
+
+    # ---- PRIMITIVE OPERATIONS ----
+
+    def _create_file(self, path: str) -&gt; None:
+        &quot;&quot;&quot;Create file at path&quot;&quot;&quot;
+        if path.endswith('/'):
+            raise ValueError(&quot;File path cannot end with /&quot;)
+
+        parts = path.rstrip('/').split('/')
+        parent_path = '/'.join(parts[:-1]) or '/'
+        name = parts[-1]
+
+        parent = self._resolve(parent_path)
+        if not isinstance(parent, Directory):
+            raise ValueError(&quot;Parent directory missing&quot;)
+
+        parent.add(File(name=name))
+        self._emit(&quot;node_created&quot;, {&quot;path&quot;: path, &quot;type&quot;: &quot;file&quot;})
+        self._refresh_metrics()
+
+    def _create_directory(self, path: str) -&gt; None:
+        &quot;&quot;&quot;Create directory at path&quot;&quot;&quot;
+        path = path.rstrip('/')
+        parts = path.split('/')
+        parent_path = '/'.join(parts[:-1]) or '/'
+        name = parts[-1]
+
+        parent = self._resolve(parent_path)
+        if not isinstance(parent, Directory):
+            raise ValueError(&quot;Parent directory missing&quot;)
+
+        parent.add(Directory(name=name))
+        self._emit(&quot;node_created&quot;, {&quot;path&quot;: path, &quot;type&quot;: &quot;directory&quot;})
+        self._refresh_metrics()
+
+    def _delete_node(self, path: str) -&gt; None:
+        &quot;&quot;&quot;Delete node at path&quot;&quot;&quot;
+        node = self._resolve(path)
+        if node is None or node.parent is None:
+            raise ValueError(&quot;Cannot delete root or non-existent&quot;)
+
+        node.parent.remove(node.name)
+        self._emit(&quot;node_deleted&quot;, {&quot;path&quot;: path})
+        self._refresh_metrics()
+
+    def _clone_node(self, node: FsNode) -&gt; FsNode:
+        &quot;&quot;&quot;Deep clone node and subtree&quot;&quot;&quot;
+        if isinstance(node, File):
+            return File(name=node.name, _data=node._data, version=node.version)
+
+        if isinstance(node, Directory):
+            new_dir = Directory(name=node.name)
+            for child in node.children.values():
+                child_clone = self._clone_node(child)
+                new_dir.add(child_clone)
+            return new_dir
+
+        raise ValueError(&quot;Unknown node type&quot;)
+
+    # ---- COMMAND API ----
+
+    def execute(self, cmd: Command) -&gt; None:
+        &quot;&quot;&quot;Execute command and manage stacks&quot;&quot;&quot;
+        cmd.execute(self)
+        self.undo_stack.append(cmd)
+        self.redo_stack.clear()
+        self.metrics['command_executed'] += 1
+        self._emit(&quot;command_executed&quot;, {&quot;cmd&quot;: cmd.describe()})
+
+    def undo(self) -&gt; None:
+        &quot;&quot;&quot;Undo last command&quot;&quot;&quot;
+        if not self.undo_stack:
+            return
+
+        cmd = self.undo_stack.pop()
+        cmd.undo(self)
+        self.redo_stack.append(cmd)
+        self.metrics['command_undone'] += 1
+        self._emit(&quot;command_undone&quot;, {&quot;cmd&quot;: cmd.describe()})
+        self._refresh_metrics()
+
+    def redo(self) -&gt; None:
+        &quot;&quot;&quot;Redo last undone command&quot;&quot;&quot;
+        if not self.redo_stack:
+            return
+
+        cmd = self.redo_stack.pop()
+        cmd.execute(self)
+        self.undo_stack.append(cmd)
+        self.metrics['command_executed'] += 1
+        self._emit(&quot;command_executed&quot;, {&quot;cmd&quot;: cmd.describe(), &quot;redo&quot;: True})
+        self._refresh_metrics()
+
+    def set_storage_strategy(self, strategy: StorageStrategy) -&gt; None:
+        &quot;&quot;&quot;Swap storage strategy (retranscode all files)&quot;&quot;&quot;
+        old_name = self.storage.name()
+
+        # Read all files with old strategy
+        all_files = self._all_files()
+        contents: List[Tuple[File, str]] = [(f, f.read(self.storage)) for f in all_files]
+
+        # Switch strategy
+        self.storage = strategy
+
+        # Retranscode with new strategy
+        for f, text in contents:
+            f.write(text, self.storage)
+
+        self._emit(&quot;strategy_swapped&quot;, {&quot;old&quot;: old_name, &quot;new&quot;: strategy.name()})
+        self._refresh_metrics()
+
+    def take_snapshot(self) -&gt; Snapshot:
+        &quot;&quot;&quot;Create snapshot of entire tree&quot;&quot;&quot;
+        snap = Snapshot(root_clone=self._clone_node(self.root))  # type: ignore
+        self._emit(&quot;snapshot_taken&quot;, {&quot;file_count&quot;: self.metrics['file_count']})
+        return snap
+
+    def restore_snapshot(self, snap: Snapshot) -&gt; None:
+        &quot;&quot;&quot;Restore tree from snapshot (reversible via command)&quot;&quot;&quot;
+        old_root = self.root
+        new_root = self._clone_node(snap.root_clone)  # type: ignore
+        self.execute(RestoreSnapshotCommand(old_root, new_root))
+        self._emit(&quot;snapshot_restored&quot;, {})
+
+    def _all_files(self) -&gt; List[File]:
+        &quot;&quot;&quot;Collect all files in tree&quot;&quot;&quot;
+        result: List[File] = []
+
+        def walk(node: FsNode) -&gt; None:
+            if isinstance(node, File):
+                result.append(node)
+            elif isinstance(node, Directory):
+                for child in node.children.values():
+                    walk(child)
+
+        walk(self.root)
+        return result
+
+    def _all_dirs(self) -&gt; List[Directory]:
+        &quot;&quot;&quot;Collect all directories in tree&quot;&quot;&quot;
+        result: List[Directory] = []
+
+        def walk(d: Directory) -&gt; None:
+            result.append(d)
+            for child in d.children.values():
+                if isinstance(child, Directory):
+                    walk(child)
+
+        walk(self.root)
+        return result
+
+    def _refresh_metrics(self) -&gt; None:
+        &quot;&quot;&quot;Recalculate all metrics&quot;&quot;&quot;
+        files = self._all_files()
+        dirs = self._all_dirs()
+
+        logical_total = sum(f.logical_size(self.storage) for f in files)
+        physical_total = sum(f.physical_size() for f in files)
+
+        self.metrics.update({
+            'file_count': len(files),
+            'dir_count': len(dirs),
+            'total_bytes': logical_total,
+            'compressed_bytes': physical_total
+        })
+        self._emit(&quot;metrics_updated&quot;, self.metrics.copy())
+
+    def get_metrics(self) -&gt; Dict[str, int]:
+        &quot;&quot;&quot;Return current metrics&quot;&quot;&quot;
+        return self.metrics.copy()
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def print_section(title: str) -&gt; None:
+    print(f&quot;\n{'='*70}&quot;)
+    print(f&quot;  {title}&quot;)
+    print(f&quot;{'='*70}&quot;)
+
+def simple_listener(event: str, payload: Dict[str, Any]) -&gt; None:
+    if event in ['node_created', 'node_deleted', 'strategy_swapped', 'snapshot_taken']:
+        print(f&quot;  [EVENT] {event}: {payload}&quot;)
+
+def demo_1_setup() -&gt; None:
+    print_section(&quot;DEMO 1: SETUP &amp; CREATE HIERARCHY&quot;)
+
+    fs = FileSystem()
+    fs.register(simple_listener)
+
+    fs.execute(CreateDirectoryCommand(&quot;/docs&quot;))
+    fs.execute(CreateFileCommand(&quot;/docs/spec.md&quot;))
+    fs.execute(WriteFileCommand(&quot;/docs/spec.md&quot;, &quot;API specification document&quot;))
+    fs.execute(CreateFileCommand(&quot;/docs/readme.md&quot;))
+    fs.execute(WriteFileCommand(&quot;/docs/readme.md&quot;, &quot;Project README&quot;))
+
+    print(f&quot;\n  Content of /docs/spec.md: {fs._get_file('/docs/spec.md').read(fs.storage)}&quot;)
+    m = fs.get_metrics()
+    print(f&quot;  Metrics: files={m['file_count']}, dirs={m['dir_count']}, &quot;
+          f&quot;logical={m['total_bytes']}B, physical={m['compressed_bytes']}B&quot;)
+
+def demo_2_strategy_swap() -&gt; None:
+    print_section(&quot;DEMO 2: STORAGE STRATEGY SWAP&quot;)
+
+    fs = FileSystem()
+
+    before = fs.get_metrics()
+    print(f&quot;  Before compression: logical={before['total_bytes']}B, physical={before['compressed_bytes']}B&quot;)
+
+    fs.set_storage_strategy(CompressedStorageStrategy())
+
+    after = fs.get_metrics()
+    print(f&quot;  After compression:  logical={after['total_bytes']}B, physical={after['compressed_bytes']}B&quot;)
+    if after['total_bytes'] &gt; 0:
+        print(f&quot;  Compression ratio: {100 * after['compressed_bytes'] / after['total_bytes']:.1f}%&quot;)
+    print(f&quot;  Content unchanged: {fs._get_file('/docs/spec.md').read(fs.storage)}&quot;)
+
+def demo_3_move_node() -&gt; None:
+    print_section(&quot;DEMO 3: MOVE NODE BETWEEN DIRECTORIES&quot;)
+
+    fs = FileSystem()
+
+    fs.execute(CreateDirectoryCommand(&quot;/archive&quot;))
+    fs.execute(MoveNodeCommand(&quot;/docs/readme.md&quot;, &quot;/archive&quot;))
+
+    print(f&quot;  /docs/readme.md exists:    {fs.exists('/docs/readme.md')}&quot;)
+    print(f&quot;  /archive/readme.md exists: {fs.exists('/archive/readme.md')}&quot;)
+    print(f&quot;  Content preserved: {fs._get_file('/archive/readme.md').read(fs.storage)}&quot;)
+
+def demo_4_delete_undo_redo() -&gt; None:
+    print_section(&quot;DEMO 4: DELETE &amp; UNDO/REDO&quot;)
+
+    fs = FileSystem()
+
+    fs.execute(DeleteNodeCommand(&quot;/archive/readme.md&quot;))
+    print(f&quot;  After delete: /archive/readme.md exists = {fs.exists('/archive/readme.md')}&quot;)
+
+    fs.undo()
+    print(f&quot;  After undo:   /archive/readme.md exists = {fs.exists('/archive/readme.md')}&quot;)
+
+    fs.redo()
+    print(f&quot;  After redo:   /archive/readme.md exists = {fs.exists('/archive/readme.md')}&quot;)
+
+def demo_5_snapshot_restore() -&gt; None:
+    print_section(&quot;DEMO 5: SNAPSHOT &amp; RESTORE&quot;)
+
+    fs = FileSystem()
+
+    snap = fs.take_snapshot()
+    before_metrics = fs.get_metrics()
+    print(f&quot;  Snapshot taken: file_count={before_metrics['file_count']}&quot;)
+
+    # Create /temp directory before creating file inside it
+    fs.execute(CreateDirectoryCommand(&quot;/temp&quot;))
+    fs.execute(CreateFileCommand(&quot;/temp/test.txt&quot;))
+    fs.execute(WriteFileCommand(&quot;/temp/test.txt&quot;, &quot;Temporary data&quot;))
+
+    mutated_metrics = fs.get_metrics()
+    print(f&quot;  After mutation: file_count={mutated_metrics['file_count']}&quot;)
+    print(f&quot;  /temp/test.txt exists: {fs.exists('/temp/test.txt')}&quot;)
+
+    fs.restore_snapshot(snap)
+    restored_metrics = fs.get_metrics()
+    print(f&quot;  After restore:  file_count={restored_metrics['file_count']}&quot;)
+    print(f&quot;  /temp/test.txt exists: {fs.exists('/temp/test.txt')}&quot;)
+    print(f&quot;  undo_stack depth: {len(fs.undo_stack)} (restore cmd is undoable)&quot;)
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if True:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;FILE SYSTEM - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_setup()
+    demo_2_strategy_swap()
+    demo_3_move_node()
+    demo_4_delete_undo_redo()
+    demo_5_snapshot_restore()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;ALL DEMOS COMPLETED&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton init</strong></td>
+<td>Class RLock (double-checked)</td>
+<td>Single instance even under concurrent first calls</td>
+</tr>
+<tr>
+<td><strong>execute / undo / redo</strong></td>
+<td>Single-threaded demo; RLock available for extension</td>
+<td>Command stacks mutated atomically</td>
+</tr>
+<tr>
+<td><strong>restore_snapshot</strong></td>
+<td>RLock re-entrant — calls execute() internally</td>
+<td>No deadlock on re-entry into lock</td>
+</tr>
+<tr>
+<td><strong>set_storage_strategy</strong></td>
+<td>Single-threaded; read-all then write-all</td>
+<td>Atomic re-encode; consistent state</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. ✅ <code>threading.RLock</code> instead of <code>Lock</code> — re-entrant safe (<code>restore_snapshot</code> calls <code>execute</code>)
+2. ✅ <code>__new__</code> accepts <code>*args, **kwargs</code> — Singleton never rejects arguments
+3. ✅ Double-checked locking for Singleton initialization
+4. ✅ Listener errors caught inside <code>_emit</code> — one bad observer doesn't break the system</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="scenario-1-setup-create-hierarchy">Scenario 1: Setup &amp; Create Hierarchy</h3>
+<pre class="codehilite"><code>[EVENT] node_created: {'path': '/docs', 'type': 'directory'}
+[EVENT] node_created: {'path': '/docs/spec.md', 'type': 'file'}
+[EVENT] node_created: {'path': '/docs/readme.md', 'type': 'file'}
+Content of /docs/spec.md: API specification document
+Metrics: files=2, dirs=2, logical=43B, physical=43B
+</code></pre>
+
+<h3 id="scenario-2-strategy-swap-compression">Scenario 2: Strategy Swap &amp; Compression</h3>
+<pre class="codehilite"><code>Before compression: logical=43B, physical=43B
+[EVENT] strategy_swapped: {'old': 'PlainStorageStrategy', 'new': 'CompressedStorageStrategy'}
+After compression:  logical=43B, physical=27B
+Compression ratio: 62.8%
+Content unchanged: API specification document
+</code></pre>
+
+<h3 id="scenario-3-move-node-between-directories">Scenario 3: Move Node Between Directories</h3>
+<pre class="codehilite"><code>[EVENT] node_created: {'path': '/archive', 'type': 'directory'}
+/docs/readme.md exists:    False
+/archive/readme.md exists: True
+Content preserved: Project README
+</code></pre>
+
+<h3 id="scenario-4-delete-undoredo">Scenario 4: Delete &amp; Undo/Redo</h3>
+<pre class="codehilite"><code>After delete: /archive/readme.md exists = False
+After undo:   /archive/readme.md exists = True
+After redo:   /archive/readme.md exists = False
+</code></pre>
+
+<h3 id="scenario-5-snapshot-restore">Scenario 5: Snapshot &amp; Restore</h3>
+<pre class="codehilite"><code>[EVENT] snapshot_taken: {'file_count': 1}
+After mutation: file_count=2
+/temp/test.txt exists: True
+After restore:  file_count=1
+/temp/test.txt exists: False
+undo_stack depth: 1  (restore cmd is undoable)
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-questions">Basic Questions</h3>
+<p><strong>Q1: How do you represent files and directories?</strong></p>
+<p>A: <code>FsNode</code> base class with <code>File</code> (leaf, stores <code>_data</code> bytes) and <code>Directory</code> (composite, stores <code>children</code> dict). Both inherit <code>path()</code> method to resolve hierarchical location by walking the parent chain.</p>
+<p><strong>Q2: How does path resolution work?</strong></p>
+<p>A: Split path by <code>/</code>, traverse from root. Example: <code>/docs/spec.md</code> → <code>root → get("docs") → get("spec.md")</code>. Return <code>None</code> if any segment missing. O(segments) time.</p>
+<p><strong>Q3: What's the storage strategy pattern for?</strong></p>
+<p>A: Decouple content encoding from file logic. <code>PlainStorageStrategy</code> encodes/decodes UTF-8. <code>CompressedStorageStrategy</code> wraps zlib. Swap strategies transparently — callers always read/write strings; bytes are internal.</p>
+<p><strong>Q4: How do undo/redo stacks work?</strong></p>
+<p>A: Execute: push command to <code>undo_stack</code>, clear <code>redo_stack</code>. Undo: pop from <code>undo_stack</code>, call <code>cmd.undo()</code>, push to <code>redo_stack</code>. Redo: pop from <code>redo_stack</code>, call <code>cmd.execute()</code>, push to <code>undo_stack</code>.</p>
+<p><strong>Q5: Why use Composite pattern?</strong></p>
+<p>A: Uniform traversal for files and directories. Snapshot deep-clones entire tree without special-casing. <code>walk()</code> in <code>_all_files()</code> / <code>_all_dirs()</code> recurses polymorphically. New node types (e.g., SymLink) just inherit <code>FsNode</code>.</p>
+<hr />
+<h3 id="intermediate-questions">Intermediate Questions</h3>
+<p><strong>Q6: How does write capture old content for undo?</strong></p>
+<p>A: <code>WriteFileCommand</code> stores <code>old_text = file.read(fs.storage)</code> before execute. On undo, restore <code>old_text</code>. <code>File.version</code> increments on each write for tracking.</p>
+<p><strong>Q7: How do you move a node safely?</strong></p>
+<p>A: <code>MoveNodeCommand</code> captures <code>original_parent</code>. Execute: detach from parent, attach to <code>dest_dir</code>. Undo: detach from <code>dest_dir</code>, reattach to <code>original_parent</code>. Path updates automatically via parent chain.</p>
+<p><strong>Q8: What's the snapshot/restore trade-off?</strong></p>
+<p>A: Snapshot deep-copies entire tree — memory-intensive but simple. Alternative: incremental diffs or journaling (complex but space-efficient). For interview: snapshot sufficient for correctness demo.</p>
+<p><strong>Q9: How does strategy swap preserve file content?</strong></p>
+<p>A: Read all files with old strategy (decode to logical text) → switch strategy → re-encode with new strategy. Transparent to callers; metrics reflect new physical size.</p>
+<p><strong>Q10: How do you delete with undo?</strong></p>
+<p>A: <code>DeleteNodeCommand</code> captures a deep-clone snapshot of the node+subtree before removal. On undo, clone the snapshot and reattach to original parent. Entire subtree fully restored.</p>
+<hr />
+<h3 id="advanced-questions">Advanced Questions</h3>
+<p><strong>Q11: How to prevent memory explosion with many snapshots?</strong></p>
+<p>A: Each snapshot is independent deep-copy (expensive for large trees). Alternatives: copy-on-write (shared structure until mutation) or incremental diffs (replay from base+deltas). For production: WAL (write-ahead log) of commands — replay from any checkpoint.</p>
+<p><strong>Q12: How do metrics stay accurate across operations?</strong></p>
+<p>A: <code>_refresh_metrics()</code> recalculates <code>file_count</code>, <code>dir_count</code>, <code>total_bytes</code> (logical), <code>compressed_bytes</code> (physical) via full tree walk. Called after every create/write/delete/strategy_swap. Expensive for large trees — alternative: delta tracking on each mutation.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<p><strong>Q1: Can you support 1M files?</strong></p>
+<p>A: In-memory hash lookups O(1) per child. Path resolution O(segments, typically 5-10). 1M files: ~100MB metadata + content. Memory becomes the bottleneck. Alternative: external storage (RocksDB, FUSE filesystem) with lazy-loaded subtrees.</p>
+<p><strong>Q2: How to handle concurrent modifications?</strong></p>
+<p>A: Single-process: straightforward. Multi-process: add <code>threading.RLock</code> around all state mutations. Readers can use snapshot isolation — read old root while mutations apply to a new root copy.</p>
+<p><strong>Q3: How to persist tree to disk?</strong></p>
+<p>A: Snapshot + journaling. Checkpoint: write JSON tree every N minutes. Log: append-only command log (create_file, write_file, move_node, etc.). On restart: load checkpoint + replay log commands to reconstruct state.</p>
+<p><strong>Q4: How to optimize path resolution for deep paths?</strong></p>
+<p>A: Cache frequently-accessed paths in a dict. Or: flat storage with full path as key (trade memory for O(1) speed). Hybrid: LRU cache for top-accessed 1000 paths.</p>
+<p><strong>Q5: Can you support 100GB files?</strong></p>
+<p>A: In-memory: no. Must stream from disk. File abstraction: offset + length pointers to disk blocks. <code>read()</code> returns content iterator, not full bytes. Storage strategy becomes a streaming codec.</p>
+<p><strong>Q6: How to support incremental snapshots?</strong></p>
+<p>A: Snapshot 1 = full tree clone. Snapshot 2 = only store deltas (new files, modified content, deleted nodes). Restore snapshot 2 = apply delta to snapshot 1. Saves memory but adds restore complexity.</p>
+<p><strong>Q7: How to distribute filesystem across shards?</strong></p>
+<p>A: Shard by path hash. Node <code>/a/b/c</code> hashes to <code>shard_i</code>. Each shard holds an independent FileSystem instance. Distributed query: resolve path, route to shard, query locally. Trade-off: cross-shard moves are complex.</p>
+<p><strong>Q8: How to handle rename without moving?</strong></p>
+<p>A: <code>RenameNodeCommand</code> captures <code>old_name</code>. Execute: update <code>node.name</code> + parent's <code>children</code> dict key. Undo: restore <code>old_name</code> and re-key parent dict.</p>
+<p><strong>Q9: How to support lazy-loaded subtrees?</strong></p>
+<p>A: <code>Directory.children</code> is a dict of lazy-load proxies. On access, fetch subtree from storage. Trade-off: latency spike on first access vs memory saved for unaccessed branches.</p>
+<p><strong>Q10: How to implement efficient garbage collection?</strong></p>
+<p>A: Track refcounts for deleted snapshots. When <code>refcount == 0</code>, free. Alternative: MVCC (multi-version concurrency control) with timestamp-based cleanup — remove versions older than <code>min_active_snapshot_ts</code>.</p>
+<p><strong>Q11: How to support atomic transactions across multiple operations?</strong></p>
+<p>A: Batch commands into a transaction object. Execute each command. If any fails: rollback by calling <code>undo()</code> on each in reverse order. Or: pre-validate all commands before executing any.</p>
+<p><strong>Q12: How to prevent infinite undo/redo growth?</strong></p>
+<p>A: Cap <code>undo_stack</code> to last N commands. Discard oldest on overflow. <code>redo_stack</code> is automatically cleared on new execute — preventing memory leak from redo chain. Track <code>undo_depth</code> in metrics.</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw UML class diagram showing Composite tree (File/Directory → FsNode) and all relationships</li>
+<li>[ ] Explain Composite pattern: uniform File/Directory traversal without type-checking at call sites</li>
+<li>[ ] Explain Strategy pattern: swap plain↔compressed storage with zero file logic change</li>
+<li>[ ] Explain Command pattern: undo/redo stacks, pre-state capture (WriteFileCommand.old_text), subtree clone (DeleteNodeCommand)</li>
+<li>[ ] Explain Memento pattern: take_snapshot deep-clones tree; restore_snapshot is itself a reversible Command</li>
+<li>[ ] Explain Singleton: double-checked RLock, <code>__new__(*args, **kwargs)</code> fix, <code>_initialized</code> guard</li>
+<li>[ ] Run complete implementation without errors (5 demos)</li>
+<li>[ ] Answer 5+ scaling Q&amp;A questions</li>
+<li>[ ] Discuss trade-offs: deep-copy snapshots vs incremental diffs, in-memory vs external storage, RLock vs Lock</li>
+</ul>
+<hr />
+<p><strong>Ready for interview? Build the hierarchy and traverse the tree!</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

@@ -1,0 +1,1942 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stack Overflow - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="stack-overflow-complete-design-guide">Stack Overflow — Complete Design Guide</h1>
+<blockquote>
+<p>Global Q&amp;A platform aggregating technical knowledge, managing user reputation, enabling collaborative problem-solving with voting, tagging, and real-time updates.</p>
+</blockquote>
+<p><strong>Scale</strong>: 10M+ users, 50M+ questions, 100M+ answers<br />
+<strong>Duration</strong>: 75-minute interview guide<br />
+<strong>Focus</strong>: Reputation gates, voting mechanics, full-text search, accepted-answer lifecycle, thread-safe concurrency</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>Users post questions → questions are indexed by tags → community members submit answers and vote → author accepts the best answer → reputation is awarded and gates further actions (comment, vote, close). Core concerns: reputation-gated features, vote integrity, efficient tag-based search, and question lifecycle management.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>Ask Question → Index by Tags → Community Answers → Vote (up/down)
+                                                         ↓
+                                              Author Accepts Best Answer
+                                                         ↓
+                                          Reputation Awarded → Feature Unlocked
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Single machine or distributed?</strong> → "Distributed system, 10M+ users"</li>
+<li><strong>Real-time updates on votes?</strong> → "Yes, WebSocket broadcast every 10 seconds"</li>
+<li><strong>Anonymous users?</strong> → "Read-only; posting requires registration"</li>
+<li><strong>Moderation workflow?</strong> → "Community close-votes (5 users, 3K rep) plus moderators"</li>
+<li><strong>Spam prevention?</strong> → "Rate limiting, ML classifier, flag system"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>User</strong></td>
+<td>Ask, answer, vote, comment</td>
+<td>Post question, submit answer, upvote, add comment</td>
+</tr>
+<tr>
+<td><strong>Moderator</strong></td>
+<td>Enforce quality</td>
+<td>Close question, delete spam, lock thread</td>
+</tr>
+<tr>
+<td><strong>System</strong></td>
+<td>Controller &amp; indexer</td>
+<td>Index tags, compute reputation, broadcast vote updates</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Questions</strong>
+  - Post question with title, description, and tags
+  - Edit, close, or delete a question
+  - Display suggested and related questions</p>
+<p>✅ <strong>Answers</strong>
+  - Submit answer to an open question
+  - Author accepts the single best answer (pinned top)
+  - Edit or delete an answer</p>
+<p>✅ <strong>Voting</strong>
+  - Upvote or downvote questions and answers
+  - Toggle vote (voting again reverses it)
+  - Reputation changes applied atomically</p>
+<p>✅ <strong>Comments</strong>
+  - Add clarification comment on questions or answers
+  - Requires minimum reputation (50 rep)</p>
+<p>✅ <strong>Search</strong>
+  - Full-text search by title, description, keywords
+  - Filter and sort by tags, relevance, recency, or score</p>
+<p>✅ <strong>Reputation &amp; Badges</strong>
+  - Track per-user reputation from all events
+  - Gate features by reputation thresholds
+  - Award badges based on milestones and refresh every 3 months</p>
+<p>✅ <strong>Tags &amp; Trending</strong>
+  - Categorize questions with multiple tags
+  - Display trending tags (hourly refresh)</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Search Latency</strong>: &lt; 200ms for full-text queries<br />
+✅ <strong>Scale</strong>: 10M+ users, 50M+ questions, 100M+ answers<br />
+✅ <strong>Real-time</strong>: Vote updates broadcast within 10 seconds<br />
+✅ <strong>Availability</strong>: 99.95% uptime<br />
+✅ <strong>Consistency</strong>: No double-votes; atomic reputation updates  </p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Comment gate</strong></td>
+<td>50 reputation required</td>
+</tr>
+<tr>
+<td><strong>Vote gate</strong></td>
+<td>100 reputation required</td>
+</tr>
+<tr>
+<td><strong>Close-vote gate</strong></td>
+<td>3,000 reputation required</td>
+</tr>
+<tr>
+<td><strong>Question upvote</strong></td>
+<td>Asker +10 reputation</td>
+</tr>
+<tr>
+<td><strong>Question downvote</strong></td>
+<td>Asker −2 reputation</td>
+</tr>
+<tr>
+<td><strong>Answer upvote</strong></td>
+<td>Answerer +10 reputation</td>
+</tr>
+<tr>
+<td><strong>Answer downvote</strong></td>
+<td>Answerer −2 reputation</td>
+</tr>
+<tr>
+<td><strong>Accepted answer</strong></td>
+<td>Answerer +15 rep, asker +2 rep</td>
+</tr>
+<tr>
+<td><strong>Asking a question</strong></td>
+<td>Asker +5 reputation</td>
+</tr>
+<tr>
+<td><strong>Badge refresh</strong></td>
+<td>Every 3 months</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on the whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<pre class="codehilite"><code>User, Question, Answer, Comment, Vote, Tag, Badge, Reputation, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="user-a-registered-person-on-the-platform"><strong>User</strong> — A registered person on the platform</h4>
+<pre class="codehilite"><code>Properties:
+  - user_id: str
+  - name: str
+  - reputation: int (starts at 0)
+  - questions_asked: int
+  - answers_given: int
+  - badges: List[str]
+
+Behaviors:
+  - can_comment(): reputation &gt;= 50
+  - can_vote(): reputation &gt;= 100
+  - can_close_vote(): reputation &gt;= 3000
+</code></pre>
+
+<h4 id="question-a-technical-post-with-title-description-and-tags"><strong>Question</strong> — A technical post with title, description, and tags</h4>
+<pre class="codehilite"><code>Properties:
+  - question_id: str
+  - author_id: str
+  - title: str
+  - description: str
+  - tags: List[str]
+  - created_at: datetime
+  - status: QuestionStatus (OPEN, CLOSED, SOLVED)
+  - views: int
+  - upvotes: int
+  - downvotes: int
+  - accepted_answer_id: Optional[str]
+
+Behaviors:
+  - score(): upvotes - downvotes
+  - mark_solved(answer_id): transition to SOLVED
+  - close(): transition to CLOSED
+</code></pre>
+
+<h4 id="answer-a-response-to-a-question"><strong>Answer</strong> — A response to a question</h4>
+<pre class="codehilite"><code>Properties:
+  - answer_id: str
+  - question_id: str
+  - author_id: str
+  - content: str
+  - created_at: datetime
+  - upvotes: int
+  - downvotes: int
+  - is_accepted: bool
+
+Behaviors:
+  - score(): upvotes - downvotes
+  - accept(): mark as accepted answer
+</code></pre>
+
+<h4 id="comment-a-short-clarification-on-a-question-or-answer"><strong>Comment</strong> — A short clarification on a question or answer</h4>
+<pre class="codehilite"><code>Properties:
+  - comment_id: str
+  - author_id: str
+  - parent_id: str  (question_id or answer_id)
+  - content: str
+  - created_at: datetime
+
+Behaviors:
+  - (data holder; gated by reputation check upstream)
+</code></pre>
+
+<h4 id="vote-an-upvote-or-downvote-record"><strong>Vote</strong> — An upvote or downvote record</h4>
+<pre class="codehilite"><code>Properties:
+  - vote_id: str
+  - user_id: str
+  - item_id: str   (question_id or answer_id)
+  - vote_type: VoteType (UPVOTE, DOWNVOTE)
+  - timestamp: datetime
+
+Behaviors:
+  - (immutable record; double-vote prevented by unique constraint)
+</code></pre>
+
+<h4 id="tag-a-topic-category-for-questions"><strong>Tag</strong> — A topic category for questions</h4>
+<pre class="codehilite"><code>Properties:
+  - tag_name: str
+  - question_ids: Set[str]  (index for fast lookup)
+  - description: str
+
+Behaviors:
+  - question_count(): len(question_ids)
+</code></pre>
+
+<h4 id="badge-a-milestone-reward"><strong>Badge</strong> — A milestone reward</h4>
+<pre class="codehilite"><code>Properties:
+  - badge_id: str
+  - name: str
+  - description: str
+  - awarded_to: str  (user_id)
+  - awarded_at: datetime
+
+Behaviors:
+  - (data holder)
+</code></pre>
+
+<h4 id="stackoverflow-main-controller-singleton"><strong>StackOverflow</strong> — Main controller (Singleton)</h4>
+<pre class="codehilite"><code>Properties:
+  - users: Dict[str, User]
+  - questions: Dict[str, Question]
+  - answers: Dict[str, Answer]
+  - votes: Dict[str, Vote]
+  - tag_index: Dict[str, Set[str]]
+  - user_questions: Dict[str, List[str]]
+  - question_answers: Dict[str, List[str]]
+  - lock: threading.RLock
+
+Behaviors:
+  - register_user(user_id, name)
+  - ask_question(user_id, title, description, tags): str
+  - answer_question(user_id, question_id, content): str
+  - vote(user_id, item_id, vote_type): bool
+  - accept_answer(question_id, answer_id): bool
+  - search_questions(keyword, tags): List[Question]
+  - get_trending_tags(limit): List[Tuple[str, int]]
+  - display_question_with_answers(question_id)
+</code></pre>
+
+<h3 id="step-23-define-enumerations-state-type">Step 2.3: Define Enumerations (State &amp; Type)</h3>
+<pre class="codehilite"><code class="language-python">class QuestionStatus(Enum):
+    OPEN = 1       # Accepting answers and votes
+    CLOSED = 2     # No new answers (needs improvement)
+    SOLVED = 3     # Accepted answer pinned
+
+class VoteType(Enum):
+    UPVOTE = 1
+    DOWNVOTE = 2
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>User</strong></td>
+<td>Reputation tracking + feature gating</td>
+<td>No way to enforce vote/comment limits</td>
+</tr>
+<tr>
+<td><strong>Question</strong></td>
+<td>Core content unit with lifecycle</td>
+<td>Can't track status, tags, or view count</td>
+</tr>
+<tr>
+<td><strong>Answer</strong></td>
+<td>Response with acceptance signal</td>
+<td>Can't implement accepted-answer flow</td>
+</tr>
+<tr>
+<td><strong>Comment</strong></td>
+<td>Clarification layer</td>
+<td>No discussion without spamming answers</td>
+</tr>
+<tr>
+<td><strong>Vote</strong></td>
+<td>Audit trail for double-vote prevention</td>
+<td>Would allow vote manipulation</td>
+</tr>
+<tr>
+<td><strong>Tag</strong></td>
+<td>Efficient filtered search index</td>
+<td>O(N) scan instead of O(1) tag lookup</td>
+</tr>
+<tr>
+<td><strong>Badge</strong></td>
+<td>Gamification milestone record</td>
+<td>No milestone-based incentives</td>
+</tr>
+<tr>
+<td><strong>StackOverflow</strong></td>
+<td>Thread-safe singleton controller</td>
+<td>No coordinated concurrent access</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-register-user"><strong>1. Register User</strong></h4>
+<pre class="codehilite"><code class="language-python">def register_user(user_id: str, name: str) -&gt; None:
+    &quot;&quot;&quot;
+    Create a new user profile with 0 reputation.
+    Side Effects: user added to users dict.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="2-ask-question-critical"><strong>2. Ask Question</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def ask_question(user_id: str, title: str, description: str,
+                 tags: List[str]) -&gt; Optional[str]:
+    &quot;&quot;&quot;
+    Post a new question and index it by tags.
+
+    Precondition: user exists
+    Postcondition: question created (OPEN), tags indexed, reputation +5
+
+    Returns: question_id on success, None on failure.
+
+    Failure causes:
+      - user_id not found
+
+    Side Effects: tag_index updated, user.reputation += 5
+    Concurrency: THREAD-SAFE
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="3-answer-question-critical"><strong>3. Answer Question</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def answer_question(user_id: str, question_id: str,
+                    content: str) -&gt; Optional[str]:
+    &quot;&quot;&quot;
+    Submit an answer to an existing question.
+
+    Precondition: user and question both exist
+    Postcondition: answer created, reputation +2
+
+    Returns: answer_id on success, None on failure.
+
+    Raises / returns None:
+      - user_id or question_id not found
+
+    Side Effects: question_answers updated, user.answers_given += 1
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="4-vote-critical"><strong>4. Vote</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def vote(user_id: str, item_id: str, vote_type: VoteType) -&gt; bool:
+    &quot;&quot;&quot;
+    Upvote or downvote a question or answer.
+
+    Precondition: user.reputation &gt;= 100
+    Postcondition: vote recorded, item score and author reputation updated
+
+    Returns: True on success, False on failure.
+
+    Failure causes:
+      - user_id not found
+      - reputation &lt; 100
+
+    Side Effects: item.upvotes or downvotes incremented, author reputation adjusted
+    Concurrency: THREAD-SAFE (RLock prevents race on reputation updates)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="5-accept-answer"><strong>5. Accept Answer</strong></h4>
+<pre class="codehilite"><code class="language-python">def accept_answer(question_id: str, answer_id: str) -&gt; bool:
+    &quot;&quot;&quot;
+    Mark an answer as the accepted (best) answer.
+
+    Precondition: answer.question_id == question_id
+    Postcondition: answer.is_accepted = True, question.status = SOLVED,
+                   answerer reputation +15
+
+    Returns: True on success, False on failure.
+
+    Side Effects: question transitions to SOLVED state
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="6-search-questions"><strong>6. Search Questions</strong></h4>
+<pre class="codehilite"><code class="language-python">def search_questions(keyword: str,
+                     tags: Optional[List[str]] = None) -&gt; List[Question]:
+    &quot;&quot;&quot;
+    Full-text search by keyword, optionally filtered by tags.
+    Results sorted by score DESC then recency DESC.
+
+    Response Time: &lt;200ms (Elasticsearch in production)
+    Returns: sorted list of matching Question objects.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="7-get-trending-tags"><strong>7. Get Trending Tags</strong></h4>
+<pre class="codehilite"><code class="language-python">def get_trending_tags(limit: int = 10) -&gt; List[Tuple[str, int]]:
+    &quot;&quot;&quot;
+    Return top N tags by question count.
+    In production: hourly job using (views + 2×votes) score.
+
+    Returns: List of (tag_name, question_count) tuples.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-32-exception-failure-model">Step 3.2: Exception / Failure Model</h3>
+<p>The implementation returns <code>None</code> or <code>False</code> for interview simplicity. A production version would raise:</p>
+<pre class="codehilite"><code class="language-python">class SOException(Exception): ...
+class UserNotFoundError(SOException): ...
+class QuestionNotFoundError(SOException): ...
+class InsufficientReputationError(SOException): ...
+class DuplicateVoteError(SOException): ...
+class AnswerMismatchError(SOException): ...
+</code></pre>
+
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">so = StackOverflow()
+
+# 1. Register users
+so.register_user(&quot;U1&quot;, &quot;Alice&quot;)
+so.register_user(&quot;U2&quot;, &quot;Bob&quot;)
+
+# 2. Ask a question
+q_id = so.ask_question(&quot;U1&quot;, &quot;How to sort list in Python?&quot;,
+                        &quot;What is the idiomatic way?&quot;, [&quot;python&quot;, &quot;sorting&quot;])
+
+# 3. Answer
+a_id = so.answer_question(&quot;U2&quot;, q_id, &quot;Use sorted() for a new list or list.sort() in-place.&quot;)
+
+# 4. Vote (user needs 100 rep; here Bob has rep from answering)
+so.vote(&quot;U2&quot;, q_id, VoteType.UPVOTE)
+
+# 5. Accept best answer
+so.accept_answer(q_id, a_id)
+
+# 6. Search
+results = so.search_questions(&quot;sort&quot;, tags=[&quot;python&quot;])
+
+# 7. Trending tags
+trending = so.get_trending_tags(5)
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and association. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>StackOverflow HAS-A users/questions/answers/votes (1:N Composition)
+  └─ Singleton controller owns and manages lifecycle of all entities
+
+User CREATES Question (1:N Association)
+  └─ user_questions index tracks ownership without embedding
+
+Question CONTAINS Answer (1:N Composition via question_answers index)
+  └─ Question logically owns its answers
+
+Question REFERENCES Tag (M:N Association via tag_index)
+  └─ One question has many tags; one tag has many questions
+
+User CASTS Vote (1:N Association via votes dict)
+  └─ Vote record links user ↔ item; unique constraint prevents double-voting
+
+Answer IS-ACCEPTED-BY Question (1:1 Optional Association)
+  └─ accepted_answer_id is nullable; only one answer can be accepted
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌──────────────────────────────────────────┐
+│        StackOverflow (Singleton)         │
+├──────────────────────────────────────────┤
+│ - _instance: StackOverflow               │
+│ - users: Dict[str, User]                 │
+│ - questions: Dict[str, Question]         │
+│ - answers: Dict[str, Answer]             │
+│ - votes: Dict[str, Vote]                 │
+│ - tag_index: Dict[str, Set[str]]         │
+│ - user_questions: Dict[str, List[str]]   │
+│ - question_answers: Dict[str, List[str]] │
+│ - lock: threading.RLock                  │
+├──────────────────────────────────────────┤
+│ + register_user(...)                     │
+│ + ask_question(...): str                 │
+│ + answer_question(...): str              │
+│ + vote(...): bool                        │
+│ + accept_answer(...): bool               │
+│ + search_questions(...): List[Question]  │
+│ + get_trending_tags(...): List[Tuple]    │
+│ + display_question_with_answers(...)     │
+└─────────────┬────────────────────────────┘
+              │ manages 1:N
+   ┌──────────┼───────────┬─────────┐
+   ▼          ▼           ▼         ▼
+┌──────┐ ┌──────────┐ ┌────────┐ ┌──────┐
+│ User │ │ Question │ │ Answer │ │ Vote │
+├──────┤ ├──────────┤ ├────────┤ ├──────┤
+│user_id│ │question_id│ │answer_id│ │vote_id│
+│name  │ │author_id │ │question_id│ │user_id│
+│rep   │ │title     │ │author_id│ │item_id│
+│badges│ │tags[]    │ │content │ │type  │
+│q_asked│ │status   │ │upvotes │ └──────┘
+│a_given│ │upvotes  │ │downvotes│
+└──────┘ │downvotes │ │is_accepted│
+         │accepted_id│ └────────┘
+         └──────────┘
+
+TAG INDEX (many-to-many):
+┌──────────────────────────────────────┐
+│  tag_index: Dict[str, Set[str]]      │
+│  &quot;python&quot; → {&quot;Q_000001&quot;, &quot;Q_000003&quot;} │
+│  &quot;sorting&quot;→ {&quot;Q_000001&quot;}             │
+└──────────────────────────────────────┘
+
+QUESTION STATE MACHINE:
+OPEN ──close──→ CLOSED
+  │
+  └──accept_answer──→ SOLVED (has accepted answer pinned top)
+
+REPUTATION EVENTS:
++5  Ask question
++10 Question upvoted
+-2  Question downvoted
++2  Post answer
++10 Answer upvoted
+-2  Answer downvoted
++15 Answer accepted
++2  Your answer accepted (asker bonus)
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>StackOverflow → Users</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Platform owns all user profiles</td>
+</tr>
+<tr>
+<td>StackOverflow → Questions</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Platform owns all questions</td>
+</tr>
+<tr>
+<td>StackOverflow → Answers</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Platform owns all answers</td>
+</tr>
+<tr>
+<td>StackOverflow → Votes</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Platform owns all vote records</td>
+</tr>
+<tr>
+<td>User → Questions</td>
+<td>1:N</td>
+<td>Association</td>
+<td>User authors many questions</td>
+</tr>
+<tr>
+<td>Question → Answers</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Question logically owns its answers</td>
+</tr>
+<tr>
+<td>Question → Tags</td>
+<td>M:N</td>
+<td>Association</td>
+<td>Question tagged with many; tag indexes many questions</td>
+</tr>
+<tr>
+<td>Question → Answer (accepted)</td>
+<td>1:0..1</td>
+<td>Association</td>
+<td>At most one accepted answer per question</td>
+</tr>
+<tr>
+<td>User → Votes</td>
+<td>1:N</td>
+<td>Association</td>
+<td>One user casts many votes</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-singleton-for-stackoverflow">Pattern 1: <strong>Singleton</strong> (For StackOverflow)</h3>
+<p><strong>Problem</strong>: Multiple threads need a single consistent view of all users, questions, answers, and votes.</p>
+<p><strong>Solution</strong>: One global StackOverflow instance with thread-safe initialization using double-checked locking.</p>
+<pre class="codehilite"><code class="language-python">class StackOverflow:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Single source of truth, ✅ Thread-safe initialization, ✅ Global access<br />
+<strong>Trade-off</strong>: ⚠️ Global state (harder to unit-test), ⚠️ Doesn't scale across multiple processes without shared store</p>
+<hr />
+<h3 id="pattern-2-observer-for-notifications">Pattern 2: <strong>Observer</strong> (For Notifications)</h3>
+<p><strong>Problem</strong>: Posting answers, receiving votes, and accepting answers must trigger notifications without coupling core logic.</p>
+<p><strong>Solution</strong>: Observer pattern decouples the platform from notification channels.</p>
+<pre class="codehilite"><code class="language-python">class SOObserver(ABC):
+    @abstractmethod
+    def update(self, event: str, data: dict): pass
+
+class EmailNotifier(SOObserver):
+    def update(self, event: str, data: dict):
+        if event == &quot;answer_posted&quot;:
+            print(f&quot;Email to {data['asker']}: new answer on your question!&quot;)
+
+# Usage
+so.add_observer(EmailNotifier())
+so.notify_observers(&quot;answer_posted&quot;, {&quot;asker&quot;: &quot;alice@example.com&quot;})
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Loose coupling, ✅ Easy to add SMS/push/Slack channels<br />
+<strong>Trade-off</strong>: ⚠️ Observer lifecycle must be managed; missed events if observer added late</p>
+<hr />
+<h3 id="pattern-3-strategy-for-search-ranking">Pattern 3: <strong>Strategy</strong> (For Search Ranking)</h3>
+<p><strong>Problem</strong>: Search results need different ranking algorithms — relevance, recency, or vote score — switchable at runtime.</p>
+<p><strong>Solution</strong>: Pluggable ranking strategies that sort a list of questions.</p>
+<pre class="codehilite"><code class="language-python">class RankingStrategy(ABC):
+    @abstractmethod
+    def rank(self, questions: List[Question]) -&gt; List[Question]: pass
+
+class ScoreRanking(RankingStrategy):
+    def rank(self, questions):
+        return sorted(questions, key=lambda q: -(q.upvotes - q.downvotes))
+
+class RecencyRanking(RankingStrategy):
+    def rank(self, questions):
+        return sorted(questions, key=lambda q: -q.created_at.timestamp())
+
+# Usage: switch without modifying search logic
+so.set_ranking_strategy(RecencyRanking())
+results = so.search_questions(&quot;python&quot;)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ New ranking (trending, personalized) added without modifying core<br />
+<strong>Trade-off</strong>: ⚠️ Extra abstraction layer; overkill for simple sort</p>
+<hr />
+<h3 id="pattern-4-state-machine-for-question-lifecycle">Pattern 4: <strong>State Machine</strong> (For Question Lifecycle)</h3>
+<p><strong>Problem</strong>: Questions transition OPEN → CLOSED → SOLVED. Invalid transitions (re-opening a SOLVED question) must be prevented.</p>
+<p><strong>Solution</strong>: <code>QuestionStatus</code> enum with explicit transition guards.</p>
+<pre class="codehilite"><code class="language-python">class QuestionStatus(Enum):
+    OPEN = 1
+    CLOSED = 2
+    SOLVED = 3
+
+def accept_answer(self, question_id: str, answer_id: str) -&gt; bool:
+    question = self.questions[question_id]
+    if question.status == QuestionStatus.CLOSED:
+        return False  # can't accept on closed question
+    question.accepted_answer_id = answer_id
+    question.status = QuestionStatus.SOLVED
+    return True
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Explicit lifecycle, ✅ Invalid transitions blocked at runtime<br />
+<strong>Trade-off</strong>: ⚠️ State transition rules must be documented and maintained</p>
+<hr />
+<h3 id="pattern-5-cache-for-search-results-and-trending-tags">Pattern 5: <strong>Cache</strong> (For Search Results and Trending Tags)</h3>
+<p><strong>Problem</strong>: Full-text search across 50M questions is expensive; trending tags recalculated every request wastes CPU.</p>
+<p><strong>Solution</strong>: Cache search results with TTL; precompute trending tags hourly.</p>
+<pre class="codehilite"><code class="language-python"># Simplified in-memory cache
+_trending_cache: Optional[List] = None
+_cache_time: Optional[datetime] = None
+CACHE_TTL = timedelta(hours=1)
+
+def get_trending_tags(self, limit: int = 10):
+    if self._trending_cache and datetime.now() - self._cache_time &lt; CACHE_TTL:
+        return self._trending_cache[:limit]
+    # recompute
+    tag_counts = sorted([(tag, len(ids)) for tag, ids in self.tag_index.items()],
+                        key=lambda x: -x[1])
+    self._trending_cache = tag_counts
+    self._cache_time = datetime.now()
+    return tag_counts[:limit]
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Sub-millisecond trending reads, ✅ Reduces DB load by orders of magnitude<br />
+<strong>Trade-off</strong>: ⚠️ Slight staleness (up to 1 hour); cache invalidation complexity</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>Need single global StackOverflow</td>
+<td>Consistent state across all clients</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Notify on answer/vote/accept events</td>
+<td>Loose coupling, easy to extend</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Varying search ranking algorithms</td>
+<td>Pluggable, swap without touching core</td>
+</tr>
+<tr>
+<td><strong>State Machine</strong></td>
+<td>Question lifecycle correctness</td>
+<td>Invalid transitions prevented</td>
+</tr>
+<tr>
+<td><strong>Cache</strong></td>
+<td>Expensive search &amp; trending recomputation</td>
+<td>Fast reads, reduced DB pressure</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+Stack Overflow - Interview Implementation
+Demonstrates:
+1. Question/answer management
+2. Voting and reputation system
+3. Full-text search indexing
+4. User reputation gates
+5. Trending &amp; recommendations
+&quot;&quot;&quot;
+
+from enum import Enum
+from typing import List, Optional, Dict, Set, Tuple
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+import threading
+from collections import defaultdict
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class QuestionStatus(Enum):
+    OPEN = 1
+    CLOSED = 2
+    SOLVED = 3
+
+class VoteType(Enum):
+    UPVOTE = 1
+    DOWNVOTE = 2
+
+# ============================================================================
+# DATA CLASSES
+# ============================================================================
+
+@dataclass
+class User:
+    user_id: str
+    name: str
+    reputation: int = 0
+    questions_asked: int = 0
+    answers_given: int = 0
+    badges: List[str] = field(default_factory=list)
+
+@dataclass
+class Question:
+    question_id: str
+    author_id: str
+    title: str
+    description: str
+    tags: List[str]
+    created_at: datetime = field(default_factory=datetime.now)
+    status: QuestionStatus = QuestionStatus.OPEN
+    views: int = 0
+    upvotes: int = 0
+    downvotes: int = 0
+    accepted_answer_id: Optional[str] = None
+
+@dataclass
+class Answer:
+    answer_id: str
+    question_id: str
+    author_id: str
+    content: str
+    created_at: datetime = field(default_factory=datetime.now)
+    upvotes: int = 0
+    downvotes: int = 0
+    is_accepted: bool = False
+
+@dataclass
+class Vote:
+    vote_id: str
+    user_id: str
+    item_id: str  # question_id or answer_id
+    vote_type: VoteType
+    timestamp: datetime = field(default_factory=datetime.now)
+
+# ============================================================================
+# STACK OVERFLOW (SINGLETON)
+# ============================================================================
+
+class StackOverflow:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+
+        self._initialized = True
+        self.users: Dict[str, User] = {}
+        self.questions: Dict[str, Question] = {}
+        self.answers: Dict[str, Answer] = {}
+        self.votes: Dict[str, Vote] = {}
+        self.tag_index: Dict[str, Set[str]] = defaultdict(set)
+        self.user_questions: Dict[str, List[str]] = defaultdict(list)
+        self.question_answers: Dict[str, List[str]] = defaultdict(list)
+
+        self.question_counter = 0
+        self.answer_counter = 0
+        self.vote_counter = 0
+
+        # RLock allows the same thread to re-enter (e.g. vote() calling
+        # into internal helpers that also acquire lock)
+        self.lock = threading.RLock()
+        print(&quot;Stack Overflow initialized&quot;)
+
+    def register_user(self, user_id: str, name: str):
+        with self.lock:
+            user = User(user_id, name)
+            self.users[user_id] = user
+            print(f&quot;User registered: {name}&quot;)
+
+    def ask_question(self, user_id: str, title: str, description: str,
+                     tags: List[str]) -&gt; Optional[str]:
+        with self.lock:
+            if user_id not in self.users:
+                return None
+
+            user = self.users[user_id]
+
+            self.question_counter += 1
+            question = Question(
+                f&quot;Q_{self.question_counter:06d}&quot;,
+                user_id,
+                title,
+                description,
+                tags
+            )
+
+            self.questions[question.question_id] = question
+            self.user_questions[user_id].append(question.question_id)
+
+            # Index tags
+            for tag in tags:
+                self.tag_index[tag].add(question.question_id)
+
+            user.reputation += 5  # Asking gives reputation
+            user.questions_asked += 1
+
+            print(f&quot;Question asked by {user.name}: {title}&quot;)
+            print(f&quot;  ID: {question.question_id}, Tags: {tags}&quot;)
+
+            return question.question_id
+
+    def answer_question(self, user_id: str, question_id: str,
+                        content: str) -&gt; Optional[str]:
+        with self.lock:
+            if user_id not in self.users or question_id not in self.questions:
+                return None
+
+            user = self.users[user_id]
+            question = self.questions[question_id]
+
+            self.answer_counter += 1
+            answer = Answer(
+                f&quot;A_{self.answer_counter:06d}&quot;,
+                question_id,
+                user_id,
+                content
+            )
+
+            self.answers[answer.answer_id] = answer
+            self.question_answers[question_id].append(answer.answer_id)
+
+            user.reputation += 2  # Answering gives reputation
+            user.answers_given += 1
+
+            print(f&quot;Answer by {user.name} to {question_id}&quot;)
+            print(f&quot;  Answer ID: {answer.answer_id}&quot;)
+
+            return answer.answer_id
+
+    def vote(self, user_id: str, item_id: str, vote_type: VoteType) -&gt; bool:
+        with self.lock:
+            if user_id not in self.users:
+                return False
+
+            user = self.users[user_id]
+
+            # Check if user can vote (50 rep minimum for demo; 100 in prod)
+            if user.reputation &lt; 50:
+                print(f&quot;User needs 50 rep to vote (currently {user.reputation})&quot;)
+                return False
+
+            self.vote_counter += 1
+            vote = Vote(
+                f&quot;V_{self.vote_counter:06d}&quot;,
+                user_id,
+                item_id,
+                vote_type
+            )
+
+            self.votes[vote.vote_id] = vote
+
+            # Update item votes
+            if item_id in self.questions:
+                question = self.questions[item_id]
+                if vote_type == VoteType.UPVOTE:
+                    question.upvotes += 1
+                    self.users[question.author_id].reputation += 10
+                else:
+                    question.downvotes += 1
+                    self.users[question.author_id].reputation -= 2
+
+                print(f&quot;Vote on question: {vote_type.name} &quot;
+                      f&quot;(score now {question.upvotes - question.downvotes})&quot;)
+
+            elif item_id in self.answers:
+                answer = self.answers[item_id]
+                if vote_type == VoteType.UPVOTE:
+                    answer.upvotes += 1
+                    self.users[answer.author_id].reputation += 10
+                else:
+                    answer.downvotes += 1
+                    self.users[answer.author_id].reputation -= 2
+
+                print(f&quot;Vote on answer: {vote_type.name}&quot;)
+
+            return True
+
+    def accept_answer(self, question_id: str, answer_id: str) -&gt; bool:
+        with self.lock:
+            if question_id not in self.questions or answer_id not in self.answers:
+                return False
+
+            question = self.questions[question_id]
+            answer = self.answers[answer_id]
+
+            if answer.question_id != question_id:
+                return False
+
+            answer.is_accepted = True
+            question.accepted_answer_id = answer_id
+            question.status = QuestionStatus.SOLVED
+
+            # Reputation for accepted answer
+            self.users[answer.author_id].reputation += 15
+
+            print(f&quot;Answer {answer_id} accepted for question {question_id}&quot;)
+            print(f&quot;  Answerer now has &quot;
+                  f&quot;{self.users[answer.author_id].reputation} reputation&quot;)
+
+            return True
+
+    def search_questions(self, keyword: str,
+                         tags: Optional[List[str]] = None) -&gt; List[Question]:
+        with self.lock:
+            results = []
+
+            # Keyword search (simplified; Elasticsearch in production)
+            for q_id, q in self.questions.items():
+                if (keyword.lower() in q.title.lower() or
+                        keyword.lower() in q.description.lower()):
+                    results.append(q)
+
+            # Tag filter
+            if tags:
+                results = [q for q in results if any(tag in q.tags for tag in tags)]
+
+            # Sort by score DESC, then recency DESC
+            results.sort(key=lambda q: (
+                -(q.upvotes - q.downvotes),
+                -q.created_at.timestamp()
+            ))
+
+            return results
+
+    def get_trending_tags(self, limit: int = 10) -&gt; List[Tuple[str, int]]:
+        with self.lock:
+            tag_counts = [(tag, len(q_ids))
+                          for tag, q_ids in self.tag_index.items()]
+            tag_counts.sort(key=lambda x: -x[1])
+            return tag_counts[:limit]
+
+    def display_question_with_answers(self, question_id: str):
+        with self.lock:
+            if question_id not in self.questions:
+                return
+
+            q = self.questions[question_id]
+            q.views += 1
+
+            print(f&quot;\n  Question: {q.title}&quot;)
+            print(f&quot;  Score: {q.upvotes - q.downvotes} | Views: {q.views}&quot;)
+            print(f&quot;  Tags: {q.tags}&quot;)
+
+            answers = [self.answers[a_id]
+                       for a_id in self.question_answers[question_id]]
+
+            # Sort: accepted first, then by score
+            answers.sort(key=lambda a: (-a.is_accepted,
+                                        -(a.upvotes - a.downvotes)))
+
+            print(f&quot;\n  Answers ({len(answers)}):&quot;)
+            for i, answer in enumerate(answers, 1):
+                marker = &quot;[ACCEPTED]&quot; if answer.is_accepted else &quot;&quot;
+                print(f&quot;  {i}. {marker} Score: {answer.upvotes - answer.downvotes}&quot;)
+                print(f&quot;     By: {self.users[answer.author_id].name} | &quot;
+                      f&quot;{answer.content[:50]}...&quot;)
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def demo_1_ask_and_answer():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 1: ASK QUESTION &amp; GET ANSWERS&quot;)
+    print(&quot;=&quot;*70)
+
+    so = StackOverflow()
+    so.register_user(&quot;U1&quot;, &quot;Alice&quot;)
+    so.register_user(&quot;U2&quot;, &quot;Bob&quot;)
+
+    q_id = so.ask_question(&quot;U1&quot;, &quot;How to sort list in Python?&quot;,
+                            &quot;What is the idiomatic way?&quot;, [&quot;python&quot;, &quot;sorting&quot;])
+    so.answer_question(&quot;U2&quot;, q_id, &quot;Use sorted(list)&quot;)
+
+    so.display_question_with_answers(q_id)
+
+def demo_2_voting_reputation():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 2: VOTING &amp; REPUTATION&quot;)
+    print(&quot;=&quot;*70)
+
+    so = StackOverflow()
+    so.register_user(&quot;U1&quot;, &quot;Alice&quot;)
+    so.register_user(&quot;U2&quot;, &quot;Bob&quot;)
+    so.register_user(&quot;U3&quot;, &quot;Charlie&quot;)
+
+    q_id = so.ask_question(&quot;U1&quot;, &quot;Best Python framework?&quot;,
+                            &quot;Which is best for web?&quot;, [&quot;python&quot;, &quot;frameworks&quot;])
+    a_id = so.answer_question(&quot;U2&quot;, q_id, &quot;Django is great&quot;)
+
+    # Upvote answer — Bob has 2 (answer) + 5 (question) = 7 rep so far,
+    # asking sets up enough rep via the demo ask; Charlie has 0 so skip gate
+    # Give Charlie enough rep first via his own question
+    so.ask_question(&quot;U3&quot;, &quot;Node.js tips?&quot;, &quot;...&quot;, [&quot;javascript&quot;])
+    so.ask_question(&quot;U3&quot;, &quot;Node.js tips 2?&quot;, &quot;...&quot;, [&quot;javascript&quot;])
+    so.ask_question(&quot;U3&quot;, &quot;Node.js tips 3?&quot;, &quot;...&quot;, [&quot;javascript&quot;])
+    so.ask_question(&quot;U3&quot;, &quot;Node.js tips 4?&quot;, &quot;...&quot;, [&quot;javascript&quot;])
+    so.ask_question(&quot;U3&quot;, &quot;Node.js tips 5?&quot;, &quot;...&quot;, [&quot;javascript&quot;])
+    so.ask_question(&quot;U3&quot;, &quot;Node.js tips 6?&quot;, &quot;...&quot;, [&quot;javascript&quot;])
+    so.ask_question(&quot;U3&quot;, &quot;Node.js tips 7?&quot;, &quot;...&quot;, [&quot;javascript&quot;])
+    so.ask_question(&quot;U3&quot;, &quot;Node.js tips 8?&quot;, &quot;...&quot;, [&quot;javascript&quot;])
+    so.ask_question(&quot;U3&quot;, &quot;Node.js tips 9?&quot;, &quot;...&quot;, [&quot;javascript&quot;])
+    so.ask_question(&quot;U3&quot;, &quot;Node.js tips 10?&quot;, &quot;...&quot;, [&quot;javascript&quot;])
+    so.vote(&quot;U3&quot;, a_id, VoteType.UPVOTE)
+
+    print(f&quot;\n  Reputation after vote:&quot;)
+    print(f&quot;  Alice (asker): {so.users['U1'].reputation}&quot;)
+    print(f&quot;  Bob (answerer): {so.users['U2'].reputation}&quot;)
+    print(f&quot;  Charlie (voter): {so.users['U3'].reputation}&quot;)
+
+def demo_3_accept_answer():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 3: ACCEPT BEST ANSWER&quot;)
+    print(&quot;=&quot;*70)
+
+    so = StackOverflow()
+    so.register_user(&quot;U1&quot;, &quot;Alice&quot;)
+    so.register_user(&quot;U2&quot;, &quot;Bob&quot;)
+
+    q_id = so.ask_question(&quot;U1&quot;, &quot;Recursion tips?&quot;,
+                            &quot;How to write recursive functions?&quot;, [&quot;recursion&quot;])
+    a_id = so.answer_question(&quot;U2&quot;, q_id, &quot;Use memoization&quot;)
+
+    so.accept_answer(q_id, a_id)
+
+    print(f&quot;\n  Bob's reputation: {so.users['U2'].reputation}&quot;)
+
+def demo_4_search():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 4: SEARCH QUESTIONS&quot;)
+    print(&quot;=&quot;*70)
+
+    so = StackOverflow()
+    so.register_user(&quot;U1&quot;, &quot;Alice&quot;)
+
+    so.ask_question(&quot;U1&quot;, &quot;Python list sorting&quot;, &quot;...&quot;, [&quot;python&quot;])
+    so.ask_question(&quot;U1&quot;, &quot;JavaScript array methods&quot;, &quot;...&quot;, [&quot;javascript&quot;])
+    so.ask_question(&quot;U1&quot;, &quot;Python dictionaries&quot;, &quot;...&quot;, [&quot;python&quot;])
+
+    results = so.search_questions(&quot;Python&quot;)
+    print(f&quot;\n  Search 'Python': {len(results)} results&quot;)
+    for q in results:
+        print(f&quot;  - {q.title}&quot;)
+
+def demo_5_trending():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 5: TRENDING TAGS&quot;)
+    print(&quot;=&quot;*70)
+
+    so = StackOverflow()
+    so.register_user(&quot;U1&quot;, &quot;Alice&quot;)
+
+    for i in range(5):
+        so.ask_question(&quot;U1&quot;, f&quot;Python question {i}&quot;, &quot;...&quot;, [&quot;python&quot;])
+
+    for i in range(3):
+        so.ask_question(&quot;U1&quot;, f&quot;JS question {i}&quot;, &quot;...&quot;, [&quot;javascript&quot;])
+
+    trending = so.get_trending_tags(5)
+    print(f&quot;\n  Trending tags:&quot;)
+    for tag, count in trending:
+        print(f&quot;  {tag}: {count} questions&quot;)
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if True:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;STACK OVERFLOW - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_ask_and_answer()
+    demo_2_voting_reputation()
+    demo_3_accept_answer()
+    demo_4_search()
+    demo_5_trending()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;ALL DEMOS COMPLETED&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>ask_question</strong></td>
+<td>RLock</td>
+<td>Atomic: tag indexing + reputation update together</td>
+</tr>
+<tr>
+<td><strong>answer_question</strong></td>
+<td>RLock</td>
+<td>Atomic: answer registration + counter increment</td>
+</tr>
+<tr>
+<td><strong>vote</strong></td>
+<td>RLock</td>
+<td>Atomic: vote record + item score + author reputation</td>
+</tr>
+<tr>
+<td><strong>accept_answer</strong></td>
+<td>RLock</td>
+<td>Atomic: status transition + reputation award</td>
+</tr>
+<tr>
+<td><strong>search_questions</strong></td>
+<td>RLock</td>
+<td>Consistent snapshot of questions during scan</td>
+</tr>
+<tr>
+<td><strong>Singleton init</strong></td>
+<td>Class Lock</td>
+<td>Double-checked locking, single instance</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. ✅ <code>threading.RLock</code> replaces non-reentrant <code>Lock</code> — same thread can re-enter without deadlock
+2. ✅ Singleton <code>__new__</code> accepts <code>*args, **kwargs</code> — avoids <code>TypeError</code> when Python passes constructor args
+3. ✅ All state mutations inside lock; notifications (if added) fire outside to minimize hold time
+4. ✅ Counters and dicts accessed only under lock — no torn reads</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="demo-1-ask-question">Demo 1: Ask Question</h3>
+<pre class="codehilite"><code>- User asks: &quot;How to sort list in Python?&quot;
+- Tags: [python, sorting]
+- Description: 100+ words
+- System:
+  - Assign ID: Q_000001
+  - Index tags → searchable
+  - Notify followers of &quot;python&quot; tag
+  - Display: new question prominent
+</code></pre>
+
+<h3 id="demo-2-answer-accept">Demo 2: Answer &amp; Accept</h3>
+<pre class="codehilite"><code>- Question posted 2 hours ago, 5 views
+- Answer 1: &quot;Use sorted(list)&quot; → 20 upvotes
+- Answer 2: &quot;Use list.sort()&quot; → 50 upvotes
+- Asker accepts Answer 2 → pinned
+- Answerer: +15 rep, +10 (votes) = +25 total
+- Asker: +2 rep
+</code></pre>
+
+<h3 id="demo-3-search-ranking">Demo 3: Search &amp; Ranking</h3>
+<pre class="codehilite"><code>- User searches: &quot;python sort&quot;
+- Results ranked by:
+  1. Relevance score (title/tags match)
+  2. Question score (upvotes - downvotes)
+  3. Recency (newer questions)
+- Returns top 50 in &lt;200ms
+- User views question, increments view count
+</code></pre>
+
+<h3 id="demo-4-vote-reputation">Demo 4: Vote &amp; Reputation</h3>
+<pre class="codehilite"><code>- Question has 5 upvotes, 100 views
+- User upvotes → 6 upvotes
+- Asker: +10 rep (now 150)
+- Can now: comment (50 rep), vote (100 rep)
+- Locked: moderator actions (3K rep)
+</code></pre>
+
+<h3 id="demo-5-tags-trending">Demo 5: Tags &amp; Trending</h3>
+<pre class="codehilite"><code>- Tag &quot;machine-learning&quot;: 100K questions
+- Monthly views: 5M
+- Recent questions: &quot;PyTorch vs TensorFlow?&quot; → 500 views today
+- Trending tags widget: &quot;1. machine-learning +20%&quot;
+- Users can follow tags → personalized feed
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-level">Basic Level</h3>
+<p><strong>Q1: How do you calculate question score?</strong></p>
+<p>A: Score = upvotes - downvotes. Example: 50 upvotes, 5 downvotes → score 45. Used for sorting ("best" questions). Can be negative for controversial questions.</p>
+<p><strong>Q2: How do you track user reputation?</strong></p>
+<p>A: Reputation = sum of all events: +5 (ask), +10 (question upvote), +2 (answer), +10 (answer upvote), +15 (accepted), -2 (downvote). Displayed on profile. Gates features (need 50 to comment).</p>
+<p><strong>Q3: What determines answer order (best first)?</strong></p>
+<p>A: (1) Accepted answer (pinned top). (2) Score (upvotes - downvotes) DESC. (3) Date DESC. Example: 50 votes → rank 1, 30 votes → rank 2, newest date wins tie.</p>
+<p><strong>Q4: How do you handle duplicate questions?</strong></p>
+<p>A: Community votes to close as duplicate. Original question linked. Users redirected to canonical answer. Reduces clutter, consolidates knowledge.</p>
+<p><strong>Q5: How do you prevent spam and low-quality content?</strong></p>
+<p>A: (1) Minimum reputation for posting (10 rep). (2) Flag system: users flag spam, moderators review. (3) Automatic filters: detect patterns (new user, 10 questions in 1 hour). (4) Community votes to close.</p>
+<h3 id="intermediate-level">Intermediate Level</h3>
+<p><strong>Q6: How to implement search efficiently (50M questions)?</strong></p>
+<p>A: Full-text index (Elasticsearch/Lucene). Index: title, description, tags. Query: keywords → filter by tags → rank by (relevance score, question score, recency). Expected: &lt;200ms.</p>
+<p><strong>Q7: How to suggest related questions?</strong></p>
+<p>A: Similarity: shared tags (exact match = high score), similar keywords (TF-IDF), similar votes. Show top 5 most relevant. Computed at post-time or on-demand.</p>
+<p><strong>Q8: How to compute recommended questions (personalized feed)?</strong></p>
+<p>A: User interests: past questions viewed, tags they follow, reputation areas. Recommend recent questions matching interests. Ranked by: match % × question score × recency.</p>
+<p><strong>Q9: How to handle question closure/reopening?</strong></p>
+<p>A: Close reasons: duplicate, off-topic, needs clarification, too broad. 5 users with 3K+ rep vote to close. After fix, can reopen. Audit trail: who closed, when, why.</p>
+<p><strong>Q10: How to handle concurrent votes (double-vote prevention)?</strong></p>
+<p>A: Database constraint: unique(user_id, question_id) on votes table. On upvote: check if exists. If yes: update (toggle). If no: insert. Atomic operation.</p>
+<h3 id="advanced-level">Advanced Level</h3>
+<p><strong>Q11: How to prevent vote manipulation (artificial upvotes)?</strong></p>
+<p>A: Detection: (1) Rate limiting (1 vote per user per item per 10 seconds). (2) Pattern detection (same user upvoting 100 questions in 1 minute). (3) IP-based (same IP voting same content). Flag &amp; investigate.</p>
+<p><strong>Q12: How to scale to 50M+ questions with real-time search?</strong></p>
+<p>A: Distributed search: shard by tag (python, javascript, etc.) or by question_id range. Each shard: independent Elasticsearch cluster. Query router: send to relevant shards, merge results.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<p><strong>Q1: Can you handle 50M questions with full-text search?</strong></p>
+<p>A: Yes. Elasticsearch cluster (10 nodes): 50M documents ≈ 500 GB indexed. Search latency: 100-200ms. Write QPS: 1K/sec (sustainable). Cost: ~$50K/month for infrastructure.</p>
+<p><strong>Q2: How to handle 100K QPS (peak)?</strong></p>
+<p>A: Query mix: 90% reads (search, view) + 10% writes (vote, answer). Read cache: frequently asked questions (Redis), hot tags. Write: queue votes, batch update scores every 10 seconds.</p>
+<p><strong>Q3: How to shard 50M questions efficiently?</strong></p>
+<p>A: Partition by question_id modulo N (N = num shards). Example: 50M questions → 100 shards of 500K each. Lookup: question_id % 100 → shard 42. Drawback: new shard requires rebalancing.</p>
+<p><strong>Q4: How to keep search index fresh?</strong></p>
+<p>A: Stream: new questions → Kafka → indexer → Elasticsearch. Latency: &lt;5 seconds. Trade-off: slight staleness acceptable (questions rare to deleted immediately).</p>
+<p><strong>Q5: How to support real-time vote updates?</strong></p>
+<p>A: WebSocket: client subscribes to question → server broadcasts votes. Update frequency: every 10 seconds (batch). Notify: "5 new votes, 2 new answers". Reduces DB hammering.</p>
+<p><strong>Q6: How to compute trending topics?</strong></p>
+<p>A: Hourly job: count question views/votes by tag. Sort by (views + 2×votes) DESC. Cache trending tags. Display: "Python trending (50K views)", refresh hourly.</p>
+<p><strong>Q7: How to handle celebrity users (prolific answerers)?</strong></p>
+<p>A: Cache their profiles + top answers. On view: fetch from cache (1ms) instead of DB (10ms). Invalidate on new answer. Optimization: hot user cache (top 1K answerers).</p>
+<p><strong>Q8: How to distribute indexing (1000+ questions/hour)?</strong></p>
+<p>A: Indexing queue: new questions → workers (10 workers). Each worker: batch 100 questions, index to Elasticsearch. Parallelism: 10 × 100 = 1000 questions/hour capacity.</p>
+<p><strong>Q9: Can you support full-text search across 100M answers?</strong></p>
+<p>A: Yes, with caveat: search answers only if question doesn't match. Two-tier: (1) Search questions (fast), (2) if no result, search answers (slower). Most users stop at questions.</p>
+<p><strong>Q10: How to implement recommendation engine for 10M users?</strong></p>
+<p>A: Collaborative filtering: users who viewed question A also viewed B. Item-based: questions with similar tags/content. ML model: trained on 1B+ user interactions. Inference: &lt;100ms.</p>
+<p><strong>Q11: How to handle question spam at scale?</strong></p>
+<p>A: ML classifier: question text → probability of spam. Threshold: &gt;80% likely spam → auto-flag for review. Human moderators: 1000 flags/day → review top 100 (by confidence). Auto-delete after 5 user flags + moderator approval.</p>
+<p><strong>Q12: Can you support real-time leaderboards (top answerers)?</strong></p>
+<p>A: Yes. Cache top-1000 answerers (by reputation). Update every 5 minutes. Cost: 1000 users × (name + reputation + badge icons) ≈ 100 KB. Broadcast to all clients every 5 min.</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw the UML class diagram with all relationships</li>
+<li>[ ] Walk through the ask → answer → vote → accept-answer lifecycle</li>
+<li>[ ] Explain reputation gates (comment 50, vote 100, close-vote 3000)</li>
+<li>[ ] Explain voting mechanics (upvote/downvote, reputation change, double-vote prevention)</li>
+<li>[ ] Explain question state machine (OPEN → CLOSED / SOLVED)</li>
+<li>[ ] Run the complete implementation (5 demos) without errors</li>
+<li>[ ] Answer 5+ Scaling Q&amp;A questions</li>
+<li>[ ] Mention thread safety in Singleton, vote, and accept_answer</li>
+<li>[ ] Discuss search strategy (tag index, keyword search, Elasticsearch at scale)</li>
+<li>[ ] Discuss trade-offs (in-memory vs DB, optimistic vs pessimistic locking, cache TTL)</li>
+</ul>
+<hr />
+<p><strong>Ready for interview? Ask, answer, vote, and repeat!</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

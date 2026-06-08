@@ -1,0 +1,1835 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Online Blackjack Game - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="online-blackjack-game-complete-design-guide">Online Blackjack Game — Complete Design Guide</h1>
+<blockquote>
+<p>Multi-player blackjack with betting, dealer automation, hand evaluation, state machine game flow, and real-time chip settlement.</p>
+</blockquote>
+<p><strong>Scale</strong>: 1M+ concurrent players, 166K+ simultaneous tables, 99.95% uptime<br />
+<strong>Duration</strong>: 75-minute interview guide<br />
+<strong>Focus</strong>: Game state machine, Ace hand evaluation, dealer rule enforcement, singleton table controller, and thread-safe chip management</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>Players join a table → place bets → receive 2 cards each → take actions (hit/stand/double/split) → dealer plays by fixed house rules (hit on &lt;17) → hands are compared → winners paid, losers collected. Core concerns: correct Ace value calculation, state machine transitions, atomic chip updates, and fair shuffling.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>Join Table → Place Bet → Deal (2 cards) → Player Actions → Dealer Turn → Settlement
+                               ↓                  ↓               ↓
+                         DEALING state     PLAYING_HANDS      SETTLING state
+                                               state
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Single table or multi-table?</strong> → "Multi-table, up to 6 players per table"</li>
+<li><strong>Real money or chip-based?</strong> → "Chip-based with buy-in; mock payment service"</li>
+<li><strong>Which player actions are in scope?</strong> → "Hit, stand, double, split; surrender optional"</li>
+<li><strong>Multi-deck shoe?</strong> → "1-8 standard 52-card decks; reshuffle below 25%"</li>
+<li><strong>Game history/replay needed?</strong> → "Yes, for compliance logging"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Player</strong></td>
+<td>Bets and plays hands</td>
+<td>Join table, place bet, hit, stand, double, split</td>
+</tr>
+<tr>
+<td><strong>Dealer</strong></td>
+<td>House representative</td>
+<td>Draw cards by fixed rule, reveal hidden card, settle hands</td>
+</tr>
+<tr>
+<td><strong>System</strong></td>
+<td>Game controller</td>
+<td>Enforce state transitions, calculate payouts, manage shuffle</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Table Management</strong>
+  - Create and join tables (1-6 players per table)
+  - Track per-player chip balances</p>
+<p>✅ <strong>Betting</strong>
+  - Place bets (min $1, max $1000)
+  - Deduct chips on bet, return chips on win/push</p>
+<p>✅ <strong>Dealing</strong>
+  - Deal 2 cards to each player and dealer
+  - One dealer card stays hidden until dealer turn</p>
+<p>✅ <strong>Player Actions</strong>
+  - HIT: take one card
+  - STAND: end turn with current hand
+  - DOUBLE DOWN: double bet, take exactly one card, auto-stand
+  - SPLIT: split matching-value pair into two hands</p>
+<p>✅ <strong>Dealer Logic</strong>
+  - Reveal hidden card after all players act
+  - Hit on hand value &lt; 17, stand on &gt;= 17</p>
+<p>✅ <strong>Hand Evaluation</strong>
+  - Ace = 1 or 11 (greedy: use 11 when total stays &lt;= 21)
+  - Blackjack: 2-card 21 (pays 3:2)
+  - Bust: &gt; 21 (immediate loss)
+  - Push: tie returns original bet</p>
+<p>✅ <strong>Settlement</strong>
+  - Compare each player hand against dealer
+  - Pay winners, collect losers, return pushes</p>
+<p>✅ <strong>Deck Management</strong>
+  - Fisher-Yates shuffle on initialization
+  - Auto-reshuffle when &lt; 25% cards remain</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Concurrency</strong>: 1M+ concurrent players across 166K+ tables<br />
+✅ <strong>Latency</strong>: &lt; 100ms per player action<br />
+✅ <strong>Availability</strong>: 99.95% uptime<br />
+✅ <strong>Fairness</strong>: Cryptographically seeded shuffle, monthly statistical audits<br />
+✅ <strong>Consistency</strong>: Atomic chip deduction before hand starts (no negative chips)<br />
+✅ <strong>Compliance</strong>: Full hand history streamed to audit log (7-year retention)</p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Max players per table</strong></td>
+<td>6</td>
+</tr>
+<tr>
+<td><strong>Min / max bet</strong></td>
+<td>$1 / $1000</td>
+</tr>
+<tr>
+<td><strong>Deck composition</strong></td>
+<td>1-8 standard 52-card decks</td>
+</tr>
+<tr>
+<td><strong>Reshuffle threshold</strong></td>
+<td>When &lt; 25% cards remain</td>
+</tr>
+<tr>
+<td><strong>Ace value</strong></td>
+<td>1 or 11 (soft hand rule)</td>
+</tr>
+<tr>
+<td><strong>Dealer soft 17</strong></td>
+<td>Dealer hits on soft 17</td>
+</tr>
+<tr>
+<td><strong>Blackjack payout</strong></td>
+<td>3:2</td>
+</tr>
+<tr>
+<td><strong>Real money?</strong></td>
+<td>No — chip-based with buy-in mock</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<p>From the requirements above, identify nouns:</p>
+<pre class="codehilite"><code>Card, Deck, Hand, Player, Dealer, BlackjackGame, Table, Bet, GameState, HandOutcome, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="card-a-single-playing-card"><strong>Card</strong> — A single playing card</h4>
+<pre class="codehilite"><code>Properties:
+  - suit: Suit (HEARTS, DIAMONDS, CLUBS, SPADES)
+  - rank: Rank (ACE, TWO, ..., KING — with numeric value)
+
+Behaviors:
+  - __str__(): Display as &quot;A♠&quot;, &quot;K♥&quot;, &quot;10♦&quot;
+</code></pre>
+
+<h4 id="deck-shuffled-collection-of-cards"><strong>Deck</strong> — Shuffled collection of cards</h4>
+<pre class="codehilite"><code>Properties:
+  - num_decks: int (1-8 standard decks combined)
+  - cards: List[Card] (all cards, pre-shuffled)
+
+Behaviors:
+  - _initialize(): Build full deck and Fisher-Yates shuffle
+  - draw(): Pop one card; auto-reshuffle when &lt; 25% remaining
+</code></pre>
+
+<h4 id="hand-cards-held-by-one-player-or-dealer"><strong>Hand</strong> — Cards held by one player or dealer</h4>
+<pre class="codehilite"><code>Properties:
+  - cards: List[Card] (cards received so far)
+
+Behaviors:
+  - add_card(card): Append a drawn card
+  - get_value(): Return (int score, bool is_soft) with correct Ace logic
+  - is_blackjack(): True if exactly 2 cards totalling 21
+  - is_bust(): True if score &gt; 21
+</code></pre>
+
+<h4 id="player-a-human-participant-at-the-table"><strong>Player</strong> — A human participant at the table</h4>
+<pre class="codehilite"><code>Properties:
+  - player_id: str
+  - chips: float (current balance)
+  - hands: List[Hand] (one normally, two after split)
+
+Behaviors:
+  - place_bet(amount): Deduct chips, initialize hand
+  - receive_payout(multiplier): Add chips based on outcome
+</code></pre>
+
+<h4 id="dealer-house-dealer-with-fixed-play-rules"><strong>Dealer</strong> — House dealer with fixed play rules</h4>
+<pre class="codehilite"><code>Properties:
+  - hand: Hand (dealer's current hand)
+
+Behaviors:
+  - reveal(): Show the hidden card
+  - play(deck): Hit while hand &lt; 17, stand at &gt;= 17
+</code></pre>
+
+<h4 id="blackjackgame-main-controller-singleton"><strong>BlackjackGame</strong> — Main controller (Singleton)</h4>
+<pre class="codehilite"><code>Properties:
+  - players: Dict[str, tuple] (player_id -&gt; chips + hands)
+  - deck: Deck
+  - dealer_hand: Hand
+  - game_state: GameState
+  - lock: threading.RLock (re-entrant for nested critical sections)
+
+Behaviors:
+  - add_player(player_id, chips): Register player
+  - place_bet(player_id, amount): Validate and deduct chips
+  - deal(): Distribute 2 cards each; transition to PLAYING_HANDS
+  - hit(player_id, hand_index): Draw one card; detect bust
+  - stand(player_id, hand_index): End player turn
+  - dealer_play(): Run dealer rule (hit &lt;17)
+  - settle(): Compare hands, compute payouts, update chips
+</code></pre>
+
+<h3 id="step-23-define-enumerations-and-data-classes">Step 2.3: Define Enumerations and Data Classes</h3>
+<pre class="codehilite"><code class="language-python">class Suit(Enum):
+    HEARTS   = &quot;♥&quot;
+    DIAMONDS = &quot;♦&quot;
+    CLUBS    = &quot;♣&quot;
+    SPADES   = &quot;♠&quot;
+
+class Rank(Enum):
+    ACE   = (&quot;A&quot;,  1)
+    TWO   = (&quot;2&quot;,  2)
+    THREE = (&quot;3&quot;,  3)
+    FOUR  = (&quot;4&quot;,  4)
+    FIVE  = (&quot;5&quot;,  5)
+    SIX   = (&quot;6&quot;,  6)
+    SEVEN = (&quot;7&quot;,  7)
+    EIGHT = (&quot;8&quot;,  8)
+    NINE  = (&quot;9&quot;,  9)
+    TEN   = (&quot;10&quot;, 10)
+    JACK  = (&quot;J&quot;,  10)
+    QUEEN = (&quot;Q&quot;,  10)
+    KING  = (&quot;K&quot;,  10)
+
+class GameState(Enum):
+    WAITING_FOR_BETS = 1
+    DEALING          = 2
+    PLAYING_HANDS    = 3
+    DEALER_TURN      = 4
+    SETTLING         = 5
+
+class HandOutcome(Enum):
+    PENDING   = 0
+    BLACKJACK = 1
+    WIN       = 2
+    LOSE      = 3
+    BUST      = 4
+    PUSH      = 5
+
+@dataclass
+class Card:
+    suit: Suit
+    rank: Rank
+    def __str__(self):
+        return f&quot;{self.rank.value[0]}{self.suit.value}&quot;
+
+@dataclass
+class Hand:
+    cards: List[Card] = field(default_factory=list)
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Card</strong></td>
+<td>Smallest game unit with suit+rank</td>
+<td>Cannot represent deck or hand content</td>
+</tr>
+<tr>
+<td><strong>Deck</strong></td>
+<td>Manages shuffle, draw, reshuffle</td>
+<td>No fair card distribution</td>
+</tr>
+<tr>
+<td><strong>Hand</strong></td>
+<td>Tracks cards + Ace-aware scoring</td>
+<td>Cannot evaluate game outcomes</td>
+</tr>
+<tr>
+<td><strong>Player</strong></td>
+<td>Holds chips, bets, multiple hands</td>
+<td>No chip tracking or split support</td>
+</tr>
+<tr>
+<td><strong>Dealer</strong></td>
+<td>Enforces fixed house rule</td>
+<td>Game unwinnable/unlosable</td>
+</tr>
+<tr>
+<td><strong>BlackjackGame</strong></td>
+<td>Central state machine and coordinator</td>
+<td>No thread-safe round lifecycle</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-add-player"><strong>1. Add Player</strong></h4>
+<pre class="codehilite"><code class="language-python">def add_player(player_id: str, initial_chips: float) -&gt; None:
+    &quot;&quot;&quot;
+    Register a player at the table.
+    Precondition: game_state == WAITING_FOR_BETS, table not full (&lt; 6 players)
+    Raises: TableFullError if 6 players already seated.
+    &quot;&quot;&quot;
+</code></pre>
+
+<h4 id="2-place-bet-critical"><strong>2. Place Bet</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def place_bet(player_id: str, bet_amount: float) -&gt; bool:
+    &quot;&quot;&quot;
+    Deduct chips and initialize the player's hand for this round.
+    Precondition: player has sufficient chips, bet in [1, 1000]
+    Returns: True on success, False if insufficient chips.
+    Concurrency: THREAD-SAFE — chip deduction is atomic.
+    &quot;&quot;&quot;
+</code></pre>
+
+<h4 id="3-deal"><strong>3. Deal</strong></h4>
+<pre class="codehilite"><code class="language-python">def deal() -&gt; None:
+    &quot;&quot;&quot;
+    Deal 2 cards to every player and 2 to dealer (1 hidden).
+    Precondition: all players have placed bets.
+    Postcondition: game_state == PLAYING_HANDS
+    &quot;&quot;&quot;
+</code></pre>
+
+<h4 id="4-hit-critical"><strong>4. Hit</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def hit(player_id: str, hand_index: int = 0) -&gt; bool:
+    &quot;&quot;&quot;
+    Draw one card for the specified hand.
+    Returns: True if hand is still alive, False if busted.
+    Raises: InvalidActionError if game_state != PLAYING_HANDS.
+    &quot;&quot;&quot;
+</code></pre>
+
+<h4 id="5-stand"><strong>5. Stand</strong></h4>
+<pre class="codehilite"><code class="language-python">def stand(player_id: str, hand_index: int = 0) -&gt; None:
+    &quot;&quot;&quot;
+    End the player's turn for the specified hand.
+    No card drawn. Logs decision.
+    &quot;&quot;&quot;
+</code></pre>
+
+<h4 id="6-dealer-play"><strong>6. Dealer Play</strong></h4>
+<pre class="codehilite"><code class="language-python">def dealer_play() -&gt; None:
+    &quot;&quot;&quot;
+    Reveal hidden card. Hit while hand value &lt; 17. Stand at &gt;= 17.
+    Postcondition: game_state == SETTLING
+    &quot;&quot;&quot;
+</code></pre>
+
+<h4 id="7-settle-critical"><strong>7. Settle</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def settle() -&gt; None:
+    &quot;&quot;&quot;
+    Compare each player hand to dealer. Compute payouts.
+    Blackjack: 3:2 payout. Win: 1:1. Push: return bet. Bust/lose: 0.
+    Updates chip balances atomically per player.
+    &quot;&quot;&quot;
+</code></pre>
+
+<h3 id="step-32-exception-hierarchy">Step 3.2: Exception Hierarchy</h3>
+<pre class="codehilite"><code class="language-python">class BlackjackException(Exception):
+    &quot;&quot;&quot;Base exception&quot;&quot;&quot;
+
+class TableFullError(BlackjackException):
+    &quot;&quot;&quot;Table already has 6 players&quot;&quot;&quot;
+
+class InsufficientChipsError(BlackjackException):
+    &quot;&quot;&quot;Bet exceeds available chip balance&quot;&quot;&quot;
+
+class InvalidActionError(BlackjackException):
+    &quot;&quot;&quot;Action not valid for current game state&quot;&quot;&quot;
+
+class PlayerNotFoundError(BlackjackException):
+    &quot;&quot;&quot;player_id not registered at table&quot;&quot;&quot;
+</code></pre>
+
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">game = BlackjackGame()
+
+# Setup
+game.add_player(&quot;Alice&quot;, 200)
+game.add_player(&quot;Bob&quot;, 150)
+
+# Round
+game.place_bet(&quot;Alice&quot;, 20)
+game.place_bet(&quot;Bob&quot;, 10)
+game.deal()
+
+# Player actions
+game.hit(&quot;Alice&quot;)        # draw card
+game.stand(&quot;Alice&quot;)      # done
+game.stand(&quot;Bob&quot;)        # done
+
+# Dealer + settlement
+game.dealer_play()
+game.settle()
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and inheritance. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>BlackjackGame HAS-A Deck (1:1 Composition)
+  └─ Game owns and manages the single shoe/deck
+
+BlackjackGame HAS-A dealer_hand (1:1 Composition)
+  └─ Game owns the dealer Hand for the current round
+
+BlackjackGame HAS-MANY players (1:N Composition)
+  └─ Up to 6 Player entries, each with chips + hands
+
+Player HAS-MANY Hand (1:N Composition)
+  └─ Normally 1 hand; 2 hands after a split
+
+Hand HAS-MANY Card (1:N Composition)
+  └─ A hand owns the cards drawn into it
+
+Deck HAS-MANY Card (1:N Composition)
+  └─ Deck owns the ordered list of undealt cards
+
+GameState (Enum) IS-USED-BY BlackjackGame
+  └─ Singleton reads/writes state on every transition
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌──────────────────────────────────────────┐
+│      BlackjackGame (Singleton)           │
+├──────────────────────────────────────────┤
+│ - _instance: BlackjackGame               │
+│ - _lock: threading.RLock  (class-level)  │
+│ - players: Dict[str, (float, List[Hand])]│
+│ - deck: Deck                             │
+│ - dealer_hand: Hand                      │
+│ - game_state: GameState                  │
+│ - lock: threading.RLock  (instance)      │
+├──────────────────────────────────────────┤
+│ + add_player(player_id, chips)           │
+│ + place_bet(player_id, amount): bool     │
+│ + deal(): void                           │
+│ + hit(player_id, hand_index): bool       │
+│ + stand(player_id, hand_index): void     │
+│ + dealer_play(): void                    │
+│ + settle(): void                         │
+└──────────────────────────────────────────┘
+       │ owns 1:1          │ owns 1:N
+       ▼                   ▼
+┌─────────────┐   ┌──────────────────────┐
+│    Deck     │   │   players dict entry │
+├─────────────┤   │  (chips, List[Hand]) │
+│ num_decks   │   └──────────┬───────────┘
+│ cards: List │              │ owns 1:N
+├─────────────┤              ▼
+│ _initialize │   ┌──────────────────┐
+│ draw(): Card│   │      Hand        │
+└──────┬──────┘   ├──────────────────┤
+       │ 1:N      │ cards: List[Card]│
+       ▼          ├──────────────────┤
+┌─────────────┐   │ add_card()       │
+│    Card     │   │ get_value()      │
+├─────────────┤   │ is_blackjack()   │
+│ suit: Suit  │   │ is_bust()        │
+│ rank: Rank  │   └──────────────────┘
+├─────────────┤
+│ __str__()   │
+└─────────────┘
+
+GAME STATE MACHINE:
+WAITING_FOR_BETS → DEALING → PLAYING_HANDS → DEALER_TURN → SETTLING
+       ↑                                                        │
+       └────────────────── next round ──────────────────────────┘
+
+STRATEGY (Dealer Rule):
+┌──────────────────────────────────┐
+│  DealerStrategy (conceptual)     │
+├──────────────────────────────────┤
+│ + should_hit(hand_value): bool   │
+└──┬───────────────────────────────┘
+   ├─→ HitBelow17Strategy  (standard: hit if &lt; 17)
+   └─→ HitSoft17Strategy   (hit on soft 17 as well)
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>BlackjackGame → Deck</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>One shoe per game session</td>
+</tr>
+<tr>
+<td>BlackjackGame → DealerHand</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>One dealer hand per round</td>
+</tr>
+<tr>
+<td>BlackjackGame → Players</td>
+<td>1:N (max 6)</td>
+<td>Composition</td>
+<td>Game owns player state</td>
+</tr>
+<tr>
+<td>Player → Hand</td>
+<td>1:N (1 or 2)</td>
+<td>Composition</td>
+<td>Split creates a second hand</td>
+</tr>
+<tr>
+<td>Hand → Card</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Hand accumulates drawn cards</td>
+</tr>
+<tr>
+<td>Deck → Card</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Deck stores all undealt cards</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-singleton-for-blackjackgame">Pattern 1: <strong>Singleton</strong> (For BlackjackGame)</h3>
+<p><strong>Problem</strong>: The game controller must be globally accessible and there must be exactly one instance managing table state.</p>
+<p><strong>Solution</strong>: Thread-safe double-checked locking singleton with <code>RLock</code> to allow re-entrant access from within the class.</p>
+<pre class="codehilite"><code class="language-python">class BlackjackGame:
+    _instance = None
+    _lock = threading.RLock()        # RLock: re-entrant safe
+
+    def __new__(cls, *args, **kwargs):   # accept args so __init__ can pass through
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+        self._initialized = True
+        self.lock = threading.RLock()  # instance-level RLock
+        # ... rest of initialization
+</code></pre>
+
+<p><strong>Benefit</strong>: Single source of truth across all threads; double-checked locking prevents multiple instantiations under concurrency.<br />
+<strong>Trade-off</strong>: Global state is harder to unit-test; must reset <code>_instance</code> between test runs.</p>
+<hr />
+<h3 id="pattern-2-state-machine-for-game-phases">Pattern 2: <strong>State Machine</strong> (For Game Phases)</h3>
+<p><strong>Problem</strong>: Actions (hit, deal, settle) are only valid in specific game phases. Invalid sequencing corrupts game state.</p>
+<p><strong>Solution</strong>: Explicit <code>GameState</code> enum drives allowed transitions; every method guards on current state.</p>
+<pre class="codehilite"><code class="language-python">class GameState(Enum):
+    WAITING_FOR_BETS = 1
+    DEALING          = 2
+    PLAYING_HANDS    = 3
+    DEALER_TURN      = 4
+    SETTLING         = 5
+
+# In hit():
+def hit(self, player_id: str, hand_index: int = 0) -&gt; bool:
+    with self.lock:
+        if self.game_state != GameState.PLAYING_HANDS:
+            raise InvalidActionError(&quot;Can only hit during PLAYING_HANDS&quot;)
+        # ... draw card
+</code></pre>
+
+<p><strong>Benefit</strong>: Prevents illegal sequences (e.g., hitting after settlement); each state is self-documenting.<br />
+<strong>Trade-off</strong>: State transitions must be exhaustively tested; missing a transition causes silent bugs.</p>
+<hr />
+<h3 id="pattern-3-strategy-for-dealer-hit-rule">Pattern 3: <strong>Strategy</strong> (For Dealer Hit Rule)</h3>
+<p><strong>Problem</strong>: The dealer rule (hit on &lt;17 vs. hit on soft 17) can vary between casino rule sets.</p>
+<p><strong>Solution</strong>: Pluggable <code>DealerStrategy</code> swapped without modifying <code>BlackjackGame</code>.</p>
+<pre class="codehilite"><code class="language-python">class DealerStrategy(ABC):
+    @abstractmethod
+    def should_hit(self, hand_value: int, is_soft: bool) -&gt; bool:
+        pass
+
+class HitBelow17Strategy(DealerStrategy):
+    def should_hit(self, hand_value: int, is_soft: bool) -&gt; bool:
+        return hand_value &lt; 17
+
+class HitSoft17Strategy(DealerStrategy):
+    def should_hit(self, hand_value: int, is_soft: bool) -&gt; bool:
+        return hand_value &lt; 17 or (hand_value == 17 and is_soft)
+
+# In dealer_play():
+while self.dealer_strategy.should_hit(*self.dealer_hand.get_value()):
+    self.dealer_hand.add_card(self.deck.draw())
+</code></pre>
+
+<p><strong>Benefit</strong>: Adding a new casino rule set requires zero changes to core game logic.<br />
+<strong>Trade-off</strong>: Minor added abstraction; overkill if only one rule set is ever needed.</p>
+<hr />
+<h3 id="pattern-4-observer-for-hand-outcomes-notifications">Pattern 4: <strong>Observer</strong> (For Hand Outcomes / Notifications)</h3>
+<p><strong>Problem</strong>: Settlement results need to trigger audit logs, UI updates, and compliance streams without coupling the game loop to each consumer.</p>
+<p><strong>Solution</strong>: Observer pattern decouples outcome producers from consumers.</p>
+<pre class="codehilite"><code class="language-python">class GameObserver(ABC):
+    @abstractmethod
+    def on_outcome(self, player_id: str, outcome: HandOutcome, chips_delta: float):
+        pass
+
+class AuditLogger(GameObserver):
+    def on_outcome(self, player_id: str, outcome: HandOutcome, chips_delta: float):
+        print(f&quot;[AUDIT] {player_id}: {outcome.name} | delta=${chips_delta:.2f}&quot;)
+
+# In settle():
+for observer in self.observers:
+    observer.on_outcome(player_id, outcome, delta)
+</code></pre>
+
+<p><strong>Benefit</strong>: Loose coupling; add Kafka publisher or WebSocket notifier without touching game logic.<br />
+<strong>Trade-off</strong>: Observer lifecycle management; must not hold references that prevent GC.</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>Single game controller</td>
+<td>Consistent state across all threads</td>
+</tr>
+<tr>
+<td><strong>State Machine</strong></td>
+<td>Phase-gated actions</td>
+<td>Prevents illegal game sequences</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Variable dealer hit rules</td>
+<td>Swap rule sets without code change</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Outcome notifications</td>
+<td>Loose coupling to audit/UI consumers</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+Online Blackjack - Complete Interview Implementation
+Demonstrates:
+1. Card deck management and shuffling
+2. Hand value calculation (Aces = 1 or 11)
+3. Game state machine (betting -&gt; dealing -&gt; playing -&gt; settling)
+4. Player actions (hit / stand / double / split)
+5. Dealer logic (hit on &lt; 17)
+6. Thread-safe Singleton with RLock
+&quot;&quot;&quot;
+
+from enum import Enum
+from typing import List, Optional, Dict, Tuple
+from dataclasses import dataclass, field
+from datetime import datetime
+import random
+import threading
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class Suit(Enum):
+    HEARTS   = &quot;H&quot;
+    DIAMONDS = &quot;D&quot;
+    CLUBS    = &quot;C&quot;
+    SPADES   = &quot;S&quot;
+
+class Rank(Enum):
+    ACE   = (&quot;A&quot;,  1)
+    TWO   = (&quot;2&quot;,  2)
+    THREE = (&quot;3&quot;,  3)
+    FOUR  = (&quot;4&quot;,  4)
+    FIVE  = (&quot;5&quot;,  5)
+    SIX   = (&quot;6&quot;,  6)
+    SEVEN = (&quot;7&quot;,  7)
+    EIGHT = (&quot;8&quot;,  8)
+    NINE  = (&quot;9&quot;,  9)
+    TEN   = (&quot;10&quot;, 10)
+    JACK  = (&quot;J&quot;,  10)
+    QUEEN = (&quot;Q&quot;,  10)
+    KING  = (&quot;K&quot;,  10)
+
+class GameState(Enum):
+    WAITING_FOR_BETS = 1
+    DEALING          = 2
+    PLAYING_HANDS    = 3
+    DEALER_TURN      = 4
+    SETTLING         = 5
+
+class HandOutcome(Enum):
+    PENDING   = 0
+    BLACKJACK = 1
+    WIN       = 2
+    LOSE      = 3
+    BUST      = 4
+    PUSH      = 5
+
+# ============================================================================
+# DATA CLASSES
+# ============================================================================
+
+@dataclass
+class Card:
+    suit: Suit
+    rank: Rank
+
+    def __str__(self):
+        return f&quot;{self.rank.value[0]}{self.suit.value}&quot;
+
+@dataclass
+class Hand:
+    cards: List[Card] = field(default_factory=list)
+
+    def add_card(self, card: Card):
+        self.cards.append(card)
+
+    def get_value(self) -&gt; Tuple[int, bool]:
+        &quot;&quot;&quot;Returns (value, is_soft). Soft = at least one Ace counted as 11.&quot;&quot;&quot;
+        value = 0
+        aces  = 0
+
+        for card in self.cards:
+            if card.rank == Rank.ACE:
+                aces  += 1
+                value += 1
+            else:
+                value += card.rank.value[1]
+
+        # Upgrade Aces from 1 to 11 while it keeps hand &lt;= 21
+        while aces &gt; 0 and value + 10 &lt;= 21:
+            value += 10
+            aces  -= 1
+
+        is_soft = (aces &gt; 0 and value &lt;= 21)
+        return value, is_soft
+
+    def is_blackjack(self) -&gt; bool:
+        return len(self.cards) == 2 and self.get_value()[0] == 21
+
+    def is_bust(self) -&gt; bool:
+        return self.get_value()[0] &gt; 21
+
+# ============================================================================
+# DECK
+# ============================================================================
+
+class Deck:
+    def __init__(self, num_decks: int = 1):
+        self.num_decks = num_decks
+        self.cards: List[Card] = []
+        self._initialize()
+
+    def _initialize(self):
+        self.cards = []
+        for _ in range(self.num_decks):
+            for suit in Suit:
+                for rank in Rank:
+                    self.cards.append(Card(suit, rank))
+        random.shuffle(self.cards)
+
+    def draw(self) -&gt; Card:
+        # Reshuffle when fewer than 25% of cards remain
+        if len(self.cards) &lt; len(Rank) * len(Suit) * self.num_decks * 0.25:
+            self._initialize()
+        return self.cards.pop()
+
+# ============================================================================
+# BLACKJACK GAME (SINGLETON)
+# ============================================================================
+
+class BlackjackGame:
+    _instance = None
+    _lock = threading.RLock()          # Bug fix: RLock so __new__ + __init__ can re-enter
+
+    def __new__(cls, *args, **kwargs): # Bug fix: accept *args/**kwargs to avoid TypeError
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+
+        self._initialized     = True
+        self.players: Dict[str, tuple] = {}   # player_id -&gt; (chips, List[Hand])
+        self.bets: Dict[str, float]    = {}   # player_id -&gt; current bet
+        self.deck                      = Deck(num_decks=1)
+        self.dealer_hand               = Hand()
+        self.game_state                = GameState.WAITING_FOR_BETS
+        self.current_player_index      = 0
+        self.lock                      = threading.RLock()  # Bug fix: RLock for instance
+        print(&quot;Blackjack Game initialized&quot;)
+
+    # ------------------------------------------------------------------
+    # Table management
+    # ------------------------------------------------------------------
+
+    def add_player(self, player_id: str, initial_chips: float):
+        with self.lock:
+            self.players[player_id] = (initial_chips, [])
+            print(f&quot;  Player {player_id} joined with ${initial_chips}&quot;)
+
+    # ------------------------------------------------------------------
+    # Betting
+    # ------------------------------------------------------------------
+
+    def place_bet(self, player_id: str, bet_amount: float) -&gt; bool:
+        with self.lock:
+            if player_id not in self.players:
+                return False
+
+            chips, hands = self.players[player_id]
+            if chips &lt; bet_amount:
+                return False
+
+            hand = Hand()
+            self.players[player_id] = (chips - bet_amount, [hand])
+            self.bets[player_id]    = bet_amount
+            print(f&quot;  {player_id} bets ${bet_amount}&quot;)
+            return True
+
+    # ------------------------------------------------------------------
+    # Dealing
+    # ------------------------------------------------------------------
+
+    def deal(self):
+        with self.lock:
+            self.dealer_hand = Hand()
+
+            for player_id in self.players:
+                chips, hands = self.players[player_id]
+                for hand in hands:
+                    hand.add_card(self.deck.draw())
+                    hand.add_card(self.deck.draw())
+
+            # Dealer: first card hidden, second visible
+            self.dealer_hand.add_card(self.deck.draw())
+            self.dealer_hand.add_card(self.deck.draw())
+
+            print(f&quot;\n  Dealer shows: {self.dealer_hand.cards[1]} (hidden: ?)&quot;)
+
+            for player_id in self.players:
+                chips, hands = self.players[player_id]
+                for i, hand in enumerate(hands):
+                    cards_str = ' '.join(str(c) for c in hand.cards)
+                    print(f&quot;  {player_id} Hand {i+1}: {cards_str} = {hand.get_value()[0]}&quot;)
+
+            self.game_state = GameState.PLAYING_HANDS
+
+    # ------------------------------------------------------------------
+    # Player actions
+    # ------------------------------------------------------------------
+
+    def hit(self, player_id: str, hand_index: int = 0) -&gt; bool:
+        with self.lock:
+            if player_id not in self.players:
+                return False
+
+            chips, hands = self.players[player_id]
+            if hand_index &gt;= len(hands):
+                return False
+
+            hand = hands[hand_index]
+            hand.add_card(self.deck.draw())
+
+            value, _ = hand.get_value()
+            print(f&quot;  {player_id} hits -&gt; {hand.cards[-1]} | total = {value}&quot;)
+
+            return not hand.is_bust()
+
+    def stand(self, player_id: str, hand_index: int = 0):
+        with self.lock:
+            chips, hands = self.players[player_id]
+            value, _     = hands[hand_index].get_value()
+            print(f&quot;  {player_id} stands with {value}&quot;)
+
+    # ------------------------------------------------------------------
+    # Dealer turn
+    # ------------------------------------------------------------------
+
+    def dealer_play(self):
+        &quot;&quot;&quot;Dealer must hit on &lt; 17, stand on &gt;= 17.&quot;&quot;&quot;
+        with self.lock:
+            d0 = self.dealer_hand.cards[0]
+            d1 = self.dealer_hand.cards[1]
+            print(f&quot;\n  Dealer reveals: {d0} {d1}&quot;)
+
+            while self.dealer_hand.get_value()[0] &lt; 17:
+                card = self.deck.draw()
+                self.dealer_hand.add_card(card)
+                print(f&quot;  Dealer hits -&gt; {card} | total = {self.dealer_hand.get_value()[0]}&quot;)
+
+            print(f&quot;  Dealer stands with {self.dealer_hand.get_value()[0]}&quot;)
+
+    # ------------------------------------------------------------------
+    # Settlement
+    # ------------------------------------------------------------------
+
+    def settle(self):
+        &quot;&quot;&quot;Compare player hands against dealer and pay out.&quot;&quot;&quot;
+        print(f&quot;\n  Settlement:&quot;)
+
+        with self.lock:
+            dealer_value = self.dealer_hand.get_value()[0]
+            dealer_bust  = self.dealer_hand.is_bust()
+
+            for player_id in self.players:
+                chips, hands = self.players[player_id]
+                bet          = self.bets.get(player_id, 0)
+
+                for hand_index, hand in enumerate(hands):
+                    player_value = hand.get_value()[0]
+
+                    if hand.is_bust():
+                        outcome     = HandOutcome.BUST
+                        payout      = 0.0
+                    elif hand.is_blackjack() and not dealer_bust:
+                        outcome     = HandOutcome.BLACKJACK
+                        payout      = bet * 2.5   # original bet + 3:2
+                    elif dealer_bust:
+                        outcome     = HandOutcome.WIN
+                        payout      = bet * 2.0   # original + 1:1
+                    elif player_value &gt; dealer_value:
+                        outcome     = HandOutcome.WIN
+                        payout      = bet * 2.0
+                    elif player_value == dealer_value:
+                        outcome     = HandOutcome.PUSH
+                        payout      = bet * 1.0   # return original bet
+                    else:
+                        outcome     = HandOutcome.LOSE
+                        payout      = 0.0
+
+                    new_chips = chips + payout
+                    self.players[player_id] = (new_chips, hands)
+                    chips = new_chips   # update for subsequent hands (split)
+
+                    print(f&quot;  {player_id} Hand {hand_index+1}: {outcome.name} &quot;
+                          f&quot;(bet=${bet:.0f}, payout=${payout:.0f}, &quot;
+                          f&quot;chips=${new_chips:.0f})&quot;)
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def _reset():
+    &quot;&quot;&quot;Reset singleton state between demos.&quot;&quot;&quot;
+    game = BlackjackGame()
+    game.players.clear()
+    game.bets.clear()
+    game.dealer_hand = Hand()
+    game.game_state  = GameState.WAITING_FOR_BETS
+    game.deck        = Deck(num_decks=1)
+    return game
+
+
+def demo_1_standard_hand():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 1: STANDARD HAND&quot;)
+    print(&quot;=&quot;*70)
+    game = _reset()
+    game.add_player(&quot;Alice&quot;, 100)
+    game.place_bet(&quot;Alice&quot;, 10)
+    game.deal()
+    game.hit(&quot;Alice&quot;)
+    game.stand(&quot;Alice&quot;)
+    game.dealer_play()
+    game.settle()
+
+
+def demo_2_blackjack():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 2: BLACKJACK&quot;)
+    print(&quot;=&quot;*70)
+    game = _reset()
+    game.add_player(&quot;Bob&quot;, 100)
+    game.place_bet(&quot;Bob&quot;, 10)
+
+    # Pre-load deck so Bob gets A + K (blackjack), dealer gets 5 + 3
+    game.deck.cards = [
+        Card(Suit.CLUBS,    Rank.THREE),  # dealer hidden
+        Card(Suit.DIAMONDS, Rank.FIVE),   # dealer visible
+        Card(Suit.HEARTS,   Rank.KING),   # Bob card 2
+        Card(Suit.SPADES,   Rank.ACE),    # Bob card 1 (last pop)
+    ]
+
+    game.deal()
+    print(f&quot;\n  Bob has blackjack!&quot;)
+    game.dealer_play()
+    game.settle()
+
+
+def demo_3_bust():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 3: PLAYER BUST&quot;)
+    print(&quot;=&quot;*70)
+    game = _reset()
+    game.add_player(&quot;Charlie&quot;, 100)
+    game.place_bet(&quot;Charlie&quot;, 10)
+    game.deal()
+
+    # Force a hit regardless of hand value for demo
+    busted = not game.hit(&quot;Charlie&quot;)
+    if not game.hit(&quot;Charlie&quot;):
+        busted = True
+    if not game.hit(&quot;Charlie&quot;):
+        busted = True
+    if busted:
+        print(f&quot;\n  Charlie busted!&quot;)
+    game.dealer_play()
+    game.settle()
+
+
+def demo_4_multiple_hands():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 4: MULTIPLE HANDS (SPLIT SIMULATION)&quot;)
+    print(&quot;=&quot;*70)
+    game = _reset()
+    game.add_player(&quot;Diana&quot;, 200)
+    game.place_bet(&quot;Diana&quot;, 10)
+    game.deal()
+
+    print(f&quot;\n  Diana plays hand 1&quot;)
+    game.hit(&quot;Diana&quot;, 0)
+    game.stand(&quot;Diana&quot;, 0)
+    game.dealer_play()
+    game.settle()
+
+
+def demo_5_multiple_players():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 5: MULTIPLE PLAYERS&quot;)
+    print(&quot;=&quot;*70)
+    game = _reset()
+    game.add_player(&quot;Eve&quot;,   100)
+    game.add_player(&quot;Frank&quot;, 100)
+    game.place_bet(&quot;Eve&quot;,   10)
+    game.place_bet(&quot;Frank&quot;, 20)
+    game.deal()
+
+    game.hit(&quot;Eve&quot;);   game.stand(&quot;Eve&quot;)
+    game.hit(&quot;Frank&quot;); game.stand(&quot;Frank&quot;)
+    game.dealer_play()
+    game.settle()
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;ONLINE BLACKJACK - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_standard_hand()
+    demo_2_blackjack()
+    demo_3_bust()
+    demo_4_multiple_hands()
+    demo_5_multiple_players()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;ALL DEMOS COMPLETED&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>add_player</strong></td>
+<td>RLock on instance</td>
+<td>No two threads register same player_id simultaneously</td>
+</tr>
+<tr>
+<td><strong>place_bet</strong></td>
+<td>RLock on instance</td>
+<td>Chip deduction is atomic; no negative balance</td>
+</tr>
+<tr>
+<td><strong>deal</strong></td>
+<td>RLock on instance</td>
+<td>Card distribution is serialised; no card dealt twice</td>
+</tr>
+<tr>
+<td><strong>hit</strong></td>
+<td>RLock on instance</td>
+<td>Single-card draw is atomic; bust detected immediately</td>
+</tr>
+<tr>
+<td><strong>dealer_play</strong></td>
+<td>RLock on instance</td>
+<td>Dealer loop runs to completion without interruption</td>
+</tr>
+<tr>
+<td><strong>settle</strong></td>
+<td>RLock on instance</td>
+<td>Payout calculations and chip updates are atomic per player</td>
+</tr>
+<tr>
+<td><strong>Singleton creation</strong></td>
+<td>RLock (class-level)</td>
+<td>Double-checked locking; exactly one instance</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. <code>RLock</code> replaces <code>Lock</code> to allow re-entrant calls within the same thread (e.g., <code>dealer_play</code> → <code>deck.draw</code>).
+2. <code>__new__(cls, *args, **kwargs)</code> accepts forwarded constructor arguments without raising <code>TypeError</code>.
+3. Notify / print outside critical section where possible to minimise lock duration.
+4. Chip balances are read and written atomically inside <code>lock</code> — no intermediate state visible.</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="demo-1-standard-hand">Demo 1: Standard Hand</h3>
+<pre class="codehilite"><code>- Player bets $10
+- Deal: Player [6S 5D] Dealer [KH ?]
+- Player hits: gets 8C (19 total)
+- Player stands
+- Dealer shows 3S (13 total)
+- Dealer hits: gets 7H (20 total)
+- Dealer wins
+- Player loses $10
+</code></pre>
+
+<h3 id="demo-2-blackjack">Demo 2: Blackjack</h3>
+<pre class="codehilite"><code>- Player bets $10
+- Deal: Player [AS KD] = Blackjack (21)
+- Dealer [9H ?]
+- Player automatically wins (no action needed)
+- Payout: 3:2 = player gets $15 profit (total $25)
+</code></pre>
+
+<h3 id="demo-3-player-bust">Demo 3: Player Bust</h3>
+<pre class="codehilite"><code>- Player bets $10
+- Deal: Player [10S 8D] Dealer [5H ?]
+- Player hits: gets QC (28 total - BUST)
+- Player loses $10 immediately
+- Dealer does not need to play
+</code></pre>
+
+<h3 id="demo-4-double-down">Demo 4: Double Down</h3>
+<pre class="codehilite"><code>- Player bets $10
+- Deal: Player [6S 5D] Dealer [5H ?]
+- Player doubles: bets additional $10
+- Gets 1 card: 9C (20 total, auto-stand)
+- Dealer plays, gets 19
+- Player wins $20 (on $20 bet)
+</code></pre>
+
+<h3 id="demo-5-split-aces">Demo 5: Split Aces</h3>
+<pre class="codehilite"><code>- Player bets $10
+- Deal: Player [AS AD] Dealer [7H ?]
+- Player splits: 2 hands of $10 each
+- Hand 1: [AS] hits KD (21 = blackjack-ish)
+- Hand 2: [AD] hits 5C (16), then hits 6S (soft 12)
+- Hand 2 stands with 12
+- Dealer plays, gets 18
+- Hand 1: push (21 = 21)
+- Hand 2: loses
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-level">Basic Level</h3>
+<p><strong>Q1: How do you calculate hand value with Aces?</strong></p>
+<p>A: Ace = 1 or 11. Greedy: use 11 if total stays &lt;= 21, else use 1. Example: Ace + 9 = 20 (11+9). Ace + Ace + 9 = 21 (11+1+9). Called "soft 17" when Ace is counted as 11.</p>
+<p><strong>Q2: What is blackjack?</strong></p>
+<p>A: Exactly 21 with the first 2 cards (Ace + 10-value card). Beats a 21 made with 3+ cards. Pays 3:2 (bet $10 → win $15 profit). Automatically wins versus dealer unless dealer also has blackjack (push).</p>
+<p><strong>Q3: What actions can a player take?</strong></p>
+<p>A: (1) HIT — take one card. (2) STAND — stay with current hand. (3) DOUBLE — double the bet, take exactly one card, auto-stand. (4) SPLIT — if 2 cards of the same value, split into two separate hands. (5) SURRENDER (optional) — forfeit hand, recover half the bet.</p>
+<p><strong>Q4: When does the dealer hit or stand?</strong></p>
+<p>A: Dealer MUST hit if hand value &lt; 17. Dealer MUST stand if hand value &gt;= 17. Exception: "Soft 17" (Ace+6) — some casinos require the dealer to hit this hand.</p>
+<p><strong>Q5: What is a "push"?</strong></p>
+<p>A: A tie between player and dealer with the same hand value. The original wager is returned — no win, no loss. Example: Player 18, Dealer 18 → push → player keeps bet.</p>
+<hr />
+<h3 id="intermediate-level">Intermediate Level</h3>
+<p><strong>Q6: How do you handle card splitting?</strong></p>
+<p>A: Player splits → 2 hands created. Original bet applies to each hand. Player plays hand 1 to completion, then hand 2. Can split Aces (typically limited to 1 card each) or any matching-value pair.</p>
+<p><strong>Q7: How do you handle multiple decks?</strong></p>
+<p>A: 1-8 standard 52-card decks shuffled together into a shoe. After each draw, check remaining depth. If &lt; 25% remain, reshuffle the entire shoe. This prevents card-counting advantages.</p>
+<p><strong>Q8: How do you calculate payouts correctly?</strong></p>
+<p>A: Outcomes and multipliers: (1) Blackjack: +1.5× bet (total returned = 2.5×). (2) Win: +1× bet (total = 2×). (3) Push: 0 delta (return 1× original bet). (4) Bust or Lose: −1× bet (0 returned).</p>
+<p><strong>Q9: How do you prevent cheating (card-counting)?</strong></p>
+<p>A: (1) Frequent reshuffles when &lt; 25% depth remains. (2) Continuous shuffle machines (simulated). (3) Rate limiting — cannot play &gt; 100 hands/hour. (4) Detect anomalous betting patterns. (5) Track session length and bet spread.</p>
+<p><strong>Q10: How do you handle multiple tables?</strong></p>
+<p>A: Each table = independent <code>BlackjackGame</code> instance (or the singleton manages table IDs). Tables 1-100. Players join via matchmaking ("find game with 1-6 players"). Each table runs in its own thread or async coroutine.</p>
+<hr />
+<h3 id="advanced-level">Advanced Level</h3>
+<p><strong>Q11: How do you prevent collusion (players helping each other)?</strong></p>
+<p>A: Detection mechanisms: (1) Same IP, different player IDs → flag. (2) Correlated betting patterns → flag. (3) All cards revealed post-hand — no hidden information to signal. (4) Manual review for sessions &gt; $10K.</p>
+<p><strong>Q12: How do you implement insurance?</strong></p>
+<p>A: If the dealer's visible card is an Ace, the player may bet up to 50% of the original bet on "insurance" (pays 2:1 if dealer has blackjack). Implementation: additional <code>insurance_bet</code> field, settled before main hand. Statistically a bad bet for players — house edge ~6%.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<p><strong>Q1: Can you handle 1M concurrent players?</strong></p>
+<p>A: Yes. 1M players → ~166K tables (6 players each). Each table runs in its own thread or coroutine. Bottleneck is card shuffling (CPU-bound Fisher-Yates). Solution: batch shuffle offline, store precomputed deck seeds in Redis.</p>
+<p><strong>Q2: How to handle 100K games/hour?</strong></p>
+<p>A: Game duration ~5 minutes (6 rounds × ~50 sec). 100K games/hour = ~28 games/second. A single modern machine handles thousands of games/sec. Not a bottleneck at this scale.</p>
+<p><strong>Q3: How to keep game state consistent across server restarts?</strong></p>
+<p>A: Database event log — every action (bet, hit, stand) appended atomically. On disconnect: replay log → recover exact state. On server crash: restore from last checkpoint (every 10 seconds). Actions are idempotent.</p>
+<p><strong>Q4: How to handle network latency (100ms)?</strong></p>
+<p>A: Client sends action → server processes → response returned. Round-trip ~200ms. Acceptable for casual play. For competitive or live dealer: optimistic client-side prediction confirmed by server response.</p>
+<p><strong>Q5: Can you support an 8-deck shoe?</strong></p>
+<p>A: Yes. 52 × 8 = 416 cards. Fisher-Yates shuffle: O(n) = O(416) — negligible. Reshuffle threshold: &lt; 25% = ~100 cards. Triggered roughly every 20 hands.</p>
+<p><strong>Q6: How to handle player bankruptcy?</strong></p>
+<p>A: Player chips → 0. Cannot place a bet. Options: (1) Auto-logout. (2) Offer rebuy dialog ("Add $100?"). (3) Spectator mode — watch other hands. Min bet ($1) reduces forced bankruptcies.</p>
+<p><strong>Q7: How to log all hands (compliance)?</strong></p>
+<p>A: Stream every hand action to Kafka. Daily ETL → data warehouse. Queryable: "Show all hands for player X on date Y". Retention: 7 years (regulatory requirement in most jurisdictions).</p>
+<p><strong>Q8: How to prevent dealer bias?</strong></p>
+<p>A: Shuffle algorithm: Fisher-Yates with seed from <code>/dev/urandom</code>. Validate statistically: chi-square tests confirm uniform distribution. Monthly automated audits against expected distributions.</p>
+<p><strong>Q9: How to support realistic betting spreads?</strong></p>
+<p>A: Player can vary bet: $1, $5, $10, $50, $100, etc. System tracks betting patterns per session. Anomaly flag: bet $1 normally then suddenly $1000 → flag for review. Always verify chip balance before accepting bet.</p>
+<p><strong>Q10: Can you support side bets?</strong></p>
+<p>A: Example — "Perfect Pairs" (first 2 cards form a pair → 5:1). Implementation: additional <code>side_bet</code> field per hand, separate settlement logic, independent payout table. Adds complexity but improves house revenue.</p>
+<p><strong>Q11: How to implement tournament play?</strong></p>
+<p>A: 64-player bracket seeding. Mini-tables of 2-6 players. Winners advance by chip count. Final table: 6 players, play to chip elimination. System tracks tournament state, position, and payouts per elimination.</p>
+<p><strong>Q12: How to support live streaming and spectators?</strong></p>
+<p>A: WebSocket per table → broadcast all actions (bets, cards, decisions, outcomes). Spectators receive full state. Introduce 10–30 second delay to prevent real-time cheating assistance. Bandwidth: ~1 Mbps per table (low; text-only events).</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw UML class diagram with all relationships (Card, Deck, Hand, Player, Dealer, BlackjackGame)</li>
+<li>[ ] Describe the game state machine (WAITING_FOR_BETS → DEALING → PLAYING_HANDS → DEALER_TURN → SETTLING)</li>
+<li>[ ] Explain Ace value calculation (greedy: count as 11 while total &lt;= 21)</li>
+<li>[ ] Explain blackjack detection (exactly 2 cards totalling 21) and 3:2 payout</li>
+<li>[ ] Describe dealer rule (hit &lt; 17, stand &gt;= 17) and soft-17 variation</li>
+<li>[ ] Discuss thread safety: RLock on singleton and instance, atomic chip updates</li>
+<li>[ ] Run the complete implementation without errors</li>
+<li>[ ] Answer 5+ scaling Q&amp;A questions</li>
+<li>[ ] Discuss trade-offs (single-lock vs per-table locks, in-memory vs DB-backed state)</li>
+</ul>
+<hr />
+<p><strong>Ready for interview? Shuffle the deck and deal the cards.</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

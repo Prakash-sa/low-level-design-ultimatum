@@ -1,0 +1,1955 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text Editor with Undo & Redo - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="text-editor-with-undo-redo-complete-design-guide">Text Editor with Undo &amp; Redo — Complete Design Guide</h1>
+<blockquote>
+<p>Command-based text editing with unlimited undo/redo, incremental history management, caret tracking, and memory-efficient operation storage.</p>
+</blockquote>
+<p><strong>Scale</strong>: Single-user desktop to collaborative multi-user editing, 100K+ operations per session<br />
+<strong>Duration</strong>: 75-minute interview guide<br />
+<strong>Focus</strong>: Command pattern for undo/redo, Memento for snapshots, thread-safe history management, efficient buffer operations</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>A user types text → each operation becomes a Command object → command is executed and pushed to the undo stack → redo stack is cleared → on undo, the command reverses itself → on redo, the command re-executes. Core concerns: reversibility of every operation, memory-efficient history, and correct caret management.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>Type / Delete / Replace
+        ↓
+  Command.execute()
+        ↓
+  Push to UndoStack  →  clear RedoStack
+        ↓
+  Undo: pop UndoStack → Command.undo() → push to RedoStack
+        ↓
+  Redo: pop RedoStack → Command.execute() → push to UndoStack
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Single user or collaborative?</strong> → "Single user for the core; mention collaborative as a scaling concern"</li>
+<li><strong>What operations need undo/redo?</strong> → "Insert, delete, replace — selection management is a bonus"</li>
+<li><strong>Is undo depth bounded?</strong> → "Unlimited for the core design; discuss bounding as optimization"</li>
+<li><strong>Do we need persistent undo across file save?</strong> → "No — in-memory history for this interview"</li>
+<li><strong>Thread safety needed?</strong> → "Single-threaded UI thread, but background autosave needs consideration"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>User</strong></td>
+<td>Authors and edits document</td>
+<td>Type text, delete characters, select range, undo, redo</td>
+</tr>
+<tr>
+<td><strong>Editor UI</strong></td>
+<td>Translates UI events to commands</td>
+<td>Keypress → InsertCommand, Backspace → DeleteCommand</td>
+</tr>
+<tr>
+<td><strong>System</strong></td>
+<td>Autosave, crash recovery</td>
+<td>Snapshot buffer periodically, restore last state</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Text Insertion</strong>
+  - Insert arbitrary text at any valid position
+  - Move caret to end of inserted text</p>
+<p>✅ <strong>Text Deletion</strong>
+  - Delete a range of characters by position and length
+  - Move caret to deletion start position</p>
+<p>✅ <strong>Text Replacement</strong>
+  - Replace a range with new text (delete + insert atomically)
+  - Captured as a single undoable operation</p>
+<p>✅ <strong>Undo (Unlimited Depth)</strong>
+  - Reverse the most recent command
+  - Restore caret to pre-command position
+  - Move reversed command to redo stack</p>
+<p>✅ <strong>Redo</strong>
+  - Re-execute the most recently undone command
+  - Redo stack cleared when a new command is executed</p>
+<p>✅ <strong>Caret Management</strong>
+  - Track cursor position at all times
+  - Restore position accurately on undo/redo</p>
+<p>✅ <strong>Memory Efficiency</strong>
+  - Store operation deltas (position + text) not full document copies
+  - Optional: cap history depth to 1000 commands</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Correctness</strong>: Every undo must restore exact prior state<br />
+✅ <strong>Performance</strong>: O(1) push/pop on history stacks; O(k) for insert/delete where k = text length<br />
+✅ <strong>Memory</strong>: Delta storage; full snapshot only on explicit save<br />
+✅ <strong>Responsiveness</strong>: Operations complete in &lt;1ms for typical edits<br />
+✅ <strong>History Integrity</strong>: New command always clears redo stack  </p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Max undo depth</strong></td>
+<td>Unlimited (cap at 1000 in production)</td>
+</tr>
+<tr>
+<td><strong>Collaborative editing</strong></td>
+<td>Out of scope (mention OT/CRDT as scaling path)</td>
+</tr>
+<tr>
+<td><strong>Persistent undo</strong></td>
+<td>No — in-memory only</td>
+</tr>
+<tr>
+<td><strong>Redo after new edit</strong></td>
+<td>Redo stack cleared</td>
+</tr>
+<tr>
+<td><strong>Replace as atomic?</strong></td>
+<td>YES — single Command, single undo step</td>
+</tr>
+<tr>
+<td><strong>Caret restored on undo?</strong></td>
+<td>YES — stored in each Command</td>
+</tr>
+<tr>
+<td><strong>Thread safety</strong></td>
+<td>Single UI thread; background save uses snapshot</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on the whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<pre class="codehilite"><code>Document, TextBuffer, Command, InsertCommand, DeleteCommand, ReplaceCommand,
+CommandHistory, Caret, EditorMemento, Editor, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="textbuffer-the-raw-document-content"><strong>TextBuffer</strong> — The raw document content</h4>
+<pre class="codehilite"><code>Properties:
+  - content: str  (the full text as a mutable string)
+  - caret: Caret  (current cursor position)
+
+Behaviors:
+  - insert(position, text): Insert text at position, advance caret
+  - delete(position, length): Remove length chars from position
+  - get_text(): Return full content
+  - get_length(): Number of characters
+  - save_memento(): Snapshot current state
+  - restore_memento(memento): Restore from snapshot
+</code></pre>
+
+<h4 id="command-abstract-text-operation-insertdeletereplace"><strong>Command</strong> — Abstract text operation (insert/delete/replace)</h4>
+<pre class="codehilite"><code>Properties:
+  - buffer: TextBuffer  (the document to operate on)
+  - caret_before: int   (caret position before execute)
+  - caret_after: int    (caret position after execute)
+
+Behaviors:
+  - execute(): Apply operation to buffer
+  - undo(): Reverse operation on buffer
+</code></pre>
+
+<h4 id="insertcommand-insert-text-at-a-position"><strong>InsertCommand</strong> — Insert text at a position</h4>
+<pre class="codehilite"><code>Properties:
+  - position: int   (insertion point)
+  - text: str       (text to insert)
+
+Behaviors:
+  - execute(): buffer.insert(position, text); move caret to position + len(text)
+  - undo(): buffer.delete(position, len(text)); restore caret_before
+</code></pre>
+
+<h4 id="deletecommand-delete-a-range-of-characters"><strong>DeleteCommand</strong> — Delete a range of characters</h4>
+<pre class="codehilite"><code>Properties:
+  - position: int   (start of deleted range)
+  - length: int     (number of chars to remove)
+  - deleted_text: str  (captured on execute for undo)
+
+Behaviors:
+  - execute(): capture buffer[position:position+length], then buffer.delete(...)
+  - undo(): buffer.insert(position, deleted_text); restore caret_before
+</code></pre>
+
+<h4 id="replacecommand-replace-a-range-with-new-text-atomic"><strong>ReplaceCommand</strong> — Replace a range with new text (atomic)</h4>
+<pre class="codehilite"><code>Properties:
+  - position: int
+  - length: int       (range to replace)
+  - new_text: str     (replacement)
+  - old_text: str     (captured on execute)
+
+Behaviors:
+  - execute(): capture old_text, delete range, insert new_text
+  - undo(): delete new_text, insert old_text, restore caret_before
+</code></pre>
+
+<h4 id="commandhistory-dual-stack-undoredo-manager"><strong>CommandHistory</strong> — Dual-stack undo/redo manager</h4>
+<pre class="codehilite"><code>Properties:
+  - undo_stack: List[Command]
+  - redo_stack: List[Command]
+  - max_size: int  (optional cap, default 1000)
+
+Behaviors:
+  - push(command): Add to undo stack, clear redo stack
+  - undo(): Pop from undo stack, call command.undo(), push to redo stack
+  - redo(): Pop from redo stack, call command.execute(), push to undo stack
+  - can_undo() / can_redo(): Check stack emptiness
+  - clear(): Reset both stacks
+</code></pre>
+
+<h4 id="caret-cursor-position-tracker"><strong>Caret</strong> — Cursor position tracker</h4>
+<pre class="codehilite"><code>Properties:
+  - position: int  (0-based character index)
+
+Behaviors:
+  - move_to(position): Set caret to absolute position
+  - clamp(max_pos): Ensure position does not exceed buffer length
+</code></pre>
+
+<h4 id="editor-orchestrator-singleton"><strong>Editor</strong> — Orchestrator (Singleton)</h4>
+<pre class="codehilite"><code>Properties:
+  - buffer: TextBuffer
+  - history: CommandHistory
+  - observers: List[Observer]
+
+Behaviors:
+  - insert(position, text): Create InsertCommand, execute, push to history
+  - delete(position, length): Create DeleteCommand, execute, push to history
+  - replace(position, length, new_text): Create ReplaceCommand, execute, push
+  - undo(): Delegate to history.undo()
+  - redo(): Delegate to history.redo()
+  - get_content(): Return buffer.get_text()
+  - add_observer(observer): Register UI listener
+</code></pre>
+
+<h3 id="step-23-define-enumerations-state-type">Step 2.3: Define Enumerations (State &amp; Type)</h3>
+<pre class="codehilite"><code class="language-python">class OperationType(Enum):
+    INSERT  = &quot;insert&quot;   # Text added at position
+    DELETE  = &quot;delete&quot;   # Text removed from range
+    REPLACE = &quot;replace&quot;  # Range replaced with new text
+
+class EditorEvent(Enum):
+    TEXT_CHANGED = &quot;text_changed&quot;   # Buffer content modified
+    UNDO_PERFORMED = &quot;undo&quot;         # Undo executed
+    REDO_PERFORMED = &quot;redo&quot;         # Redo executed
+    HISTORY_CLEARED = &quot;history_cleared&quot;
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>TextBuffer</strong></td>
+<td>Central content store; separation from editor logic</td>
+<td>No place to store/modify document</td>
+</tr>
+<tr>
+<td><strong>Command (Insert/Delete/Replace)</strong></td>
+<td>Encapsulate reversible operations</td>
+<td>Can't undo — no record of what changed</td>
+</tr>
+<tr>
+<td><strong>CommandHistory</strong></td>
+<td>Dual-stack undo/redo management</td>
+<td>Redo becomes impossible after undo</td>
+</tr>
+<tr>
+<td><strong>Caret</strong></td>
+<td>Cursor position survives undo/redo</td>
+<td>Cursor jumps randomly after undo</td>
+</tr>
+<tr>
+<td><strong>Editor</strong></td>
+<td>Single orchestrator; prevents inconsistent state</td>
+<td>Commands and history managed separately, leading to bugs</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-insert-text-critical"><strong>1. Insert Text</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def insert(self, position: int, text: str) -&gt; None:
+    &quot;&quot;&quot;
+    Insert text at position in the document.
+
+    Precondition: 0 &lt;= position &lt;= len(buffer)
+    Postcondition: buffer contains text starting at position; caret at position + len(text)
+
+    Side Effects:
+      - Creates and executes InsertCommand
+      - Pushes command to undo stack
+      - Clears redo stack
+      - Notifies observers with TEXT_CHANGED event
+
+    Raises:
+      - IndexError: position out of range
+      - ValueError: text is None
+
+    Concurrency: NOT thread-safe (single UI thread assumed)
+    Time: O(n) where n = len(buffer) — string concatenation
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="2-delete-text-critical"><strong>2. Delete Text</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def delete(self, position: int, length: int) -&gt; None:
+    &quot;&quot;&quot;
+    Delete `length` characters starting at position.
+
+    Precondition: 0 &lt;= position, position + length &lt;= len(buffer)
+    Postcondition: buffer shrinks by length chars; caret at position
+
+    Side Effects:
+      - Captures deleted text for undo
+      - Creates and executes DeleteCommand
+      - Pushes command to undo stack
+      - Clears redo stack
+
+    Raises:
+      - IndexError: range out of bounds
+      - ValueError: length &lt;= 0
+
+    Time: O(n) — string slicing
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="3-replace-text"><strong>3. Replace Text</strong></h4>
+<pre class="codehilite"><code class="language-python">def replace(self, position: int, length: int, new_text: str) -&gt; None:
+    &quot;&quot;&quot;
+    Replace `length` chars at position with new_text.
+
+    Atomic: single undo step for what is logically one edit.
+
+    Precondition: 0 &lt;= position, position + length &lt;= len(buffer)
+    Postcondition: buffer has old range replaced; caret at position + len(new_text)
+
+    Time: O(n)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="4-undo-critical"><strong>4. Undo</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def undo(self) -&gt; bool:
+    &quot;&quot;&quot;
+    Reverse the most recent command.
+
+    Precondition: history.can_undo() == True
+    Postcondition:
+      - Top command removed from undo stack
+      - command.undo() applied to buffer
+      - Command pushed to redo stack
+      - Caret restored to pre-command position
+
+    Returns: True if undo succeeded, False if nothing to undo.
+    Notifies: UNDO_PERFORMED event
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="5-redo"><strong>5. Redo</strong></h4>
+<pre class="codehilite"><code class="language-python">def redo(self) -&gt; bool:
+    &quot;&quot;&quot;
+    Re-execute the most recently undone command.
+
+    Precondition: history.can_redo() == True
+    Postcondition:
+      - Top command removed from redo stack
+      - command.execute() applied to buffer
+      - Command pushed back to undo stack
+
+    Returns: True if redo succeeded, False if nothing to redo.
+    Notifies: REDO_PERFORMED event
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="6-register-observer-for-ui-updates"><strong>6. Register Observer</strong> (For UI Updates)</h4>
+<pre class="codehilite"><code class="language-python">def add_observer(self, observer: 'EditorObserver') -&gt; None:
+    &quot;&quot;&quot;
+    Register a callback for editor events.
+    Observer called: observer.on_event(event, editor)
+    Example: Add UIRenderer to refresh display on every change.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-32-exception-failure-model">Step 3.2: Exception / Failure Model</h3>
+<pre class="codehilite"><code class="language-python">class EditorException(Exception):
+    &quot;&quot;&quot;Base exception for all editor errors&quot;&quot;&quot;
+    pass
+
+class InvalidPositionError(EditorException):
+    &quot;&quot;&quot;Position is negative or beyond buffer length&quot;&quot;&quot;
+    pass
+
+class InvalidRangeError(EditorException):
+    &quot;&quot;&quot;Range (position + length) exceeds buffer length&quot;&quot;&quot;
+    pass
+
+class NothingToUndoError(EditorException):
+    &quot;&quot;&quot;Undo stack is empty&quot;&quot;&quot;
+    pass
+
+class NothingToRedoError(EditorException):
+    &quot;&quot;&quot;Redo stack is empty&quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">editor = Editor.get_instance()
+
+# 1. Type text
+editor.insert(0, &quot;Hello&quot;)
+editor.insert(5, &quot; World&quot;)
+print(editor.get_content())   # &quot;Hello World&quot;
+
+# 2. Replace a word
+editor.replace(6, 5, &quot;Python&quot;)
+print(editor.get_content())   # &quot;Hello Python&quot;
+
+# 3. Undo replace
+editor.undo()
+print(editor.get_content())   # &quot;Hello World&quot;
+
+# 4. Undo second insert
+editor.undo()
+print(editor.get_content())   # &quot;Hello&quot;
+
+# 5. Redo
+editor.redo()
+print(editor.get_content())   # &quot;Hello World&quot;
+
+# 6. New edit clears redo
+editor.insert(11, &quot;!&quot;)
+print(editor.get_content())   # &quot;Hello World!&quot;
+print(editor.history.can_redo())  # False — redo stack cleared
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and association. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>Editor HAS-A TextBuffer (1:1 Composition)
+  └─ Editor owns and manages the buffer lifecycle
+
+Editor HAS-A CommandHistory (1:1 Composition)
+  └─ Editor owns history; history tracks all commands
+
+TextBuffer HAS-A Caret (1:1 Composition)
+  └─ Buffer owns its cursor position
+
+Command IS-A abstract interface
+  └─ InsertCommand, DeleteCommand, ReplaceCommand IMPLEMENT Command
+
+CommandHistory HAS-A List[Command] undo_stack (1:N Composition)
+CommandHistory HAS-A List[Command] redo_stack (1:N Composition)
+
+Editor NOTIFIES EditorObserver (1:N Association)
+  └─ Multiple UI observers listen for changes
+
+Command REFERENCES TextBuffer (1:1 Association)
+  └─ Command operates on buffer (no ownership)
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌──────────────────────────────────────────┐
+│         Editor (Singleton)               │
+├──────────────────────────────────────────┤
+│ - _instance: Editor                      │
+│ - buffer: TextBuffer                     │
+│ - history: CommandHistory                │
+│ - observers: List[EditorObserver]        │
+│ - _lock: threading.RLock                 │
+├──────────────────────────────────────────┤
+│ + get_instance(): Editor                 │
+│ + insert(pos, text): void                │
+│ + delete(pos, length): void              │
+│ + replace(pos, length, text): void       │
+│ + undo(): bool                           │
+│ + redo(): bool                           │
+│ + get_content(): str                     │
+│ + add_observer(observer): void           │
+└───────────────┬──────────────────────────┘
+                │ owns 1:1
+     ┌──────────┴──────────┐
+     ▼                     ▼
+┌────────────────┐   ┌──────────────────────────┐
+│  TextBuffer    │   │    CommandHistory         │
+├────────────────┤   ├──────────────────────────┤
+│ - content: str │   │ - undo_stack: List[Cmd]  │
+│ - caret: Caret │   │ - redo_stack: List[Cmd]  │
+├────────────────┤   │ - max_size: int          │
+│ + insert(...)  │   ├──────────────────────────┤
+│ + delete(...)  │   │ + push(command): void    │
+│ + get_text()   │   │ + undo(): bool           │
+│ + save_memento │   │ + redo(): bool           │
+│ + restore(...) │   │ + can_undo(): bool       │
+└───────┬────────┘   │ + can_redo(): bool       │
+        │            └──────────┬───────────────┘
+        ▼                       │ stores 1:N
+  ┌───────────┐                 ▼
+  │   Caret   │    ┌─────────────────────────────┐
+  ├───────────┤    │   Command (Abstract)         │
+  │ - pos: int│    ├─────────────────────────────┤
+  ├───────────┤    │ - buffer: TextBuffer (ref)  │
+  │ + move_to │    │ - caret_before: int         │
+  │ + clamp   │    │ - caret_after: int          │
+  └───────────┘    ├─────────────────────────────┤
+                   │ + execute(): void (abstract) │
+                   │ + undo(): void   (abstract)  │
+                   └──────┬──────────────────────┘
+                          │ implemented by
+          ┌───────────────┼────────────────┐
+          ▼               ▼                ▼
+ ┌──────────────┐ ┌──────────────┐ ┌────────────────┐
+ │InsertCommand │ │DeleteCommand │ │ReplaceCommand  │
+ ├──────────────┤ ├──────────────┤ ├────────────────┤
+ │ position     │ │ position     │ │ position       │
+ │ text         │ │ length       │ │ length         │
+ │              │ │ deleted_text │ │ new_text       │
+ │              │ │              │ │ old_text       │
+ └──────────────┘ └──────────────┘ └────────────────┘
+
+OBSERVER PATTERN (UI Notifications):
+┌────────────────────────────────────┐
+│  EditorObserver (Abstract)         │
+├────────────────────────────────────┤
+│ + on_event(event, editor)          │
+└──┬─────────────────────────────────┘
+   │ implemented by
+   ├─→ ConsoleObserver (logging/debug)
+   └─→ UIRenderer (redraws the editor view)
+
+MEMENTO PATTERN (Snapshot):
+TextBuffer ──save_memento()──→ EditorMemento
+TextBuffer ←─restore_memento()── EditorMemento
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Editor → TextBuffer</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>One document per editor</td>
+</tr>
+<tr>
+<td>Editor → CommandHistory</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>Editor owns its history</td>
+</tr>
+<tr>
+<td>TextBuffer → Caret</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>Buffer owns its cursor</td>
+</tr>
+<tr>
+<td>CommandHistory → Commands</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>History owns command objects</td>
+</tr>
+<tr>
+<td>Command → TextBuffer</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Command references (not owns) buffer</td>
+</tr>
+<tr>
+<td>Editor → EditorObserver</td>
+<td>1:N</td>
+<td>Association</td>
+<td>Many UI listeners</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-command-for-undoredo-core">Pattern 1: <strong>Command</strong> (For Undo/Redo) ⭐ CORE</h3>
+<p><strong>Problem</strong>: Text operations (insert, delete, replace) must be reversible without storing full document copies.</p>
+<p><strong>Solution</strong>: Encapsulate each operation as an object with <code>execute()</code> and <code>undo()</code> methods. Store these objects in a stack.</p>
+<pre class="codehilite"><code class="language-python">from abc import ABC, abstractmethod
+
+class Command(ABC):
+    def __init__(self, buffer):
+        self.buffer = buffer
+        self.caret_before = buffer.caret.position
+        self.caret_after = self.caret_before
+
+    @abstractmethod
+    def execute(self) -&gt; None:
+        pass
+
+    @abstractmethod
+    def undo(self) -&gt; None:
+        pass
+
+class InsertCommand(Command):
+    def __init__(self, buffer, position: int, text: str):
+        super().__init__(buffer)
+        self.position = position
+        self.text = text
+
+    def execute(self) -&gt; None:
+        self.buffer.insert(self.position, self.text)
+        self.caret_after = self.position + len(self.text)
+        self.buffer.caret.move_to(self.caret_after)
+
+    def undo(self) -&gt; None:
+        self.buffer.delete(self.position, len(self.text))
+        self.buffer.caret.move_to(self.caret_before)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ O(1) undo/redo (just pop and call), ✅ Delta storage not full copies, ✅ Easy to add new operation types<br />
+<strong>Trade-off</strong>: ⚠️ Each command must perfectly capture state needed for reversal</p>
+<hr />
+<h3 id="pattern-2-memento-for-snapshots">Pattern 2: <strong>Memento</strong> (For Snapshots)</h3>
+<p><strong>Problem</strong>: Sometimes you want a full checkpoint (autosave, crash recovery) rather than per-command deltas.</p>
+<p><strong>Solution</strong>: <code>TextBuffer.save_memento()</code> captures <code>(content, caret_position)</code> into an opaque <code>EditorMemento</code>. Restoration is a single call.</p>
+<pre class="codehilite"><code class="language-python">class EditorMemento:
+    &quot;&quot;&quot;Opaque snapshot of buffer state&quot;&quot;&quot;
+    def __init__(self, content: str, caret_position: int):
+        self._content = content
+        self._caret_position = caret_position
+
+    def get_content(self) -&gt; str:
+        return self._content
+
+    def get_caret(self) -&gt; int:
+        return self._caret_position
+
+class TextBuffer:
+    def save_memento(self) -&gt; EditorMemento:
+        return EditorMemento(self.content, self.caret.position)
+
+    def restore_memento(self, memento: EditorMemento) -&gt; None:
+        self.content = memento.get_content()
+        self.caret.move_to(memento.get_caret())
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Crash recovery, ✅ "Save point" undo levels, ✅ Encapsulates state (no public fields)<br />
+<strong>Trade-off</strong>: ⚠️ Full copy cost — use sparingly (on save, not every keystroke)</p>
+<hr />
+<h3 id="pattern-3-singleton-for-editor">Pattern 3: <strong>Singleton</strong> (For Editor)</h3>
+<p><strong>Problem</strong>: Multiple UI components must share one consistent editor state.</p>
+<p><strong>Solution</strong>: One global <code>Editor</code> instance with thread-safe initialization.</p>
+<pre class="codehilite"><code class="language-python">import threading
+
+class Editor:
+    _instance = None
+    _class_lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            with cls._class_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+        self._initialized = True
+        self.buffer = TextBuffer()
+        self.history = CommandHistory()
+        self.observers = []
+        self._lock = threading.RLock()
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Single source of truth, ✅ Thread-safe double-checked locking<br />
+<strong>Trade-off</strong>: ⚠️ Global state (harder to unit test); ⚠️ Reset needed between tests</p>
+<hr />
+<h3 id="pattern-4-observer-for-ui-notifications">Pattern 4: <strong>Observer</strong> (For UI Notifications)</h3>
+<p><strong>Problem</strong>: The editor core must not directly depend on the UI renderer.</p>
+<p><strong>Solution</strong>: Observer pattern decouples editor from consumers.</p>
+<pre class="codehilite"><code class="language-python">from abc import ABC, abstractmethod
+
+class EditorObserver(ABC):
+    @abstractmethod
+    def on_event(self, event: str, editor: 'Editor') -&gt; None:
+        pass
+
+class ConsoleObserver(EditorObserver):
+    def on_event(self, event: str, editor: 'Editor') -&gt; None:
+        print(f&quot;  [EVENT: {event}] content='{editor.get_content()}' &quot;
+              f&quot;caret={editor.buffer.caret.position}&quot;)
+
+# Usage
+editor.add_observer(ConsoleObserver())
+# Fires automatically on insert/delete/undo/redo
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Add new UI renderers without changing core, ✅ Easy to test (mock observer)<br />
+<strong>Trade-off</strong>: ⚠️ Observer must be careful not to re-trigger edits (infinite loop risk)</p>
+<hr />
+<h3 id="pattern-5-strategy-for-history-bounding">Pattern 5: <strong>Strategy</strong> (For History Bounding)</h3>
+<p><strong>Problem</strong>: Unlimited undo history can exhaust memory on long editing sessions.</p>
+<p><strong>Solution</strong>: Pluggable <code>HistoryStrategy</code> determines what to do when the stack is full.</p>
+<pre class="codehilite"><code class="language-python">class HistoryStrategy(ABC):
+    @abstractmethod
+    def on_overflow(self, stack: list, max_size: int) -&gt; None:
+        pass
+
+class DropOldestStrategy(HistoryStrategy):
+    def on_overflow(self, stack: list, max_size: int) -&gt; None:
+        while len(stack) &gt;= max_size:
+            stack.pop(0)   # Remove oldest command
+
+class CompressStrategy(HistoryStrategy):
+    def on_overflow(self, stack: list, max_size: int) -&gt; None:
+        # Collapse oldest N commands into a single snapshot command
+        pass  # Advanced: merge into a RestoreSnapshotCommand
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Memory bounded, ✅ Swap strategy without touching CommandHistory core<br />
+<strong>Trade-off</strong>: ⚠️ Oldest commands lost; user can't undo infinitely far back</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Command</strong></td>
+<td>Reversible text operations without full copies</td>
+<td>O(1) undo/redo, delta storage</td>
+</tr>
+<tr>
+<td><strong>Memento</strong></td>
+<td>Full-document snapshot for save/recovery</td>
+<td>Crash recovery, save points</td>
+</tr>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>One consistent editor state across components</td>
+<td>Single source of truth</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Decouple editor from UI renderer</td>
+<td>Add displays without touching core</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Pluggable history-bounding behavior</td>
+<td>Memory-safe, swappable policy</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+Text Editor with Undo &amp; Redo - Interview Implementation
+
+Demonstrates:
+1. Insert text -&gt; builds &quot;Hello World&quot;
+2. Replace word -&gt; &quot;Hello Python&quot;
+3. Undo replace -&gt; back to &quot;Hello World&quot;
+4. Undo second insert -&gt; back to &quot;Hello&quot;
+5. Redo -&gt; &quot;Hello World&quot;
+6. Delete characters -&gt; &quot;Hello&quot;
+7. New edit clears redo stack
+8. Full undo sequence back to empty document
+&quot;&quot;&quot;
+
+from __future__ import annotations
+from abc import ABC, abstractmethod
+from enum import Enum
+from typing import List, Optional
+import threading
+
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class OperationType(Enum):
+    INSERT  = &quot;insert&quot;
+    DELETE  = &quot;delete&quot;
+    REPLACE = &quot;replace&quot;
+
+class EditorEvent(Enum):
+    TEXT_CHANGED    = &quot;text_changed&quot;
+    UNDO_PERFORMED  = &quot;undo&quot;
+    REDO_PERFORMED  = &quot;redo&quot;
+    HISTORY_CLEARED = &quot;history_cleared&quot;
+
+
+# ============================================================================
+# CARET
+# ============================================================================
+
+class Caret:
+    &quot;&quot;&quot;Tracks the cursor position inside a TextBuffer.&quot;&quot;&quot;
+
+    def __init__(self, position: int = 0):
+        self.position = position
+
+    def move_to(self, position: int) -&gt; None:
+        self.position = position
+
+    def clamp(self, max_pos: int) -&gt; None:
+        self.position = max(0, min(self.position, max_pos))
+
+    def __repr__(self) -&gt; str:
+        return f&quot;Caret({self.position})&quot;
+
+
+# ============================================================================
+# MEMENTO
+# ============================================================================
+
+class EditorMemento:
+    &quot;&quot;&quot;Opaque snapshot of buffer state (content + caret).&quot;&quot;&quot;
+
+    def __init__(self, content: str, caret_position: int):
+        self._content = content
+        self._caret_position = caret_position
+
+    def get_content(self) -&gt; str:
+        return self._content
+
+    def get_caret(self) -&gt; int:
+        return self._caret_position
+
+
+# ============================================================================
+# TEXT BUFFER
+# ============================================================================
+
+class TextBuffer:
+    &quot;&quot;&quot;Core document store. Owns the text content and the caret.&quot;&quot;&quot;
+
+    def __init__(self):
+        self.content: str = &quot;&quot;
+        self.caret: Caret = Caret(0)
+
+    def insert(self, position: int, text: str) -&gt; None:
+        if position &lt; 0 or position &gt; len(self.content):
+            raise IndexError(
+                f&quot;Insert position {position} out of range [0, {len(self.content)}]&quot;
+            )
+        self.content = self.content[:position] + text + self.content[position:]
+
+    def delete(self, position: int, length: int) -&gt; str:
+        if position &lt; 0 or position + length &gt; len(self.content):
+            raise IndexError(
+                f&quot;Delete range [{position}, {position + length}) out of bounds&quot;
+            )
+        deleted = self.content[position: position + length]
+        self.content = self.content[:position] + self.content[position + length:]
+        return deleted
+
+    def get_text(self) -&gt; str:
+        return self.content
+
+    def get_length(self) -&gt; int:
+        return len(self.content)
+
+    def save_memento(self) -&gt; EditorMemento:
+        return EditorMemento(self.content, self.caret.position)
+
+    def restore_memento(self, memento: EditorMemento) -&gt; None:
+        self.content = memento.get_content()
+        self.caret.move_to(memento.get_caret())
+
+    def __repr__(self) -&gt; str:
+        return f&quot;TextBuffer('{self.content}', caret={self.caret.position})&quot;
+
+
+# ============================================================================
+# COMMANDS
+# ============================================================================
+
+class Command(ABC):
+    &quot;&quot;&quot;Abstract base for all reversible text operations.&quot;&quot;&quot;
+
+    def __init__(self, buffer: TextBuffer):
+        self.buffer = buffer
+        self.caret_before: int = buffer.caret.position
+        self.caret_after: int = buffer.caret.position
+
+    @abstractmethod
+    def execute(self) -&gt; None:
+        pass
+
+    @abstractmethod
+    def undo(self) -&gt; None:
+        pass
+
+    @abstractmethod
+    def description(self) -&gt; str:
+        pass
+
+
+class InsertCommand(Command):
+    &quot;&quot;&quot;Insert text at a given position.&quot;&quot;&quot;
+
+    def __init__(self, buffer: TextBuffer, position: int, text: str):
+        super().__init__(buffer)
+        self.position = position
+        self.text = text
+
+    def execute(self) -&gt; None:
+        self.buffer.insert(self.position, self.text)
+        self.caret_after = self.position + len(self.text)
+        self.buffer.caret.move_to(self.caret_after)
+
+    def undo(self) -&gt; None:
+        self.buffer.delete(self.position, len(self.text))
+        self.buffer.caret.move_to(self.caret_before)
+
+    def description(self) -&gt; str:
+        return f&quot;Insert(pos={self.position}, text='{self.text}')&quot;
+
+
+class DeleteCommand(Command):
+    &quot;&quot;&quot;Delete a range of characters. Captures deleted text for undo.&quot;&quot;&quot;
+
+    def __init__(self, buffer: TextBuffer, position: int, length: int):
+        super().__init__(buffer)
+        self.position = position
+        self.length = length
+        self.deleted_text: str = &quot;&quot;
+
+    def execute(self) -&gt; None:
+        self.deleted_text = self.buffer.delete(self.position, self.length)
+        self.caret_after = self.position
+        self.buffer.caret.move_to(self.caret_after)
+
+    def undo(self) -&gt; None:
+        self.buffer.insert(self.position, self.deleted_text)
+        self.buffer.caret.move_to(self.caret_before)
+
+    def description(self) -&gt; str:
+        return f&quot;Delete(pos={self.position}, len={self.length}, text='{self.deleted_text}')&quot;
+
+
+class ReplaceCommand(Command):
+    &quot;&quot;&quot;Atomically replace a range with new text (single undo step).&quot;&quot;&quot;
+
+    def __init__(self, buffer: TextBuffer, position: int, length: int, new_text: str):
+        super().__init__(buffer)
+        self.position = position
+        self.length = length
+        self.new_text = new_text
+        self.old_text: str = &quot;&quot;
+
+    def execute(self) -&gt; None:
+        self.old_text = self.buffer.delete(self.position, self.length)
+        self.buffer.insert(self.position, self.new_text)
+        self.caret_after = self.position + len(self.new_text)
+        self.buffer.caret.move_to(self.caret_after)
+
+    def undo(self) -&gt; None:
+        self.buffer.delete(self.position, len(self.new_text))
+        self.buffer.insert(self.position, self.old_text)
+        self.buffer.caret.move_to(self.caret_before)
+
+    def description(self) -&gt; str:
+        return (f&quot;Replace(pos={self.position}, len={self.length}, &quot;
+                f&quot;old='{self.old_text}', new='{self.new_text}')&quot;)
+
+
+# ============================================================================
+# COMMAND HISTORY
+# ============================================================================
+
+class CommandHistory:
+    &quot;&quot;&quot;Dual-stack manager for undo/redo.&quot;&quot;&quot;
+
+    def __init__(self, max_size: int = 1000):
+        self.undo_stack: List[Command] = []
+        self.redo_stack: List[Command] = []
+        self.max_size = max_size
+
+    def push(self, command: Command) -&gt; None:
+        &quot;&quot;&quot;Record an executed command; clears redo stack.&quot;&quot;&quot;
+        if len(self.undo_stack) &gt;= self.max_size:
+            self.undo_stack.pop(0)   # Drop oldest (DropOldest strategy)
+        self.undo_stack.append(command)
+        self.redo_stack.clear()      # New edit invalidates redo history
+
+    def undo(self) -&gt; Optional[Command]:
+        &quot;&quot;&quot;Pop from undo stack, push to redo stack. Returns command or None.&quot;&quot;&quot;
+        if not self.undo_stack:
+            return None
+        command = self.undo_stack.pop()
+        command.undo()
+        self.redo_stack.append(command)
+        return command
+
+    def redo(self) -&gt; Optional[Command]:
+        &quot;&quot;&quot;Pop from redo stack, re-execute, push to undo stack. Returns command or None.&quot;&quot;&quot;
+        if not self.redo_stack:
+            return None
+        command = self.redo_stack.pop()
+        command.execute()
+        self.undo_stack.append(command)
+        return command
+
+    def can_undo(self) -&gt; bool:
+        return len(self.undo_stack) &gt; 0
+
+    def can_redo(self) -&gt; bool:
+        return len(self.redo_stack) &gt; 0
+
+    def clear(self) -&gt; None:
+        self.undo_stack.clear()
+        self.redo_stack.clear()
+
+    def undo_depth(self) -&gt; int:
+        return len(self.undo_stack)
+
+    def redo_depth(self) -&gt; int:
+        return len(self.redo_stack)
+
+
+# ============================================================================
+# OBSERVER
+# ============================================================================
+
+class EditorObserver(ABC):
+    @abstractmethod
+    def on_event(self, event: str, editor: 'Editor') -&gt; None:
+        pass
+
+
+class ConsoleObserver(EditorObserver):
+    def on_event(self, event: str, editor: 'Editor') -&gt; None:
+        content = editor.get_content()
+        caret   = editor.buffer.caret.position
+        undo_d  = editor.history.undo_depth()
+        redo_d  = editor.history.redo_depth()
+        print(f&quot;  [{event:&lt;16}] content='{content}'&quot;
+              f&quot;  caret={caret}  undo={undo_d}  redo={redo_d}&quot;)
+
+
+# ============================================================================
+# EDITOR (SINGLETON)
+# ============================================================================
+
+class Editor:
+    &quot;&quot;&quot;
+    Singleton orchestrator.
+    Coordinates TextBuffer, CommandHistory, and Observers.
+    Thread-safe via RLock (re-entrant to allow nested calls).
+    &quot;&quot;&quot;
+
+    _instance: Optional['Editor'] = None
+    _class_lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        # Fix: accept *args/**kwargs so super().__new__(cls) never sees extra args
+        if cls._instance is None:
+            with cls._class_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+        self._initialized = True
+        self.buffer  = TextBuffer()
+        self.history = CommandHistory(max_size=1000)
+        self.observers: List[EditorObserver] = []
+        # RLock: re-entrant so undo/redo can safely call _notify inside the lock
+        self._lock = threading.RLock()
+
+    @classmethod
+    def get_instance(cls) -&gt; 'Editor':
+        return cls()
+
+    @classmethod
+    def reset(cls) -&gt; None:
+        &quot;&quot;&quot;Test helper: destroy the singleton so tests start fresh.&quot;&quot;&quot;
+        with cls._class_lock:
+            cls._instance = None
+
+    # ------------------------------------------------------------------ edits
+
+    def insert(self, position: int, text: str) -&gt; None:
+        with self._lock:
+            cmd = InsertCommand(self.buffer, position, text)
+            cmd.execute()
+            self.history.push(cmd)
+        self._notify(EditorEvent.TEXT_CHANGED.value)
+
+    def delete(self, position: int, length: int) -&gt; None:
+        with self._lock:
+            cmd = DeleteCommand(self.buffer, position, length)
+            cmd.execute()
+            self.history.push(cmd)
+        self._notify(EditorEvent.TEXT_CHANGED.value)
+
+    def replace(self, position: int, length: int, new_text: str) -&gt; None:
+        with self._lock:
+            cmd = ReplaceCommand(self.buffer, position, length, new_text)
+            cmd.execute()
+            self.history.push(cmd)
+        self._notify(EditorEvent.TEXT_CHANGED.value)
+
+    # ----------------------------------------------------------------- undo/redo
+
+    def undo(self) -&gt; bool:
+        with self._lock:
+            cmd = self.history.undo()
+        if cmd is None:
+            return False
+        self._notify(EditorEvent.UNDO_PERFORMED.value)
+        return True
+
+    def redo(self) -&gt; bool:
+        with self._lock:
+            cmd = self.history.redo()
+        if cmd is None:
+            return False
+        self._notify(EditorEvent.REDO_PERFORMED.value)
+        return True
+
+    # ----------------------------------------------------------------- queries
+
+    def get_content(self) -&gt; str:
+        with self._lock:
+            return self.buffer.get_text()
+
+    def get_caret(self) -&gt; int:
+        with self._lock:
+            return self.buffer.caret.position
+
+    def can_undo(self) -&gt; bool:
+        with self._lock:
+            return self.history.can_undo()
+
+    def can_redo(self) -&gt; bool:
+        with self._lock:
+            return self.history.can_redo()
+
+    # ---------------------------------------------------------------- observers
+
+    def add_observer(self, observer: EditorObserver) -&gt; None:
+        with self._lock:
+            self.observers.append(observer)
+
+    def _notify(self, event: str) -&gt; None:
+        with self._lock:
+            obs_copy = list(self.observers)
+        for obs in obs_copy:
+            obs.on_event(event, self)
+
+    # ---------------------------------------------------------------- snapshot
+
+    def save_snapshot(self) -&gt; EditorMemento:
+        with self._lock:
+            return self.buffer.save_memento()
+
+    def restore_snapshot(self, memento: EditorMemento) -&gt; None:
+        with self._lock:
+            self.buffer.restore_memento(memento)
+            self.history.clear()
+        self._notify(EditorEvent.HISTORY_CLEARED.value)
+
+
+# ============================================================================
+# DEMO
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;=&quot; * 65)
+    print(&quot;TEXT EDITOR WITH UNDO &amp; REDO — DEMO&quot;)
+    print(&quot;=&quot; * 65)
+
+    # Reset singleton so demo always starts clean
+    Editor.reset()
+    editor = Editor.get_instance()
+    editor.add_observer(ConsoleObserver())
+
+    print(&quot;\n--- Step 1: Insert 'Hello' at position 0 ---&quot;)
+    editor.insert(0, &quot;Hello&quot;)
+
+    print(&quot;\n--- Step 2: Insert ' World' at position 5 ---&quot;)
+    editor.insert(5, &quot; World&quot;)
+
+    print(&quot;\n--- Step 3: Replace 'World' (pos=6, len=5) with 'Python' ---&quot;)
+    editor.replace(6, 5, &quot;Python&quot;)
+
+    print(&quot;\n--- Step 4: Undo replace -&gt; back to 'Hello World' ---&quot;)
+    editor.undo()
+
+    print(&quot;\n--- Step 5: Undo ' World' insert -&gt; back to 'Hello' ---&quot;)
+    editor.undo()
+
+    print(&quot;\n--- Step 6: Redo -&gt; 'Hello World' ---&quot;)
+    editor.redo()
+
+    print(&quot;\n--- Step 7: Delete 6 chars from pos 5 (' World') -&gt; 'Hello' ---&quot;)
+    editor.delete(5, 6)
+
+    print(&quot;\n--- Step 8: New insert clears redo stack ---&quot;)
+    editor.insert(5, &quot;!&quot;)
+    print(f&quot;  can_redo after new edit: {editor.can_redo()}&quot;)   # False
+
+    print(&quot;\n--- Step 9: Undo '!' -&gt; 'Hello' ---&quot;)
+    editor.undo()
+
+    print(&quot;\n--- Step 10: Undo delete -&gt; 'Hello World' ---&quot;)
+    editor.undo()
+
+    print(&quot;\n--- Step 11: Undo insert 'Hello' twice -&gt; empty ---&quot;)
+    editor.undo()
+    editor.undo()
+
+    print(f&quot;\nFinal content : '{editor.get_content()}'&quot;)
+    print(f&quot;Undo stack    : {editor.history.undo_depth()}&quot;)
+    print(f&quot;Redo stack    : {editor.history.redo_depth()}&quot;)
+    assert editor.get_content() == &quot;&quot;, &quot;Expected empty buffer&quot;
+    print(&quot;\nAll assertions passed.&quot;)
+    print(&quot;=&quot; * 65)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>insert / delete / replace</strong></td>
+<td>RLock on editor</td>
+<td>Command created + executed + pushed atomically</td>
+</tr>
+<tr>
+<td><strong>undo</strong></td>
+<td>RLock on editor</td>
+<td>Pop + reverse + push to redo stack are atomic</td>
+</tr>
+<tr>
+<td><strong>redo</strong></td>
+<td>RLock on editor</td>
+<td>Pop + re-execute + push to undo stack are atomic</td>
+</tr>
+<tr>
+<td><strong>_notify</strong></td>
+<td>Snapshot observers under lock; call outside</td>
+<td>No deadlock from observer re-entering editor</td>
+</tr>
+<tr>
+<td><strong>Singleton init</strong></td>
+<td>Class-level Lock (double-checked)</td>
+<td>Only one Editor instance created</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. ✅ <code>threading.RLock</code> allows undo/redo to call <code>_notify</code> without deadlock
+2. ✅ <code>__new__(cls, *args, **kwargs)</code> accepts extra arguments — fixes common Singleton bug
+3. ✅ Observer list copied before iterating — observers added during notification do not affect current pass
+4. ✅ Notifications fire outside the critical section to minimize lock hold time</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="scenario-1-type-replace-undoredo">Scenario 1: Type, Replace, Undo/Redo</h3>
+<pre class="codehilite"><code>[text_changed    ] content='Hello'           caret=5  undo=1  redo=0
+[text_changed    ] content='Hello World'     caret=11 undo=2  redo=0
+[text_changed    ] content='Hello Python'    caret=12 undo=3  redo=0
+[undo            ] content='Hello World'     caret=11 undo=2  redo=1
+[undo            ] content='Hello'           caret=5  undo=1  redo=2
+[redo            ] content='Hello World'     caret=11 undo=2  redo=1
+</code></pre>
+
+<h3 id="scenario-2-delete-characters">Scenario 2: Delete Characters</h3>
+<pre class="codehilite"><code>editor.delete(5, 6)   # Remove ' World'
+[text_changed    ] content='Hello'  caret=5  undo=3  redo=0
+</code></pre>
+
+<h3 id="scenario-3-new-edit-clears-redo-stack">Scenario 3: New Edit Clears Redo Stack</h3>
+<pre class="codehilite"><code>editor.undo()         # undo delete
+[undo            ] content='Hello World'  redo=1
+editor.insert(5, &quot;!&quot;) # new edit
+[text_changed    ] content='Hello World!'  redo=0   ← redo stack cleared
+</code></pre>
+
+<h3 id="scenario-4-full-undo-sequence">Scenario 4: Full Undo Sequence</h3>
+<pre class="codehilite"><code>Undo repeatedly until undo stack is empty:
+  content='Hello World'  → 'Hello'  → ''
+  undo stack depth = 0, buffer empty
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-questions">Basic Questions</h3>
+<p><strong>Q1: How does the undo stack work?</strong></p>
+<p>A: Every operation creates a Command object with <code>execute()</code> and <code>undo()</code>. After <code>execute()</code>, the command is pushed onto the undo stack. On undo, we <code>pop()</code> the top command, call <code>undo()</code>, and push it to the redo stack:</p>
+<pre class="codehilite"><code class="language-python">def undo(self):
+    cmd = self.undo_stack.pop()
+    cmd.undo()                   # Reverses buffer changes
+    self.redo_stack.append(cmd)  # Enables redo
+</code></pre>
+
+<p><strong>Q2: What's the difference between Command and Memento here?</strong></p>
+<p>A: Command stores the <em>delta</em> (position + text) needed to reverse one operation — O(delta) memory. Memento stores the <em>full document snapshot</em> — O(n) memory. Use Command for every keystroke; Memento for infrequent save-point checkpoints.</p>
+<p><strong>Q3: Why does a new edit clear the redo stack?</strong></p>
+<p>A: The redo stack represents a linear future that is no longer valid once you branch off with a new edit. Preserving it would require a tree-structured history (common in advanced editors but out of scope for interviews).</p>
+<p><strong>Q4: How does caret position survive undo/redo?</strong></p>
+<p>A: Each Command stores <code>caret_before</code> (captured at construction) and <code>caret_after</code> (set during execute). <code>undo()</code> restores <code>caret_before</code>; <code>execute()</code> / <code>redo()</code> restores <code>caret_after</code>. The buffer caret is updated directly.</p>
+<p><strong>Q5: Why use RLock instead of Lock?</strong></p>
+<p>A: <code>_notify</code> calls observer methods while holding the lock. If an observer calls back into the editor (e.g., to read content), a plain <code>Lock</code> would deadlock. An <code>RLock</code> allows the same thread to re-enter the lock safely.</p>
+<hr />
+<h3 id="intermediate-questions">Intermediate Questions</h3>
+<p><strong>Q6: How is Replace implemented as a single undo step?</strong></p>
+<p>A: <code>ReplaceCommand.execute()</code> deletes the old range first (capturing <code>old_text</code>), then inserts <code>new_text</code>. <code>undo()</code> does the reverse — delete <code>new_text</code>, re-insert <code>old_text</code>. One command, one undo step.</p>
+<p><strong>Q7: What happens if insert position is out of bounds?</strong></p>
+<p>A: <code>TextBuffer.insert()</code> raises <code>IndexError</code> immediately. The command is never pushed to the history stack, so the undo stack remains consistent.</p>
+<p><strong>Q8: How would you bound memory usage on the undo stack?</strong></p>
+<p>A: Cap the stack at N commands (e.g., 1000). When full, drop the oldest (bottom) entry. Optionally, collapse the bottom K commands into a single <code>RestoreSnapshotCommand</code> to preserve more logical undo depth at the cost of one full copy.</p>
+<p><strong>Q9: How do you handle compound operations (e.g., Find &amp; Replace All)?</strong></p>
+<p>A: Wrap multiple commands in a <code>MacroCommand</code> that implements <code>execute()</code> / <code>undo()</code> by iterating its inner list. This appears as a single undo step to the user.</p>
+<p><strong>Q10: How would you add persistent undo (survive file save)?</strong></p>
+<p>A: Serialize each <code>Command</code> (position, type, text delta) to a log file. On reload, deserialize and replay to restore the undo stack.</p>
+<hr />
+<h3 id="advanced-questions">Advanced Questions</h3>
+<p><strong>Q11: How would you support collaborative editing with undo?</strong></p>
+<p>A: Operational Transformation (OT) adjusts the <code>position</code> field of each pending command when a remote edit arrives, so local undo still applies to the correct offset. CRDTs (Conflict-free Replicated Data Types) are an alternative that avoids explicit position adjustment.</p>
+<p><strong>Q12: Why is a string inefficient for large documents, and what replaces it?</strong></p>
+<p>A: Python <code>str</code> is immutable; every insert/delete creates a new string (O(n) copy). A <strong>Rope</strong> data structure — a binary tree of string chunks — performs insert/delete in O(log n) time and is used in production editors like VS Code.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<h3 id="q1-undo-depth-limit-how-do-you-prevent-memory-exhaustion">Q1: Undo depth limit — how do you prevent memory exhaustion?</h3>
+<p><strong>Solution</strong>: Cap stack at 1000 commands (configurable). When exceeded, drop oldest. Optionally compress oldest 100 commands into a single <code>RestoreSnapshotCommand</code> (one full copy, 100 commands gone). Trade-off: undo depth vs memory.</p>
+<h3 id="q2-collaborative-editing-multiple-users-editing-simultaneously">Q2: Collaborative editing — multiple users editing simultaneously?</h3>
+<p><strong>Solution</strong>: Operational Transformation (OT) — each operation carries a vector clock. On receiving a remote op, adjust position offsets before applying locally. undo becomes "undo in context of current server state" requiring server-side undo. CRDTs (like YATA used by Yjs) handle this without a central server.</p>
+<h3 id="q3-network-sync-how-to-propagate-each-operation-to-other-clients">Q3: Network sync — how to propagate each operation to other clients?</h3>
+<p><strong>Solution</strong>: Publish each Command's serialized form (type, position, text, vector clock) to a message broker (Kafka, Pub/Sub). Each client subscribes, receives ops, applies OT transformation, then executes locally. This is how Google Docs-style editing works at scale.</p>
+<h3 id="q4-large-files-100-mb-how-does-buffer-performance-degrade">Q4: Large files (100 MB) — how does buffer performance degrade?</h3>
+<p><strong>Solution</strong>: Replace <code>str</code> with a <strong>Piece Table</strong> or <strong>Rope</strong>. A piece table tracks the original buffer and an append buffer; insert/delete are O(log n). Most modern editors (VS Code, Vim, Emacs) use piece tables or gap buffers.</p>
+<h3 id="q5-how-would-you-implement-autosave-without-blocking-the-ui-thread">Q5: How would you implement autosave without blocking the UI thread?</h3>
+<p><strong>Solution</strong>: Periodically (every 30s) call <code>save_snapshot()</code> on a background thread. The snapshot is a cheap deep copy of the current string. Write it to disk asynchronously. On crash, restore from the last snapshot; replay the command log since then.</p>
+<h3 id="q6-what-if-undo-history-needs-to-persist-across-sessions">Q6: What if undo history needs to persist across sessions?</h3>
+<p><strong>Solution</strong>: Serialize each Command to a structured log (JSON/protobuf) at runtime. On open, load the log and reconstruct the undo stack. Pair with a base snapshot so replay is bounded — replaying from the snapshot forward, not from the beginning of time.</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw UML class diagram showing Editor, TextBuffer, Caret, Command hierarchy, CommandHistory, Observer</li>
+<li>[ ] Explain Command pattern: execute() + undo() + delta storage vs full copy</li>
+<li>[ ] Explain how Memento differs from Command (snapshot vs delta; when to use each)</li>
+<li>[ ] Demonstrate undo stack push on execute, pop on undo, transfer to redo stack</li>
+<li>[ ] Explain why new edit clears redo stack</li>
+<li>[ ] Explain caret_before / caret_after capture and restoration</li>
+<li>[ ] Run the complete implementation without errors (assert passes)</li>
+<li>[ ] Explain RLock vs Lock and why RLock is needed here</li>
+<li>[ ] Fix Singleton <strong>new</strong> to accept <em>args/</em>*kwargs</li>
+<li>[ ] Answer 5+ Interview Q&amp;A questions</li>
+<li>[ ] Answer 3+ Scaling Q&amp;A questions (OT/CRDT, Rope/Piece Table, autosave)</li>
+<li>[ ] Discuss trade-offs: delta vs snapshot, bounded vs unlimited history</li>
+</ul>
+<hr />
+<p><strong>Ready for interview? Type, undo, and redo your way to the offer! ✏️</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

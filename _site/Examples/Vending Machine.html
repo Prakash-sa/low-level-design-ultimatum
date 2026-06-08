@@ -1,0 +1,1524 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vending Machine - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="vending-machine-complete-design-guide">Vending Machine — Complete Design Guide</h1>
+<blockquote>
+<p>Item selection, multi-method payment, accurate change calculation, inventory tracking, and transaction logging with low-stock alerts.</p>
+</blockquote>
+<p><strong>Scale</strong>: 1,000+ transactions/day per machine, &lt;5s per transaction, 99.9% uptime
+<strong>Duration</strong>: 75-minute interview guide
+<strong>Focus</strong>: Payment validation, greedy change calculation, item state machine, atomic dispensing</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>A customer selects a slot → inserts payment (cash/card) → the machine validates the amount covers the price → dispenses the item → returns exact change using the fewest coins → logs the transaction and alerts maintenance when stock runs low. Core concerns: payment correctness, accurate change, and atomic dispensing.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>Select Slot → Insert Payment → VALIDATE (&gt;= price) → DISPENSE → Return Change
+                                    ↓ insufficient
+                              REJECT (return money)
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Cash, card, or both?</strong> → "Both — cash and card"</li>
+<li><strong>Does it return change?</strong> → "Yes, with the fewest coins"</li>
+<li><strong>How many slots / capacity?</strong> → "10 slots, up to 20 units each"</li>
+<li><strong>Single customer at a time?</strong> → "Yes — serialize transactions"</li>
+<li><strong>Low-stock alerts?</strong> → "Yes, notify maintenance below threshold"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Customer</strong></td>
+<td>Buys items</td>
+<td>Select slot, insert payment, collect item + change</td>
+</tr>
+<tr>
+<td><strong>Maintenance</strong></td>
+<td>Services machine</td>
+<td>Restock slots, collect revenue, respond to alerts</td>
+</tr>
+<tr>
+<td><strong>System</strong></td>
+<td>Coordinator</td>
+<td>Validate payment, dispense, compute change, log transactions</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Display &amp; Select</strong>
+  - Show items with price, quantity, and status
+  - Select an item by slot number</p>
+<p>✅ <strong>Payment</strong>
+  - Accept cash and card
+  - Validate inserted amount ≥ price
+  - Reject and return money on insufficient payment</p>
+<p>✅ <strong>Dispense &amp; Change</strong>
+  - Dispense item, decrement inventory
+  - Return change using a greedy fewest-coins algorithm</p>
+<p>✅ <strong>Inventory &amp; Alerts</strong>
+  - Track quantity per slot
+  - Restock slots
+  - Alert maintenance on low stock</p>
+<p>✅ <strong>Reporting</strong>
+  - Log every transaction
+  - Produce a daily revenue / units-sold report</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Latency</strong>: Transaction processing &lt; 5 seconds
+✅ <strong>Throughput</strong>: 1,000+ transactions/day per machine
+✅ <strong>Uptime</strong>: 99.9%
+✅ <strong>Correctness</strong>: Exact change; no double-dispensing
+✅ <strong>Concurrency</strong>: One transaction at a time (serialized)</p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Max slots</strong></td>
+<td>10</td>
+</tr>
+<tr>
+<td><strong>Max stock per slot</strong></td>
+<td>20</td>
+</tr>
+<tr>
+<td><strong>Price range</strong></td>
+<td>$0.50 – $10.00</td>
+</tr>
+<tr>
+<td><strong>Coin denominations</strong></td>
+<td>$0.01, $0.05, $0.10, $0.25 (notes $1, $2)</td>
+</tr>
+<tr>
+<td><strong>Low-stock threshold</strong></td>
+<td>≤ 5 units</td>
+</tr>
+<tr>
+<td><strong>Concurrency</strong></td>
+<td>Serialized — one customer at a time</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on the whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<pre class="codehilite"><code>VendingMachine, Slot, Item, Transaction, PaymentProcessor, CoinDispenser, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="item-a-product-in-a-slot"><strong>Item</strong> — A product in a slot</h4>
+<pre class="codehilite"><code>Properties:
+  - item_id: str
+  - name: str
+  - price: float
+  - quantity: int
+
+Behaviors:
+  - status (derived): AVAILABLE / LOW_STOCK / SOLD_OUT based on quantity
+</code></pre>
+
+<h4 id="slot-a-physical-location-holding-one-item-type"><strong>Slot</strong> — A physical location holding one item type</h4>
+<pre class="codehilite"><code>Properties:
+  - slot_number: int (1-10)
+  - item: Item
+</code></pre>
+
+<h4 id="transaction-a-purchase-record"><strong>Transaction</strong> — A purchase record</h4>
+<pre class="codehilite"><code>Properties:
+  - transaction_id: str
+  - item_id: str
+  - amount_inserted: float
+  - price: float
+  - change: float
+  - payment_method: PaymentMethod
+  - timestamp: datetime
+  - status: TransactionStatus
+</code></pre>
+
+<h4 id="coindispenser-change-calculator"><strong>CoinDispenser</strong> — Change calculator</h4>
+<pre class="codehilite"><code>Behaviors:
+  - calculate_change(amount): Greedy breakdown into fewest coins
+</code></pre>
+
+<h4 id="paymentprocessor-payment-validation"><strong>PaymentProcessor</strong> — Payment validation</h4>
+<pre class="codehilite"><code>Behaviors:
+  - validate_payment(inserted, price): inserted &gt;= price
+</code></pre>
+
+<h4 id="vendingmachine-main-controller-singleton"><strong>VendingMachine</strong> — Main controller (Singleton)</h4>
+<pre class="codehilite"><code>Properties:
+  - slots: Dict[int, Slot]
+  - transactions: List[Transaction]
+  - total_revenue: float
+  - lock: threading.Lock
+
+Behaviors:
+  - add_item / restock / display_items
+  - purchase(slot, inserted, method): validate → dispense → change
+  - get_daily_report()
+</code></pre>
+
+<h3 id="step-23-define-enumerations-state-type">Step 2.3: Define Enumerations (State &amp; Type)</h3>
+<pre class="codehilite"><code class="language-python">class ItemStatus(Enum):
+    AVAILABLE = 1     # quantity &gt; 5
+    LOW_STOCK = 2     # 0 &lt; quantity &lt;= 5
+    SOLD_OUT = 3      # quantity == 0
+
+class TransactionStatus(Enum):
+    PENDING = 1
+    COMPLETED = 2
+    FAILED = 3
+
+class PaymentMethod(Enum):
+    CASH = 1
+    CARD = 2
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Item</strong></td>
+<td>Price + quantity + status</td>
+<td>Can't track availability</td>
+</tr>
+<tr>
+<td><strong>Slot</strong></td>
+<td>Maps position → item</td>
+<td>Can't address products</td>
+</tr>
+<tr>
+<td><strong>Transaction</strong></td>
+<td>Audit + reconciliation</td>
+<td>No revenue tracking</td>
+</tr>
+<tr>
+<td><strong>CoinDispenser</strong></td>
+<td>Correct change</td>
+<td>Wrong/over change given</td>
+</tr>
+<tr>
+<td><strong>PaymentProcessor</strong></td>
+<td>Validate before dispense</td>
+<td>Dispense without payment</td>
+</tr>
+<tr>
+<td><strong>VendingMachine</strong></td>
+<td>Central coordination</td>
+<td>No atomic dispensing</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-purchase-critical"><strong>1. Purchase</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def purchase(slot_number: int, inserted_amount: float,
+             payment_method: PaymentMethod = PaymentMethod.CASH) -&gt; Tuple[bool, float, str]:
+    &quot;&quot;&quot;
+    Validate payment, dispense item, and return change.
+
+    Precondition: slot exists and item.quantity &gt; 0
+    Postcondition: quantity decremented, transaction logged, change returned
+
+    Returns: (success, change_or_returned_amount, message)
+
+    Failure causes:
+      - Invalid slot
+      - Item sold out
+      - Insufficient payment (returns inserted amount)
+
+    Concurrency: THREAD-SAFE (machine lock — serialized)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="2-add-item-restock"><strong>2. Add Item / Restock</strong></h4>
+<pre class="codehilite"><code class="language-python">def add_item(slot_number: int, name: str, price: float, quantity: int) -&gt; bool: ...
+def restock(slot_number: int, quantity: int) -&gt; bool: ...
+</code></pre>
+
+<h4 id="3-display-report"><strong>3. Display &amp; Report</strong></h4>
+<pre class="codehilite"><code class="language-python">def display_items() -&gt; None: ...      # Show all slots with status
+def get_daily_report() -&gt; None: ...   # Revenue + units sold
+</code></pre>
+
+<h4 id="4-change-calculation"><strong>4. Change Calculation</strong></h4>
+<pre class="codehilite"><code class="language-python">@staticmethod
+def calculate_change(change_amount: float) -&gt; Tuple[Dict[float, int], float]:
+    &quot;&quot;&quot;
+    Greedy fewest-coin breakdown.
+    Returns: (coin -&gt; count map, remaining unpayable amount).
+    Example: $4.01 -&gt; {2.00: 2, 0.01: 1}, remainder 0.0
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-32-failure-model">Step 3.2: Failure Model</h3>
+<p>This design returns <code>(bool, amount, message)</code> tuples for an interview-friendly flow. A production version raises:</p>
+<pre class="codehilite"><code class="language-python">class VendingException(Exception): ...
+class InvalidSlotError(VendingException): ...
+class SoldOutError(VendingException): ...
+class InsufficientPaymentError(VendingException): ...
+class DispenserJamError(VendingException): ...
+</code></pre>
+
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">machine = VendingMachine(10)
+machine.add_item(1, &quot;Coke&quot;, 2.00, 10)
+
+machine.display_items()
+success, change, msg = machine.purchase(1, 2.50, PaymentMethod.CASH)
+# -&gt; success=True, change=0.50, msg=&quot;Success&quot;
+
+machine.get_daily_report()
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and association. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>VendingMachine HAS-A slots (1:N Composition)
+  └─ Machine owns and manages all slots
+
+Slot HAS-A item (1:1 Composition)
+  └─ Each slot holds one item type
+
+VendingMachine HAS-A transactions (1:N Composition)
+  └─ Machine owns transaction history
+
+VendingMachine USES-A PaymentProcessor + CoinDispenser (1:1 Composition)
+  └─ Validation and change services
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌────────────────────────────────────┐
+│   VendingMachine (Singleton)       │
+├────────────────────────────────────┤
+│ - slots: Dict[int, Slot]           │
+│ - transactions: List[Transaction]  │
+│ - total_revenue: float             │
+│ - payment_processor                │
+│ - lock: threading.Lock             │
+├────────────────────────────────────┤
+│ + add_item(...) / restock(...)     │
+│ + display_items()                  │
+│ + purchase(...): (bool,float,str)  │
+│ + get_daily_report()               │
+└──────────────┬─────────────────────┘
+       owns 1:N │
+               ▼
+        ┌──────────────┐
+        │    Slot      │
+        ├──────────────┤
+        │ slot_number  │
+        │ item: Item   │
+        └──────┬───────┘
+        holds 1:1
+               ▼
+        ┌──────────────┐
+        │    Item      │
+        ├──────────────┤
+        │ item_id      │
+        │ name / price │
+        │ quantity     │
+        │ status (der.)│
+        └──────────────┘
+
+SERVICES (Composition):
+┌──────────────────────┐   ┌──────────────────────┐
+│ PaymentProcessor     │   │ CoinDispenser        │
+│ + validate_payment() │   │ + calculate_change() │
+└──────────────────────┘   └──────────────────────┘
+
+ITEM STATE MACHINE:
+AVAILABLE ──sales──→ LOW_STOCK ──sales──→ SOLD_OUT
+    ▲                                         │
+    └──────────────── restock ────────────────┘
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>VendingMachine → Slots</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Machine owns all slots</td>
+</tr>
+<tr>
+<td>Slot → Item</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>One item type per slot</td>
+</tr>
+<tr>
+<td>VendingMachine → Transactions</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Machine owns history</td>
+</tr>
+<tr>
+<td>VendingMachine → PaymentProcessor</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>Validation service</td>
+</tr>
+<tr>
+<td>VendingMachine → CoinDispenser</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>Change service</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-singleton-for-vendingmachine">Pattern 1: <strong>Singleton</strong> (For VendingMachine)</h3>
+<p><strong>Problem</strong>: One machine must own a single consistent view of inventory and revenue.</p>
+<p><strong>Solution</strong>: One global instance with thread-safe initialization.</p>
+<pre class="codehilite"><code class="language-python">class VendingMachine:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Single source of truth, ✅ Thread-safe init
+<strong>Trade-off</strong>: ⚠️ Global state; use an ID-keyed manager for fleets</p>
+<hr />
+<h3 id="pattern-2-state-for-item-status">Pattern 2: <strong>State</strong> (For Item Status)</h3>
+<p><strong>Problem</strong>: An item is AVAILABLE, LOW_STOCK, or SOLD_OUT and the display/logic must react.</p>
+<p><strong>Solution</strong>: Derive status from quantity so it can never drift out of sync.</p>
+<pre class="codehilite"><code class="language-python">@property
+def status(self) -&gt; ItemStatus:
+    if self.quantity == 0:
+        return ItemStatus.SOLD_OUT
+    elif self.quantity &lt;= 5:
+        return ItemStatus.LOW_STOCK
+    return ItemStatus.AVAILABLE
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Single source of truth (quantity), ✅ No inconsistent state
+<strong>Trade-off</strong>: ⚠️ Computed each access (negligible here)</p>
+<hr />
+<h3 id="pattern-3-strategy-for-payment-methods">Pattern 3: <strong>Strategy</strong> (For Payment Methods)</h3>
+<p><strong>Problem</strong>: Cash and card validate/settle differently and more methods may appear (NFC, mobile).</p>
+<p><strong>Solution</strong>: A <code>PaymentProcessor</code> abstraction selected by <code>PaymentMethod</code>.</p>
+<pre class="codehilite"><code class="language-python">class PaymentProcessor:
+    def validate_payment(self, inserted: float, price: float) -&gt; bool:
+        return inserted &gt;= price
+# Extend with CardProcessor, NFCProcessor without touching purchase()
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Add payment methods without changing core flow
+<strong>Trade-off</strong>: ⚠️ Extra abstraction layer</p>
+<hr />
+<h3 id="pattern-4-observer-for-low-stock-alerts">Pattern 4: <strong>Observer</strong> (For Low-Stock Alerts)</h3>
+<p><strong>Problem</strong>: Maintenance must be notified when stock dips, without coupling to the purchase flow.</p>
+<p><strong>Solution</strong>: Emit a low-stock event after dispensing (here a print; in production an observer list).</p>
+<pre class="codehilite"><code class="language-python">if item.quantity &lt;= 5 and item.quantity &gt; 0:
+    print(f&quot;⚠️ LOW STOCK ALERT: Slot {slot_number} ({item.name}) needs restocking&quot;)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Decoupled alerting, easy to add channels
+<strong>Trade-off</strong>: ⚠️ Observer lifecycle management</p>
+<hr />
+<h3 id="pattern-5-command-greedy-algorithm-for-change">Pattern 5: <strong>Command / Greedy Algorithm</strong> (For Change)</h3>
+<p><strong>Problem</strong>: Return change with the fewest coins, accurately.</p>
+<p><strong>Solution</strong>: Greedy descent through denominations.</p>
+<pre class="codehilite"><code class="language-python">DENOMINATIONS = [2.00, 1.00, 0.25, 0.10, 0.05, 0.01]
+for denom in DENOMINATIONS:
+    count = int(change_amount / denom)
+    if count &gt; 0:
+        coins[denom] = count
+        change_amount = round(change_amount - count * denom, 2)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Fewest coins for canonical denominations
+<strong>Trade-off</strong>: ⚠️ Greedy isn't optimal for arbitrary denominations (use DP then)</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>Single machine state</td>
+<td>Consistent inventory/revenue</td>
+</tr>
+<tr>
+<td><strong>State</strong></td>
+<td>Item availability</td>
+<td>No inconsistent status</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Varying payment methods</td>
+<td>Pluggable, extensible</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Low-stock alerts</td>
+<td>Decoupled notifications</td>
+</tr>
+<tr>
+<td><strong>Greedy</strong></td>
+<td>Change calculation</td>
+<td>Fewest coins returned</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+🍿 Vending Machine - Interview Implementation
+Demonstrates:
+1. Item inventory management
+2. Multi-payment processing
+3. Change calculation
+4. State machine
+5. Transaction logging
+&quot;&quot;&quot;
+
+from enum import Enum
+from typing import List, Optional, Dict, Tuple
+from dataclasses import dataclass, field
+from datetime import datetime
+import threading
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class ItemStatus(Enum):
+    AVAILABLE = 1
+    LOW_STOCK = 2
+    SOLD_OUT = 3
+
+class TransactionStatus(Enum):
+    PENDING = 1
+    COMPLETED = 2
+    FAILED = 3
+
+class PaymentMethod(Enum):
+    CASH = 1
+    CARD = 2
+
+# ============================================================================
+# DATA CLASSES
+# ============================================================================
+
+@dataclass
+class Item:
+    item_id: str
+    name: str
+    price: float
+    quantity: int
+
+    @property
+    def status(self) -&gt; ItemStatus:
+        if self.quantity == 0:
+            return ItemStatus.SOLD_OUT
+        elif self.quantity &lt;= 5:
+            return ItemStatus.LOW_STOCK
+        return ItemStatus.AVAILABLE
+
+@dataclass
+class Slot:
+    slot_number: int
+    item: Item
+
+@dataclass
+class Transaction:
+    transaction_id: str
+    item_id: str
+    amount_inserted: float
+    price: float
+    change: float
+    payment_method: PaymentMethod
+    timestamp: datetime
+    status: TransactionStatus = TransactionStatus.PENDING
+
+# ============================================================================
+# PAYMENT PROCESSOR
+# ============================================================================
+
+class CoinDispenser:
+    &quot;&quot;&quot;Calculate change using greedy algorithm&quot;&quot;&quot;
+
+    DENOMINATIONS = [2.00, 1.00, 0.25, 0.10, 0.05, 0.01]
+
+    @staticmethod
+    def calculate_change(change_amount: float) -&gt; Tuple[Dict[float, int], float]:
+        &quot;&quot;&quot;Returns coin breakdown and remaining amount&quot;&quot;&quot;
+        change_amount = round(change_amount, 2)
+        coins = {}
+
+        for denom in CoinDispenser.DENOMINATIONS:
+            count = int(change_amount / denom)
+            if count &gt; 0:
+                coins[denom] = count
+                change_amount -= count * denom
+                change_amount = round(change_amount, 2)
+
+        return coins, change_amount
+
+class PaymentProcessor:
+    def validate_payment(self, inserted: float, price: float) -&gt; bool:
+        return inserted &gt;= price
+
+# ============================================================================
+# VENDING MACHINE (SINGLETON)
+# ============================================================================
+
+class VendingMachine:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self, num_slots: int = 10):
+        if hasattr(self, '_initialized'):
+            return
+
+        self._initialized = True
+        self.slots: Dict[int, Slot] = {}
+        self.num_slots = num_slots
+        self.transactions: List[Transaction] = []
+        self.transaction_counter = 0
+        self.total_revenue = 0.0
+        self.lock = threading.Lock()
+        self.payment_processor = PaymentProcessor()
+
+        print(f&quot;🍿 Vending machine initialized with {num_slots} slots&quot;)
+
+    def add_item(self, slot_number: int, name: str, price: float, quantity: int):
+        with self.lock:
+            if slot_number &lt; 1 or slot_number &gt; self.num_slots:
+                return False
+
+            item = Item(f&quot;ITEM_{slot_number}&quot;, name, price, quantity)
+            slot = Slot(slot_number, item)
+            self.slots[slot_number] = slot
+
+            print(f&quot;✓ Added {quantity}x '{name}' (${price}) to slot {slot_number}&quot;)
+            return True
+
+    def display_items(self):
+        with self.lock:
+            print(&quot;\n  Available Items:&quot;)
+            for slot_num in sorted(self.slots.keys()):
+                slot = self.slots[slot_num]
+                item = slot.item
+                status_symbol = &quot;✓&quot; if item.status == ItemStatus.AVAILABLE else &quot;⚠&quot; if item.status == ItemStatus.LOW_STOCK else &quot;✗&quot;
+                print(f&quot;  {status_symbol} Slot {slot_num}: {item.name:15} ${item.price:5.2f} (qty: {item.quantity})&quot;)
+
+    def purchase(self, slot_number: int, inserted_amount: float, payment_method: PaymentMethod = PaymentMethod.CASH) -&gt; Tuple[bool, float, str]:
+        with self.lock:
+            if slot_number not in self.slots:
+                return False, 0.0, &quot;Invalid slot&quot;
+
+            slot = self.slots[slot_number]
+            item = slot.item
+
+            # Check availability
+            if item.quantity == 0:
+                return False, 0.0, &quot;Item sold out&quot;
+
+            # Validate payment
+            if not self.payment_processor.validate_payment(inserted_amount, item.price):
+                return False, inserted_amount, f&quot;Insufficient payment (need ${item.price}, inserted ${inserted_amount:.2f})&quot;
+
+            # Process transaction
+            self.transaction_counter += 1
+            change = inserted_amount - item.price
+
+            transaction = Transaction(
+                f&quot;TXN_{self.transaction_counter:06d}&quot;,
+                item.item_id,
+                inserted_amount,
+                item.price,
+                change,
+                payment_method,
+                datetime.now(),
+                TransactionStatus.COMPLETED
+            )
+
+            self.transactions.append(transaction)
+            self.total_revenue += item.price
+
+            # Dispense item
+            item.quantity -= 1
+
+            print(f&quot;✓ Dispensing: {item.name}&quot;)
+            print(f&quot;  Price: ${item.price:.2f}&quot;)
+            print(f&quot;  Inserted: ${inserted_amount:.2f}&quot;)
+
+            if change &gt; 0:
+                coins, remainder = CoinDispenser.calculate_change(change)
+                print(f&quot;  Change: ${change:.2f}&quot;)
+                if coins:
+                    print(f&quot;  Coins returned: {coins}&quot;)
+
+            # Check low stock
+            if item.quantity &lt;= 5 and item.quantity &gt; 0:
+                print(f&quot;  ⚠️ LOW STOCK ALERT: Slot {slot_number} ({item.name}) needs restocking&quot;)
+
+            return True, change, &quot;Success&quot;
+
+    def restock(self, slot_number: int, quantity: int):
+        with self.lock:
+            if slot_number not in self.slots:
+                return False
+
+            self.slots[slot_number].item.quantity += quantity
+            print(f&quot;✓ Restocked slot {slot_number}: +{quantity} units&quot;)
+            return True
+
+    def get_daily_report(self):
+        with self.lock:
+            print(f&quot;\n  Daily Report:&quot;)
+            print(f&quot;  Total transactions: {len(self.transactions)}&quot;)
+            print(f&quot;  Total revenue: ${self.total_revenue:.2f}&quot;)
+            print(f&quot;  Items sold:&quot;)
+
+            item_sales = {}
+            for txn in self.transactions:
+                item_id = txn.item_id
+                item_sales[item_id] = item_sales.get(item_id, 0) + 1
+
+            for item_id, count in item_sales.items():
+                print(f&quot;    {item_id}: {count} units&quot;)
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def demo_1_successful_purchase():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 1: SUCCESSFUL PURCHASE&quot;)
+    print(&quot;=&quot;*70)
+
+    machine = VendingMachine(10)
+    machine.add_item(1, &quot;Coke&quot;, 2.00, 10)
+    machine.add_item(2, &quot;Chips&quot;, 1.50, 8)
+
+    machine.display_items()
+
+    success, change, msg = machine.purchase(1, 2.00, PaymentMethod.CASH)
+    print(f&quot;  Result: {msg}&quot;)
+
+def demo_2_insufficient_payment():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 2: INSUFFICIENT PAYMENT&quot;)
+    print(&quot;=&quot;*70)
+
+    machine = VendingMachine(10)
+    machine.add_item(1, &quot;Water&quot;, 1.50, 5)
+
+    success, returned, msg = machine.purchase(1, 1.00, PaymentMethod.CASH)
+    print(f&quot;  Result: {msg}&quot;)
+    print(f&quot;  Returned: ${returned:.2f}&quot;)
+
+def demo_3_change_calculation():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 3: COMPLEX CHANGE CALCULATION&quot;)
+    print(&quot;=&quot;*70)
+
+    machine = VendingMachine(10)
+    machine.add_item(1, &quot;Coffee&quot;, 0.99, 10)
+
+    success, change, msg = machine.purchase(1, 5.00, PaymentMethod.CASH)
+    print(f&quot;  Result: {msg}&quot;)
+
+def demo_4_sold_out():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 4: SOLD OUT ITEM&quot;)
+    print(&quot;=&quot;*70)
+
+    machine = VendingMachine(10)
+    machine.add_item(1, &quot;Juice&quot;, 1.75, 1)
+
+    machine.display_items()
+
+    # Sell the only unit
+    machine.purchase(1, 2.00, PaymentMethod.CASH)
+
+    print(&quot;\n  After first sale:&quot;)
+    machine.display_items()
+
+    # Try to purchase again
+    success, _, msg = machine.purchase(1, 2.00, PaymentMethod.CASH)
+    print(f&quot;  Second purchase result: {msg}&quot;)
+
+def demo_5_multiple_transactions():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 5: MULTIPLE TRANSACTIONS &amp; REPORT&quot;)
+    print(&quot;=&quot;*70)
+
+    machine = VendingMachine(10)
+    machine.add_item(1, &quot;Coke&quot;, 2.00, 20)
+    machine.add_item(2, &quot;Chips&quot;, 1.50, 20)
+    machine.add_item(3, &quot;Candy&quot;, 0.75, 20)
+
+    # Multiple purchases
+    machine.purchase(1, 2.00, PaymentMethod.CASH)
+    machine.purchase(2, 2.00, PaymentMethod.CASH)
+    machine.purchase(3, 1.00, PaymentMethod.CASH)
+    machine.purchase(1, 2.50, PaymentMethod.CASH)
+
+    machine.get_daily_report()
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;🍿 VENDING MACHINE - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_successful_purchase()
+    demo_2_insufficient_payment()
+    demo_3_change_calculation()
+    demo_4_sold_out()
+    demo_5_multiple_transactions()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;✅ ALL DEMOS COMPLETED&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>purchase</strong></td>
+<td>Machine lock</td>
+<td>Atomic check-stock + validate + dispense (no double-dispense)</td>
+</tr>
+<tr>
+<td><strong>add_item / restock</strong></td>
+<td>Machine lock</td>
+<td>Consistent inventory updates</td>
+</tr>
+<tr>
+<td><strong>display_items / report</strong></td>
+<td>Machine lock</td>
+<td>Consistent snapshot reads</td>
+</tr>
+<tr>
+<td><strong>Singleton init</strong></td>
+<td>Class lock</td>
+<td>Double-checked locking, single instance</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. ✅ A single machine lock serializes transactions (acceptable for one customer at a time)
+2. ✅ Validate-then-dispense happens inside one critical section
+3. ✅ Double-checked locking for the Singleton
+4. ✅ For a fleet, key machines by ID instead of a global singleton</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="scenario-1-successful-purchase">Scenario 1: Successful Purchase</h3>
+<pre class="codehilite"><code>Select Coke ($2.00), insert $2.00 → Dispense Coke, change $0.00
+</code></pre>
+
+<h3 id="scenario-2-insufficient-payment">Scenario 2: Insufficient Payment</h3>
+<pre class="codehilite"><code>Select Water ($1.50), insert $1.00 → &quot;Insufficient payment&quot;, $1.00 returned
+</code></pre>
+
+<h3 id="scenario-3-complex-change-calculation">Scenario 3: Complex Change Calculation</h3>
+<pre class="codehilite"><code>Select Coffee ($0.99), insert $5.00 → change $4.01 = {2.00:2, 0.01:1}
+</code></pre>
+
+<h3 id="scenario-4-sold-out-item">Scenario 4: Sold Out Item</h3>
+<pre class="codehilite"><code>Juice qty=1 → first purchase dispenses; status → SOLD_OUT
+Second purchase → &quot;Item sold out&quot;
+</code></pre>
+
+<h3 id="scenario-5-multiple-transactions-report">Scenario 5: Multiple Transactions &amp; Report</h3>
+<pre class="codehilite"><code>4 purchases → Daily Report: total transactions, total revenue, units sold per item
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-questions">Basic Questions</h3>
+<p><strong>Q1: How do you represent items in the machine?</strong></p>
+<p>A: Each slot stores item_id, name, price, quantity, and a derived status. Availability is <code>quantity &gt; 0</code>.</p>
+<p><strong>Q2: What states can an item have?</strong></p>
+<p>A: AVAILABLE (qty &gt; 5), LOW_STOCK (0 &lt; qty ≤ 5), SOLD_OUT (qty = 0). Status is derived from quantity so it can't drift.</p>
+<p><strong>Q3: How do you calculate change?</strong></p>
+<p>A: Greedy descent through denominations, largest first: <code>change = inserted − price</code>, then take as many of each denomination as fit.</p>
+<p><strong>Q4: What payment methods do you support?</strong></p>
+<p>A: Cash and card via a <code>PaymentProcessor</code> abstraction; new methods (NFC, mobile) plug in without changing <code>purchase()</code>.</p>
+<p><strong>Q5: How do you prevent dispensing before payment is validated?</strong></p>
+<p>A: <code>purchase()</code> validates <code>inserted ≥ price</code> inside the lock before decrementing inventory and dispensing.</p>
+<h3 id="intermediate-questions">Intermediate Questions</h3>
+<p><strong>Q6: How to prevent double-dispensing (button pressed twice)?</strong></p>
+<p>A: The machine lock serializes purchases; once dispensed, quantity drops and a repeat hits SOLD_OUT or a fresh transaction.</p>
+<p><strong>Q7: How to handle a card payment decline?</strong></p>
+<p>A: The card processor returns a decline → transaction FAILED, return any inserted cash, prompt retry.</p>
+<p><strong>Q8: How to track low-stock alerts?</strong></p>
+<p>A: After each dispense, if <code>quantity ≤ 5</code> emit a low-stock alert (observer/notification) to maintenance.</p>
+<p><strong>Q9: What's stored in a transaction record?</strong></p>
+<p>A: Item, amount inserted, price, change, payment method, timestamp, and status — used for reconciliation and analytics.</p>
+<h3 id="advanced-questions">Advanced Questions</h3>
+<p><strong>Q10: How to handle a dispenser jam?</strong></p>
+<p>A: Dispense timeout → mark JAMMED, alert maintenance, refund the customer; cap stock per slot to limit exposure.</p>
+<p><strong>Q11: How to implement dynamic pricing?</strong></p>
+<p>A: Overnight batch adjusts prices by time-of-day/demand (e.g. +20% at lunch). <code>purchase()</code> reads the current price.</p>
+<p><strong>Q12: How to reconcile cash collected?</strong></p>
+<p>A: Daily report sums <code>price × units_sold</code>; compare to cash + card receipts; discrepancies flag theft or malfunction.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<h3 id="q1-can-a-single-machine-handle-1000-transactionsday">Q1: Can a single machine handle 1,000 transactions/day?</h3>
+<p>Yes — ~1/minute over 16 hours at ~5s each. No bottleneck; a single serialized lock suffices.</p>
+<h3 id="q2-how-to-support-a-fleet-of-machines">Q2: How to support a fleet of machines?</h3>
+<p>Key each machine by ID (drop the strict singleton) and add a <code>VendingMachineManager</code> with a dashboard for inventory and revenue per machine.</p>
+<h3 id="q3-how-to-handle-card-network-failure-offline">Q3: How to handle card-network failure (offline)?</h3>
+<p>Fall back to cash; queue card transactions in memory and batch-process on reconnect, with a small offline card cap.</p>
+<h3 id="q4-how-to-prevent-inventory-inconsistency">Q4: How to prevent inventory inconsistency?</h3>
+<p>Pessimistic lock per slot on dispense (decrement under lock), or optimistic concurrency with version numbers.</p>
+<h3 id="q5-how-to-optimize-restocking-routes">Q5: How to optimize restocking routes?</h3>
+<p>Track fleet inventory and visit lowest-stock machines first; forecast 3 days out to minimize trips.</p>
+<h3 id="q6-how-to-predict-demand">Q6: How to predict demand?</h3>
+<p>ML on historical sales by item/time to pre-stock popular items before peaks and reduce waste.</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw the UML class diagram with all relationships</li>
+<li>[ ] Walk through the select → pay → validate → dispense → change flow</li>
+<li>[ ] Explain the item state machine (AVAILABLE/LOW_STOCK/SOLD_OUT)</li>
+<li>[ ] Explain the greedy change algorithm and its limits</li>
+<li>[ ] Explain how the lock prevents double-dispensing</li>
+<li>[ ] Run the complete implementation (5 demos) without errors</li>
+<li>[ ] Answer 5+ scaling Q&amp;A questions</li>
+<li>[ ] Discuss fleet management and offline payment fallback</li>
+<li>[ ] Discuss reconciliation and jam handling</li>
+</ul>
+<hr />
+<p><strong>Ready for interview? Insert coin and dispense! 🍿</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

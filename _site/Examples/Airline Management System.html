@@ -1,0 +1,1785 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Airline Management System - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="airline-management-system-complete-design-guide">Airline Management System — Complete Design Guide</h1>
+<blockquote>
+<p>Flight scheduling, seat inventory management, booking lifecycle, overbooking prevention, and dynamic pricing.</p>
+</blockquote>
+<p><strong>Scale</strong>: 500-1,000+ concurrent users, 1M+ flights/day, 99.9% uptime<br />
+<strong>Duration</strong>: 75-minute interview guide<br />
+<strong>Focus</strong>: Seat hold/confirm lifecycle, overbooking prevention, dynamic pricing, event notifications</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>Customers search flights → hold seat (temporary 5-min reservation) → pay → confirm booking → or hold expires → seat released. Prevent overbooking through atomic seat status transitions and hold timeout management.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>Browse Flights → Select Seat → HOLD (5 min) → PAYMENT → CONFIRM (permanent)
+                                    ↓ or timeout
+                                  EXPIRED (seat released)
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Single machine or distributed?</strong> → "Distributed system with 500-1K concurrent users"</li>
+<li><strong>Do we track passenger history?</strong> → "Yes, past bookings for cancellations"</li>
+<li><strong>Multi-airline or single?</strong> → "Single airline"</li>
+<li><strong>Real payment processing?</strong> → "Mock payment service for interview"</li>
+<li><strong>Cancellations after confirmation?</strong> → "Yes, with refund policies"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Customer</strong></td>
+<td>Browse &amp; book flights</td>
+<td>Search, hold seat, confirm, cancel</td>
+</tr>
+<tr>
+<td><strong>Airline Admin</strong></td>
+<td>Manage flights &amp; pricing</td>
+<td>Create flights, set pricing strategy, monitor overbooking</td>
+</tr>
+<tr>
+<td><strong>System</strong></td>
+<td>Controller &amp; notifications</td>
+<td>Expire holds, send emails, update seat status</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Search &amp; Browse</strong>
+  - Search flights by route, date, aircraft type
+  - View seat inventory with real-time availability</p>
+<p>✅ <strong>Hold &amp; Reserve</strong>
+  - Temporarily hold seat for 5 minutes
+  - Prevent double-booking of same seat
+  - Generate booking ID &amp; hold expiry time</p>
+<p>✅ <strong>Confirm &amp; Book</strong>
+  - Confirm booking after payment
+  - Permanently mark seat as booked
+  - Update booking status</p>
+<p>✅ <strong>Cancel &amp; Release</strong>
+  - Cancel confirmed booking
+  - Release seat back to available
+  - Calculate refund based on policy</p>
+<p>✅ <strong>Automatic Expiry</strong>
+  - Automatically expire holds after 5 minutes
+  - Release seat if hold not confirmed
+  - Notify passenger of expiry</p>
+<p>✅ <strong>Dynamic Pricing</strong>
+  - Support multiple pricing strategies
+  - Adjust price based on occupancy
+  - Apply seat class surcharges (Economy vs Business)</p>
+<p>✅ <strong>Notifications</strong>
+  - Notify on hold success, confirmation, expiry, cancellation
+  - Support multiple channels (email, SMS, console)</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Concurrency</strong>: Support 500-1000+ simultaneous holds/confirms<br />
+✅ <strong>Consistency</strong>: No overbooking (seat can only be held by ONE user)<br />
+✅ <strong>Availability</strong>: Real-time seat status updates, &lt;100ms searches<br />
+✅ <strong>Latency</strong>: &lt;200ms for hold/confirm operations<br />
+✅ <strong>Uptime</strong>: 99.9% (8.6 hours downtime/month allowed)<br />
+✅ <strong>Throughput</strong>: 1M flights/day = ~12 flights/second average (easily handled)<br />
+✅ <strong>Hold Expiry Accuracy</strong>: ±30 seconds tolerance acceptable  </p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Distributed?</strong></td>
+<td>YES - multi-region with replicas</td>
+</tr>
+<tr>
+<td><strong>Single airline?</strong></td>
+<td>YES - simplify scope</td>
+</tr>
+<tr>
+<td><strong>Real payment?</strong></td>
+<td>NO - mock service (payment failure still tested)</td>
+</tr>
+<tr>
+<td><strong>Overbooking allowed?</strong></td>
+<td>YES - controlled 5% oversell for no-shows</td>
+</tr>
+<tr>
+<td><strong>Cancellation fee?</strong></td>
+<td>Time-based: Full refund if &gt;24h, 50% if &gt;6h, None if &lt;6h</td>
+</tr>
+<tr>
+<td><strong>Seat hold timeout</strong></td>
+<td>Fixed 5 minutes</td>
+</tr>
+<tr>
+<td><strong>Max passengers per booking</strong></td>
+<td>1 (single seat per booking)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<p>From the requirements above, identify nouns:</p>
+<pre class="codehilite"><code>Flight, Seat, Passenger, Booking, Price, Status, Notification, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="seat-a-single-seat-in-a-flight"><strong>Seat</strong> — A single seat in a flight</h4>
+<pre class="codehilite"><code>Properties:
+  - seat_id: str (e.g., &quot;1A&quot;, &quot;1B&quot;, &quot;12C&quot;)
+  - seat_class: SeatClass (ECONOMY or BUSINESS)
+  - status: SeatStatus (AVAILABLE, HOLD, BOOKED)
+  - booked_by: Optional[str] (passenger ID or None)
+
+Behaviors:
+  - is_available(): Check if seat can be held
+  - hold(): Transition to HOLD status
+  - book(): Transition to BOOKED status
+  - release(): Transition back to AVAILABLE
+</code></pre>
+
+<h4 id="flight-a-single-flight-with-multiple-seats"><strong>Flight</strong> — A single flight with multiple seats</h4>
+<pre class="codehilite"><code>Properties:
+  - flight_id: str (e.g., &quot;AA101&quot;)
+  - origin: str (e.g., &quot;NYC&quot;)
+  - destination: str (e.g., &quot;LAX&quot;)
+  - departure: datetime
+  - aircraft_type: str (e.g., &quot;Boeing 737&quot;)
+  - seats: Dict[str, Seat] (collection of 30-180 seats)
+
+Behaviors:
+  - add_seat(seat): Register seat in flight
+  - get_seat(seat_id): Retrieve seat by ID
+  - available_seats_count(): Count available seats for pricing
+</code></pre>
+
+<h4 id="passenger-a-person-booking-flights"><strong>Passenger</strong> — A person booking flights</h4>
+<pre class="codehilite"><code>Properties:
+  - passenger_id: str
+  - name: str
+  - email: str
+
+Behaviors:
+  - (none - just data holder)
+</code></pre>
+
+<h4 id="booking-a-single-seat-reservation"><strong>Booking</strong> — A single seat reservation</h4>
+<pre class="codehilite"><code>Properties:
+  - booking_id: str (unique per booking)
+  - passenger: Passenger (who booked)
+  - flight: Flight (which flight)
+  - seat: Seat (which seat)
+  - price: float (calculated price)
+  - status: BookingStatus (HOLD, CONFIRMED, CANCELLED, EXPIRED)
+  - created_at: datetime
+  - hold_until: datetime (when hold expires)
+
+Behaviors:
+  - confirm(): Mark as CONFIRMED, book the seat
+  - cancel(): Mark as CANCELLED, release seat
+  - expire(): Mark as EXPIRED, release seat (auto-called after 5 min)
+</code></pre>
+
+<h4 id="airlinesystem-main-controller-singleton"><strong>AirlineSystem</strong> — Main controller (Singleton)</h4>
+<pre class="codehilite"><code>Properties:
+  - flights: Dict[str, Flight]
+  - passengers: Dict[str, Passenger]
+  - bookings: Dict[str, Booking]
+  - observers: List[Observer] (for notifications)
+  - pricing_strategy: PricingStrategy
+
+Behaviors:
+  - hold_seat(passenger_id, flight_id, seat_id): Create booking + hold seat
+  - confirm_booking(booking_id): Transition HOLD → CONFIRMED
+  - cancel_booking(booking_id): Transition to CANCELLED
+  - check_and_expire_holds(): Expire all old HOLD bookings (background job)
+  - set_pricing_strategy(strategy): Switch pricing algorithm
+  - notify_observers(event, booking): Broadcast event to all listeners
+</code></pre>
+
+<h3 id="step-23-define-enumerations-state-type">Step 2.3: Define Enumerations (State &amp; Type)</h3>
+<pre class="codehilite"><code class="language-python">class SeatStatus(Enum):
+    AVAILABLE = &quot;available&quot;    # Can be held
+    HOLD = &quot;hold&quot;              # Temporarily reserved by user
+    BOOKED = &quot;booked&quot;          # Permanently booked after payment
+
+class BookingStatus(Enum):
+    HOLD = &quot;hold&quot;              # User in checkout (5-min window)
+    CONFIRMED = &quot;confirmed&quot;    # User paid, booking permanent
+    CANCELLED = &quot;cancelled&quot;    # User cancelled
+    EXPIRED = &quot;expired&quot;        # 5-min hold window closed
+
+class SeatClass(Enum):
+    ECONOMY = 1                # $100 base price
+    BUSINESS = 2               # $200 base price
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Seat</strong></td>
+<td>Granular seat tracking</td>
+<td>Can't prevent overbooking</td>
+</tr>
+<tr>
+<td><strong>Flight</strong></td>
+<td>Group seats logically</td>
+<td>Can't organize inventory</td>
+</tr>
+<tr>
+<td><strong>Passenger</strong></td>
+<td>Track who booked</td>
+<td>Can't send notifications</td>
+</tr>
+<tr>
+<td><strong>Booking</strong></td>
+<td>Hold lifecycle tracking</td>
+<td>Can't manage holds or expiry</td>
+</tr>
+<tr>
+<td><strong>AirlineSystem</strong></td>
+<td>Central controller</td>
+<td>No thread-safe coordination</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-search-flights"><strong>1. Search Flights</strong></h4>
+<pre class="codehilite"><code class="language-python">def search_flights(origin: str, destination: str, date: str) -&gt; List[Flight]:
+    &quot;&quot;&quot;
+    Find all flights matching route and date.
+    Returns: List of Flight objects with available seat counts.
+    Raises: FlightNotFoundError if no matches.
+    Response Time: &lt;100ms (cached)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="2-browse-seats"><strong>2. Browse Seats</strong></h4>
+<pre class="codehilite"><code class="language-python">def get_available_seats(flight_id: str) -&gt; Dict[str, Seat]:
+    &quot;&quot;&quot;
+    Get all available (AVAILABLE status) seats in a flight.
+    Returns: Dict mapping seat_id → Seat object.
+    Raises: FlightNotFoundError if flight doesn't exist.
+    Response Time: &lt;50ms (cached)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="3-hold-seat-critical"><strong>3. Hold Seat</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def hold_seat(passenger_id: str, flight_id: str, seat_id: str, 
+              hold_seconds: int = 300) -&gt; Booking:
+    &quot;&quot;&quot;
+    Temporarily reserve a seat for 5 minutes (default 300 seconds).
+
+    Precondition: seat.status == AVAILABLE
+    Postcondition: seat.status == HOLD, booking.status == HOLD
+
+    Returns: Booking object with booking_id, price, hold_until timestamp.
+
+    Raises:
+      - SeatNotAvailableError: Seat already held/booked by another user
+      - FlightNotFoundError: Flight doesn't exist
+      - PassengerNotFoundError: Passenger not registered
+      - SeatNotFoundError: Seat ID invalid
+
+    Concurrency: THREAD-SAFE with atomic status transition
+    Response Time: &lt;200ms
+    Idempotency: NO (multiple calls = multiple bookings)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="4-confirm-booking-critical"><strong>4. Confirm Booking</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def confirm_booking(booking_id: str) -&gt; bool:
+    &quot;&quot;&quot;
+    Permanently book a seat after payment succeeds.
+
+    Precondition: booking.status == HOLD
+    Postcondition: booking.status == CONFIRMED, seat.status == BOOKED
+
+    Returns: True if success, False if failed.
+
+    Raises:
+      - BookingNotFoundError: Booking ID invalid
+      - BookingExpiredError: Hold window closed (now &gt; hold_until)
+      - BookingNotHeldError: Booking not in HOLD state (already confirmed/cancelled)
+
+    Concurrency: THREAD-SAFE
+    Response Time: &lt;200ms
+    Side Effects: Sends notification to passenger (email/SMS)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="5-cancel-booking"><strong>5. Cancel Booking</strong></h4>
+<pre class="codehilite"><code class="language-python">def cancel_booking(booking_id: str) -&gt; bool:
+    &quot;&quot;&quot;
+    Cancel a booking and release seat back to available.
+
+    Precondition: booking.status in [HOLD, CONFIRMED]
+    Postcondition: booking.status = CANCELLED, seat.status = AVAILABLE
+
+    Returns: True if success, False if failed.
+
+    Raises:
+      - BookingNotFoundError: Booking ID invalid
+      - BookingAlreadyExpiredError: Can't cancel expired booking
+
+    Side Effects: 
+      - Calculates refund based on time_until_departure
+      - Sends cancellation email
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="6-automatic-hold-expiry-background-job"><strong>6. Automatic Hold Expiry</strong> (Background Job)</h4>
+<pre class="codehilite"><code class="language-python">def check_and_expire_holds() -&gt; None:
+    &quot;&quot;&quot;
+    Scan all HOLD bookings and auto-expire stale ones.
+    Called every 1 minute by background scheduler.
+
+    For each HOLD booking:
+      if now &gt; booking.hold_until:
+        - Set booking.status = EXPIRED
+        - Set seat.status = AVAILABLE
+        - Notify passenger
+
+    Response Time: O(n) where n = total HOLD bookings (tolerate ~5 min delay)
+    Concurrency: Can run in parallel, guarded by distributed locks
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="7-set-pricing-strategy"><strong>7. Set Pricing Strategy</strong></h4>
+<pre class="codehilite"><code class="language-python">def set_pricing_strategy(strategy: PricingStrategy) -&gt; None:
+    &quot;&quot;&quot;
+    Dynamically switch pricing algorithm.
+    New pricing applies to next hold_seat() call.
+
+    Strategy: Pluggable (FixedPricing or DemandBasedPricing)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="8-register-observer-for-notifications"><strong>8. Register Observer</strong> (For Notifications)</h4>
+<pre class="codehilite"><code class="language-python">def add_observer(observer: Observer) -&gt; None:
+    &quot;&quot;&quot;
+    Register callback for booking events.
+
+    Events: &quot;held&quot;, &quot;confirmed&quot;, &quot;cancelled&quot;, &quot;expired&quot;
+    Observer will be called: observer.update(event, booking)
+
+    Example: Add EmailNotifier to send emails on confirm/expire
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-32-exception-hierarchy">Step 3.2: Exception Hierarchy</h3>
+<pre class="codehilite"><code class="language-python">class AirlineException(Exception):
+    &quot;&quot;&quot;Base exception&quot;&quot;&quot;
+    pass
+
+class SeatNotAvailableError(AirlineException):
+    &quot;&quot;&quot;Seat already held/booked&quot;&quot;&quot;
+    pass
+
+class BookingExpiredError(AirlineException):
+    &quot;&quot;&quot;Hold window closed&quot;&quot;&quot;
+    pass
+
+class FlightNotFoundError(AirlineException):
+    &quot;&quot;&quot;Flight ID invalid&quot;&quot;&quot;
+    pass
+
+class PassengerNotFoundError(AirlineException):
+    &quot;&quot;&quot;Passenger not registered&quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">system = AirlineSystem.get_instance()
+
+# 1. Search flights
+flights = system.search_flights(&quot;NYC&quot;, &quot;LAX&quot;, &quot;2025-01-15&quot;)
+
+# 2. Browse seats
+flight = flights[0]
+seats = system.get_available_seats(flight.flight_id)
+
+# 3. HOLD seat
+booking = system.hold_seat(
+    passenger_id=&quot;P001&quot;,
+    flight_id=&quot;AA101&quot;,
+    seat_id=&quot;1A&quot;
+)
+print(f&quot;Booking ID: {booking.booking_id}, Price: ${booking.price}&quot;)
+
+# 4. CONFIRM booking
+success = system.confirm_booking(booking.booking_id)
+
+# 5. CANCEL booking
+system.cancel_booking(booking.booking_id)
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and inheritance. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>AirlineSystem HAS-A flights (1:N Composition)
+  └─ AirlineSystem is &quot;owner&quot;, manages lifecycle of flights
+
+Flight HAS-A seats (1:N Composition)
+  └─ Flight contains collection of Seat objects
+
+Booking REFERENCES passenger (1:1 Association)
+  └─ Booking links to Passenger (no ownership)
+
+Booking REFERENCES flight (1:1 Association)
+  └─ Booking links to Flight (no ownership)
+
+Booking REFERENCES seat (1:1 Association)
+  └─ Booking links to Seat (no ownership)
+
+AirlineSystem USES-A PricingStrategy (1:1 Composition)
+  └─ AirlineSystem owns and manages pricing algorithm
+
+AirlineSystem NOTIFIES Observer (1:N Association)
+  └─ Multiple observers listen to events
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌──────────────────────────────────────┐
+│    AirlineSystem (Singleton)         │
+├──────────────────────────────────────┤
+│ - _instance: AirlineSystem           │
+│ - flights: Dict[str, Flight]         │
+│ - passengers: Dict[str, Passenger]   │
+│ - bookings: Dict[str, Booking]       │
+│ - observers: List[Observer]          │
+│ - pricing_strategy: PricingStrategy  │
+│ - _lock: threading.Lock              │
+├──────────────────────────────────────┤
+│ + get_instance(): AirlineSystem      │
+│ + hold_seat(...): Booking            │
+│ + confirm_booking(booking_id): bool  │
+│ + cancel_booking(booking_id): bool   │
+│ + check_and_expire_holds(): void     │
+│ + set_pricing_strategy(strategy)     │
+│ + add_observer(observer): void       │
+│ + notify_observers(event, booking)   │
+└──────────────────────────────────────┘
+           │ manages 1:N
+           ▼
+    ┌─────────────────────────────────┐
+    │      Flight                     │
+    ├─────────────────────────────────┤
+    │ - flight_id: str                │
+    │ - origin: str                   │
+    │ - destination: str              │
+    │ - departure: datetime           │
+    │ - aircraft_type: str            │
+    │ - seats: Dict[str, Seat]        │
+    ├─────────────────────────────────┤
+    │ + add_seat(seat): void          │
+    │ + get_seat(seat_id): Seat       │
+    │ + available_seats_count(): int  │
+    └─────────────────────────────────┘
+           │ contains 1:N
+           ▼
+    ┌─────────────────────────────────┐
+    │         Seat                    │
+    ├─────────────────────────────────┤
+    │ - seat_id: str                  │
+    │ - seat_class: SeatClass         │
+    │ - status: SeatStatus            │
+    │ - booked_by: Optional[str]      │
+    ├─────────────────────────────────┤
+    │ + is_available(): bool          │
+    │ + hold(): void                  │
+    │ + book(): void                  │
+    │ + release(): void               │
+    └─────────────────────────────────┘
+           ▲ linked by
+           │
+    ┌─────────────────────────────────┐
+    │        Booking                  │
+    ├─────────────────────────────────┤
+    │ - booking_id: str               │
+    │ - passenger: Passenger          │
+    │ - flight: Flight                │
+    │ - seat: Seat                    │
+    │ - price: float                  │
+    │ - status: BookingStatus         │
+    │ - hold_until: datetime          │
+    ├─────────────────────────────────┤
+    │ + confirm(): void               │
+    │ + cancel(): void                │
+    │ + expire(): void                │
+    └─────────────────────────────────┘
+           │ references 1:1
+           ▼
+    ┌─────────────────────┐
+    │     Passenger       │
+    ├─────────────────────┤
+    │ - passenger_id: str │
+    │ - name: str         │
+    │ - email: str        │
+    └─────────────────────┘
+
+
+STRATEGY PATTERN (Pricing):
+┌────────────────────────────────────┐
+│ PricingStrategy (Abstract)         │
+├────────────────────────────────────┤
+│ + calculate_price(flight, seat)    │
+└──┬─────────────────────────────────┘
+   │ implemented by
+   ├─→ FixedPricing (Economy $100, Business $200)
+   └─→ DemandBasedPricing (1.0x - 1.5x multiplier)
+
+OBSERVER PATTERN (Notifications):
+┌────────────────────────────────────┐
+│ Observer (Abstract)                │
+├────────────────────────────────────┤
+│ + update(event, booking)           │
+└──┬─────────────────────────────────┘
+   │ implemented by
+   ├─→ ConsoleObserver (logging)
+   ├─→ EmailNotifier
+   └─→ SMSNotifier
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AirlineSystem → Flights</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System owns all flights</td>
+</tr>
+<tr>
+<td>Flight → Seats</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Flight owns all its seats</td>
+</tr>
+<tr>
+<td>Booking → Passenger</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Booking references one passenger</td>
+</tr>
+<tr>
+<td>Booking → Flight</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Booking references one flight</td>
+</tr>
+<tr>
+<td>Booking → Seat</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Booking reserves one seat</td>
+</tr>
+<tr>
+<td>AirlineSystem → PricingStrategy</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>System owns pricing rule</td>
+</tr>
+<tr>
+<td>AirlineSystem → Observers</td>
+<td>1:N</td>
+<td>Association</td>
+<td>System notifies multiple listeners</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-singleton-for-airlinesystem">Pattern 1: <strong>Singleton</strong> (For AirlineSystem)</h3>
+<p><strong>Problem</strong>: Multiple threads need single consistent view of flights, bookings, passengers.</p>
+<p><strong>Solution</strong>: One global AirlineSystem instance, thread-safe initialization.</p>
+<pre class="codehilite"><code class="language-python">class AirlineSystem:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Single source of truth, ✅ Thread-safe (double-checked lock), ✅ Global access<br />
+<strong>Trade-off</strong>: ⚠️ Global state (hard to test), ⚠️ Harder to scale across machines</p>
+<hr />
+<h3 id="pattern-2-strategy-for-pricing">Pattern 2: <strong>Strategy</strong> (For Pricing)</h3>
+<p><strong>Problem</strong>: Pricing varies (fixed vs demand-based) and may change in future.</p>
+<p><strong>Solution</strong>: Pluggable pricing algorithms, swap without modifying booking logic.</p>
+<pre class="codehilite"><code class="language-python">class PricingStrategy(ABC):
+    @abstractmethod
+    def calculate_price(self, flight: Flight, seat: Seat) -&gt; float:
+        pass
+
+class FixedPricing(PricingStrategy):
+    def calculate_price(self, flight: Flight, seat: Seat) -&gt; float:
+        return 200.0 if seat.seat_class == SeatClass.BUSINESS else 100.0
+
+class DemandBasedPricing(PricingStrategy):
+    def calculate_price(self, flight: Flight, seat: Seat) -&gt; float:
+        base = 200.0 if seat.seat_class == SeatClass.BUSINESS else 100.0
+        occupancy_rate = 1.0 - (flight.available_seats_count() / len(flight.seats))
+        multiplier = 1.0 + (occupancy_rate * 0.5)  # up to 1.5x surge
+        return base * multiplier
+
+# Usage: Switch algorithm at runtime
+system.set_pricing_strategy(DemandBasedPricing())
+price = system.pricing_strategy.calculate_price(flight, seat)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Easy to add new pricing (Seasonal, EarlyBird, etc.), ✅ No booking logic change<br />
+<strong>Trade-off</strong>: ⚠️ Extra abstraction layer</p>
+<hr />
+<h3 id="pattern-3-observer-for-notifications">Pattern 3: <strong>Observer</strong> (For Notifications)</h3>
+<p><strong>Problem</strong>: Booking events (hold, confirm, expire) need to trigger emails/SMS/logging.</p>
+<p><strong>Solution</strong>: Observer pattern decouples event producer from consumers.</p>
+<pre class="codehilite"><code class="language-python">class Observer(ABC):
+    @abstractmethod
+    def update(self, event: str, booking: Booking):
+        pass
+
+class EmailNotifier(Observer):
+    def update(self, event: str, booking: Booking):
+        if event == &quot;confirmed&quot;:
+            send_email(booking.passenger.email, &quot;Booking Confirmed!&quot;)
+
+class ConsoleObserver(Observer):
+    def update(self, event: str, booking: Booking):
+        print(f&quot;[{event.upper()}] Booking {booking.booking_id}&quot;)
+
+# Usage: Add multiple observers
+system.add_observer(EmailNotifier())
+system.add_observer(ConsoleObserver())
+
+# On any event:
+system.notify_observers(&quot;confirmed&quot;, booking)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Loose coupling, ✅ Easy to add new notifiers (SMS, Slack, etc.)<br />
+<strong>Trade-off</strong>: ⚠️ Observer lifecycle management</p>
+<hr />
+<h3 id="pattern-4-state-enums-for-status-transitions">Pattern 4: <strong>State Enums</strong> (For Status Transitions)</h3>
+<p><strong>Problem</strong>: Booking can be in HOLD, CONFIRMED, EXPIRED, CANCELLED. Invalid transitions must be prevented.</p>
+<p><strong>Solution</strong>: Use enums to explicitly track state.</p>
+<pre class="codehilite"><code class="language-python">class BookingStatus(Enum):
+    HOLD = &quot;hold&quot;
+    CONFIRMED = &quot;confirmed&quot;
+    EXPIRED = &quot;expired&quot;
+    CANCELLED = &quot;cancelled&quot;
+
+# Valid transitions:
+def confirm_booking(booking_id: str):
+    booking = bookings[booking_id]
+    if booking.status != BookingStatus.HOLD:
+        raise ValueError(&quot;Can only confirm HOLD bookings&quot;)
+    booking.status = BookingStatus.CONFIRMED
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Explicit state, ✅ Invalid transitions caught at runtime<br />
+<strong>Trade-off</strong>: ⚠️ Need explicit state transition logic</p>
+<hr />
+<h3 id="pattern-5-factory-for-creating-bookings">Pattern 5: <strong>Factory</strong> (For Creating Bookings)</h3>
+<p><strong>Problem</strong>: Creating a booking requires initializing multiple objects (Seat, Booking, notification).</p>
+<p><strong>Solution</strong>: Factory method encapsulates creation logic.</p>
+<pre class="codehilite"><code class="language-python">def hold_seat(self, passenger_id: str, flight_id: str, seat_id: str):
+    # Factory logic: create booking with all dependencies
+    seat.hold()
+    price = self.pricing_strategy.calculate_price(flight, seat)
+    booking = Booking(f&quot;BK{len(self.bookings)+1}&quot;, passenger, flight, seat, price)
+    booking.hold_until = datetime.now() + timedelta(seconds=300)
+    self.bookings[booking.booking_id] = booking
+    return booking
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Centralized creation, ✅ Consistent initialization<br />
+<strong>Trade-off</strong>: ⚠️ If grows, consider Builder pattern</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>Need single global AirlineSystem</td>
+<td>Consistent state across all clients</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Varying pricing algorithms</td>
+<td>Pluggable, easy to extend</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Events trigger notifications</td>
+<td>Loose coupling, event-driven</td>
+</tr>
+<tr>
+<td><strong>State (Enum)</strong></td>
+<td>Explicit booking lifecycle</td>
+<td>Invalid transitions prevented</td>
+</tr>
+<tr>
+<td><strong>Factory</strong></td>
+<td>Complex object creation</td>
+<td>Centralized, consistent</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">from enum import Enum
+from abc import ABC, abstractmethod
+from typing import List, Dict, Optional
+from datetime import datetime, timedelta
+import threading
+
+# ============ ENUMERATIONS ============
+
+class SeatStatus(Enum):
+    AVAILABLE = &quot;available&quot;
+    HOLD = &quot;hold&quot;
+    BOOKED = &quot;booked&quot;
+
+class BookingStatus(Enum):
+    HOLD = &quot;hold&quot;
+    CONFIRMED = &quot;confirmed&quot;
+    CANCELLED = &quot;cancelled&quot;
+    EXPIRED = &quot;expired&quot;
+
+class SeatClass(Enum):
+    ECONOMY = 1
+    BUSINESS = 2
+
+# ============ CORE ENTITIES ============
+
+class Seat:
+    def __init__(self, seat_id: str, seat_class: SeatClass):
+        self.seat_id = seat_id
+        self.seat_class = seat_class
+        self.status = SeatStatus.AVAILABLE
+        self.booked_by = None
+
+    def is_available(self) -&gt; bool:
+        return self.status == SeatStatus.AVAILABLE
+
+    def hold(self):
+        if not self.is_available():
+            raise ValueError(f&quot;Seat {self.seat_id} not available&quot;)
+        self.status = SeatStatus.HOLD
+
+    def book(self):
+        self.status = SeatStatus.BOOKED
+
+    def release(self):
+        self.status = SeatStatus.AVAILABLE
+        self.booked_by = None
+
+class Passenger:
+    def __init__(self, passenger_id: str, name: str, email: str):
+        self.passenger_id = passenger_id
+        self.name = name
+        self.email = email
+
+class Flight:
+    def __init__(self, flight_id: str, origin: str, destination: str, 
+                 departure: datetime, aircraft_type: str):
+        self.flight_id = flight_id
+        self.origin = origin
+        self.destination = destination
+        self.departure = departure
+        self.aircraft_type = aircraft_type
+        self.seats: Dict[str, Seat] = {}
+
+    def add_seat(self, seat: Seat):
+        self.seats[seat.seat_id] = seat
+
+    def get_seat(self, seat_id: str) -&gt; Optional[Seat]:
+        return self.seats.get(seat_id)
+
+    def available_seats_count(self) -&gt; int:
+        return sum(1 for s in self.seats.values() if s.is_available())
+
+class Booking:
+    def __init__(self, booking_id: str, passenger: Passenger, flight: Flight, 
+                 seat: Seat, price: float):
+        self.booking_id = booking_id
+        self.passenger = passenger
+        self.flight = flight
+        self.seat = seat
+        self.price = price
+        self.status = BookingStatus.HOLD
+        self.created_at = datetime.now()
+        self.hold_until: Optional[datetime] = None
+
+    def confirm(self):
+        self.status = BookingStatus.CONFIRMED
+        self.seat.book()
+
+    def cancel(self):
+        self.status = BookingStatus.CANCELLED
+        self.seat.release()
+
+    def expire(self):
+        if self.status == BookingStatus.HOLD:
+            self.status = BookingStatus.EXPIRED
+            self.seat.release()
+
+# ============ STRATEGIES ============
+
+class PricingStrategy(ABC):
+    @abstractmethod
+    def calculate_price(self, flight: Flight, seat: Seat) -&gt; float:
+        pass
+
+class FixedPricing(PricingStrategy):
+    def calculate_price(self, flight: Flight, seat: Seat) -&gt; float:
+        return 200.0 if seat.seat_class == SeatClass.BUSINESS else 100.0
+
+class DemandBasedPricing(PricingStrategy):
+    def calculate_price(self, flight: Flight, seat: Seat) -&gt; float:
+        base = 200.0 if seat.seat_class == SeatClass.BUSINESS else 100.0
+        available = flight.available_seats_count()
+        total = len(flight.seats)
+        occupancy_rate = 1.0 - (available / total) if total &gt; 0 else 0
+        multiplier = 1.0 + (occupancy_rate * 0.5)
+        return base * multiplier
+
+# ============ OBSERVERS ============
+
+class Observer(ABC):
+    @abstractmethod
+    def update(self, event: str, booking: Booking):
+        pass
+
+class ConsoleObserver(Observer):
+    def update(self, event: str, booking: Booking):
+        timestamp = datetime.now().strftime(&quot;%H:%M:%S&quot;)
+        print(f&quot;[{timestamp}] {event.upper():12} | Passenger: {booking.passenger.name:15} | &quot;
+              f&quot;Flight: {booking.flight.flight_id:8} | Seat: {booking.seat.seat_id:4} | Price: ${booking.price:.2f}&quot;)
+
+class EmailNotifier(Observer):
+    def update(self, event: str, booking: Booking):
+        if event == &quot;confirmed&quot;:
+            print(f&quot;📧 Email: {booking.passenger.email} - Booking confirmed!&quot;)
+        elif event == &quot;expired&quot;:
+            print(f&quot;📧 Email: {booking.passenger.email} - Hold expired!&quot;)
+
+# ============ SINGLETON CONTROLLER ============
+
+class AirlineSystem:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if not hasattr(self, 'initialized'):
+            self.flights: Dict[str, Flight] = {}
+            self.passengers: Dict[str, Passenger] = {}
+            self.bookings: Dict[str, Booking] = {}
+            self.observers: List[Observer] = []
+            self.pricing_strategy: PricingStrategy = FixedPricing()
+            self._data_lock = threading.Lock()
+            self.initialized = True
+
+    @staticmethod
+    def get_instance() -&gt; 'AirlineSystem':
+        return AirlineSystem()
+
+    def set_pricing_strategy(self, strategy: PricingStrategy):
+        with self._data_lock:
+            self.pricing_strategy = strategy
+
+    def add_observer(self, observer: Observer):
+        with self._data_lock:
+            self.observers.append(observer)
+
+    def notify_observers(self, event: str, booking: Booking):
+        with self._data_lock:
+            observers_copy = list(self.observers)
+        for obs in observers_copy:
+            obs.update(event, booking)
+
+    def add_flight(self, flight: Flight):
+        with self._data_lock:
+            self.flights[flight.flight_id] = flight
+
+    def register_passenger(self, passenger: Passenger):
+        with self._data_lock:
+            self.passengers[passenger.passenger_id] = passenger
+
+    def hold_seat(self, passenger_id: str, flight_id: str, seat_id: str, 
+                  hold_seconds: int = 300) -&gt; Optional[Booking]:
+        with self._data_lock:
+            if flight_id not in self.flights:
+                print(f&quot;❌ Flight {flight_id} not found&quot;)
+                return None
+
+            flight = self.flights[flight_id]
+            seat = flight.get_seat(seat_id)
+
+            if not seat or not seat.is_available():
+                print(f&quot;❌ Seat {seat_id} not available&quot;)
+                return None
+
+            passenger = self.passengers.get(passenger_id)
+            if not passenger:
+                print(f&quot;❌ Passenger {passenger_id} not found&quot;)
+                return None
+
+            seat.hold()
+            price = self.pricing_strategy.calculate_price(flight, seat)
+            booking = Booking(f&quot;BK{len(self.bookings)+1}&quot;, passenger, flight, seat, price)
+            booking.hold_until = datetime.now() + timedelta(seconds=hold_seconds)
+            self.bookings[booking.booking_id] = booking
+            booking_to_notify = booking
+
+        self.notify_observers(&quot;held&quot;, booking_to_notify)
+        return booking
+
+    def confirm_booking(self, booking_id: str) -&gt; bool:
+        with self._data_lock:
+            booking = self.bookings.get(booking_id)
+            if not booking:
+                print(f&quot;❌ Booking {booking_id} not found&quot;)
+                return False
+
+            if booking.status != BookingStatus.HOLD:
+                print(f&quot;❌ Booking not in HOLD status&quot;)
+                return False
+
+            if datetime.now() &gt; booking.hold_until:
+                booking.expire()
+                booking_to_notify = booking
+                expired = True
+            else:
+                booking.confirm()
+                booking_to_notify = booking
+                expired = False
+
+        if expired:
+            self.notify_observers(&quot;expired&quot;, booking_to_notify)
+            print(f&quot;❌ Hold expired for booking {booking_id}&quot;)
+            return False
+
+        self.notify_observers(&quot;confirmed&quot;, booking_to_notify)
+        return True
+
+    def cancel_booking(self, booking_id: str) -&gt; bool:
+        with self._data_lock:
+            booking = self.bookings.get(booking_id)
+            if not booking:
+                return False
+
+            booking.cancel()
+            booking_to_notify = booking
+
+        self.notify_observers(&quot;cancelled&quot;, booking_to_notify)
+        return True
+
+    def check_and_expire_holds(self):
+        now = datetime.now()
+        expired_bookings = []
+
+        with self._data_lock:
+            for booking in self.bookings.values():
+                if (booking.status == BookingStatus.HOLD and 
+                    booking.hold_until and now &gt; booking.hold_until):
+                    booking.expire()
+                    expired_bookings.append(booking)
+
+        for booking in expired_bookings:
+            self.notify_observers(&quot;expired&quot;, booking)
+
+# ============ DEMO ============
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;=&quot;*70)
+    print(&quot;AIRLINE MANAGEMENT SYSTEM&quot;)
+    print(&quot;=&quot;*70)
+
+    system = AirlineSystem.get_instance()
+    system.flights.clear()
+    system.passengers.clear()
+    system.bookings.clear()
+    system.observers.clear()
+
+    system.add_observer(ConsoleObserver())
+    system.add_observer(EmailNotifier())
+
+    # Create flight
+    flight = Flight(&quot;AA101&quot;, &quot;NYC&quot;, &quot;LAX&quot;, datetime.now() + timedelta(hours=2), &quot;Boeing 737&quot;)
+    for i in range(1, 6):
+        flight.add_seat(Seat(f&quot;{i}A&quot;, SeatClass.BUSINESS))
+        flight.add_seat(Seat(f&quot;{i}B&quot;, SeatClass.ECONOMY))
+    system.add_flight(flight)
+
+    # Register passengers
+    p1 = Passenger(&quot;P001&quot;, &quot;John Doe&quot;, &quot;john@example.com&quot;)
+    p2 = Passenger(&quot;P002&quot;, &quot;Jane Smith&quot;, &quot;jane@example.com&quot;)
+    system.register_passenger(p1)
+    system.register_passenger(p2)
+
+    print(f&quot;\n✅ Setup: Flight {flight.flight_id} with {len(flight.seats)} seats&quot;)
+
+    # Demo hold &amp; confirm
+    print(&quot;\n[Demo] Hold &amp; Confirm:&quot;)
+    b1 = system.hold_seat(&quot;P001&quot;, &quot;AA101&quot;, &quot;1A&quot;, hold_seconds=3)
+    if b1:
+        print(f&quot;Held booking {b1.booking_id}&quot;)
+        system.confirm_booking(b1.booking_id)
+
+    # Demo pricing
+    print(&quot;\n[Demo] Dynamic Pricing:&quot;)
+    system.set_pricing_strategy(DemandBasedPricing())
+    b2 = system.hold_seat(&quot;P002&quot;, &quot;AA101&quot;, &quot;1B&quot;, hold_seconds=3)
+    if b2:
+        print(f&quot;Held booking {b2.booking_id}&quot;)
+        system.cancel_booking(b2.booking_id)
+
+    print(f&quot;\n✅ Demo complete! Available seats: {flight.available_seats_count()}&quot;)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>hold_seat</strong></td>
+<td>Mutex on data</td>
+<td>Only 1 user can hold seat at a time</td>
+</tr>
+<tr>
+<td><strong>confirm_booking</strong></td>
+<td>Mutex on data</td>
+<td>Atomic: check HOLD, check expiry, transition</td>
+</tr>
+<tr>
+<td><strong>cancel_booking</strong></td>
+<td>Mutex on data</td>
+<td>No double-cancel</td>
+</tr>
+<tr>
+<td><strong>check_and_expire_holds</strong></td>
+<td>Mutex on data</td>
+<td>Safe scan, expiry without race condition</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. ✅ Locks guard critical sections (check + modify)
+2. ✅ Minimize lock duration (notify outside lock)
+3. ✅ Double-checked locking for Singleton
+4. ✅ No nested locks (prevent deadlock)</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="scenario-1-hold-confirm">Scenario 1: Hold &amp; Confirm</h3>
+<pre class="codehilite"><code>[12:30:45] HELD        | Passenger: John Doe         | Flight: AA101    | Seat: 1A   | Price: $200.00
+📧 Email: john@example.com - Booking confirmed!
+[12:30:46] CONFIRMED   | Passenger: John Doe         | Flight: AA101    | Seat: 1A   | Price: $200.00
+</code></pre>
+
+<h3 id="scenario-2-hold-expiry">Scenario 2: Hold Expiry</h3>
+<pre class="codehilite"><code>[12:31:00] HELD        | Passenger: Jane Smith       | Flight: AA101    | Seat: 1B   | Price: $100.00
+📧 Email: jane@example.com - Hold expired!
+[12:31:05] EXPIRED     | Passenger: Jane Smith       | Flight: AA101    | Seat: 1B   | Price: $100.00
+</code></pre>
+
+<h3 id="scenario-3-dynamic-pricing">Scenario 3: Dynamic Pricing</h3>
+<pre class="codehilite"><code>Current occupancy: 1/10 (10%)
+Price: Economy $100, Business $200 (base)
+
+After 7 bookings (80% occupancy):
+Price: Economy $140 (40% surge), Business $280 (40% surge)
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-questions">Basic Questions</h3>
+<p><strong>Q1: How do you prevent overbooking of a seat?</strong></p>
+<p>A: Atomic status transitions with lock-based concurrency control:</p>
+<pre class="codehilite"><code class="language-python">with self._data_lock:  # Atomic critical section
+    if seat.status != SeatStatus.AVAILABLE:
+        raise SeatNotAvailableError()
+
+    seat.status = SeatStatus.HOLD  # Atomic transition
+</code></pre>
+
+<p><strong>Q2: What's the difference between HOLD and CONFIRMED?</strong></p>
+<p>A: HOLD = temporary 5-min window. CONFIRMED = permanent after payment. Timeline: Browse → Hold → Confirm (or timeout → Expire).</p>
+<p><strong>Q3: How do you handle hold expiry?</strong></p>
+<p>A: Lazy check on confirm + eager background job scanning all HOLD bookings every minute.</p>
+<p><strong>Q4: Why use Strategy pattern for pricing?</strong></p>
+<p>A: Allows swapping pricing algorithms (FixedPricing, DemandBasedPricing) without modifying booking logic.</p>
+<p><strong>Q5: How would you scale to 1M concurrent users and 1M flights/day?</strong></p>
+<p>A: Multi-tier: API Gateway → 1000 API servers → Redis locks → Sharded DB (1000 shards) → Kafka for events.</p>
+<hr />
+<h3 id="intermediate-questions">Intermediate Questions</h3>
+<p><strong>Q6: How to handle race condition: 2 users holding same seat simultaneously?</strong></p>
+<p>A: Lock ensures only 1 thread can modify seat status at a time. Lock TTL prevents deadlocks.</p>
+<p><strong>Q7: How to handle payment failure gracefully?</strong></p>
+<p>A: Retry 3x with exponential backoff. On final failure, auto-expire booking and release seat.</p>
+<p><strong>Q8: How to implement seat upgrades (Economy → Business)?</strong></p>
+<p>A: Calculate price difference, charge user, release old seat, book new seat.</p>
+<p><strong>Q9: What metrics would you track?</strong></p>
+<p>A: Hold success rate, confirmation rate, hold expiry rate, overbooking incidents, API latency, cache hit ratio.</p>
+<p><strong>Q10: How to handle regulatory compliance (refund policies)?</strong></p>
+<p>A: Time-based: Full refund if &gt;24h, 50% if &gt;6h, None if &lt;6h. Audit log all refunds.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<h3 id="q1-how-to-prevent-overbooking-in-distributed-system">Q1: How to prevent overbooking in distributed system?</h3>
+<p><strong>Solution</strong>: Pessimistic locking + version control with Redis:</p>
+<pre class="codehilite"><code>Acquire lock: Redis.SET(&quot;lock:FL123:1A&quot;, &quot;USER_A&quot;, NX, EX=15s)
+Check seat version: DB.GET(seat, version=5)
+Update: DB.UPDATE(...) WHERE version=5 SET version=6, status=HOLD
+Release lock
+</code></pre>
+
+<h3 id="q2-how-to-cache-seat-availability-without-invalidation-storms">Q2: How to cache seat availability without invalidation storms?</h3>
+<p><strong>Solution</strong>: Cache with 5-second TTL + versioning. Broadcast version increments to invalidate.</p>
+<h3 id="q3-how-to-implement-real-time-seat-updates">Q3: How to implement real-time seat updates?</h3>
+<p><strong>Solution</strong>: WebSocket + Redis Pub/Sub. Latency: ~100ms (broadcast + network + UI update).</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw UML class diagram with all relationships</li>
+<li>[ ] Discuss hold/confirm lifecycle and HOLD → CONFIRMED transitions</li>
+<li>[ ] Explain how to prevent overbooking with atomic locks</li>
+<li>[ ] Discuss hold expiry (5-min timeout, auto-release)</li>
+<li>[ ] Run complete implementation without errors</li>
+<li>[ ] Answer 5+ scaling Q&amp;A questions</li>
+<li>[ ] Mention thread safety in Singleton, hold_seat, confirm_booking</li>
+<li>[ ] Discuss trade-offs (in-memory vs DB, pessimistic vs optimistic locking)</li>
+</ul>
+<hr />
+<p><strong>Ready for interview? Book some flights! 🛫</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

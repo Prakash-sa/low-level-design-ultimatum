@@ -1,0 +1,1931 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chess Game - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="chess-game-complete-design-guide">Chess Game — Complete Design Guide</h1>
+<blockquote>
+<p>Full FIDE chess engine with piece-movement validation, check/checkmate detection, special moves, and game-state lifecycle management.</p>
+</blockquote>
+<p><strong>Scale</strong>: Single-game engine, extensible to 1M+ concurrent games<br />
+<strong>Duration</strong>: 75-minute interview guide<br />
+<strong>Focus</strong>: Piece hierarchy, legal-move generation, check/checkmate detection, game-state machine, thread-safe Singleton</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>Two players alternately move pieces on an 8×8 board. Every move must be validated (piece rules + no leaving own king in check). Game ends on checkmate, stalemate, or draw. Core concerns: correctness of rules, state management, and move validation.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>Initialize Board → Place 32 Pieces → White Moves First
+     ↓
+Validate Move (piece rules + no self-check)
+     ↓ illegal                    ↓ legal
+  Reject                   Apply to Board → Switch Turn
+                                 ↓
+                         Detect Check / Checkmate / Stalemate
+                                 ↓ checkmate or stalemate
+                              Game Over
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Single game or multiplayer server?</strong> → "Single-game engine; multiplayer is a scaling concern"</li>
+<li><strong>Full FIDE rules or simplified?</strong> → "Full rules including castling, en passant, promotion"</li>
+<li><strong>AI opponent or human vs human?</strong> → "Human vs human; mention minimax as an extension"</li>
+<li><strong>Undo / replay required?</strong> → "Yes, maintain move history for replay"</li>
+<li><strong>Clock / time controls?</strong> → "Out of scope for core; mention as a scaling concern"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>White Player</strong></td>
+<td>Controls white pieces</td>
+<td>Make moves, request draw</td>
+</tr>
+<tr>
+<td><strong>Black Player</strong></td>
+<td>Controls black pieces</td>
+<td>Make moves, resign</td>
+</tr>
+<tr>
+<td><strong>System</strong></td>
+<td>Game controller</td>
+<td>Validate moves, detect check/checkmate, switch turns</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Board Setup</strong>
+  - Create standard 8×8 board with 32 pieces in starting positions
+  - Support piece lookup by position in O(1)</p>
+<p>✅ <strong>Move Validation</strong>
+  - Validate moves per piece type (Pawn, Rook, Knight, Bishop, Queen, King)
+  - Reject any move that leaves own king in check</p>
+<p>✅ <strong>Special Moves</strong>
+  - Castling (kingside and queenside)
+  - En passant pawn capture
+  - Pawn promotion (to Queen, Rook, Bishop, or Knight)</p>
+<p>✅ <strong>Game-State Detection</strong>
+  - Detect check (king under attack, legal moves exist)
+  - Detect checkmate (king under attack, no legal moves)
+  - Detect stalemate (not in check, no legal moves)
+  - Detect draw (insufficient material, 50-move rule, threefold repetition)</p>
+<p>✅ <strong>Turn Management</strong>
+  - Alternate turns between white and black
+  - Reject moves from the wrong player</p>
+<p>✅ <strong>History &amp; Replay</strong>
+  - Record every move for replay or undo</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Correctness</strong>: Legal moves must never leave own king in check<br />
+✅ <strong>Performance</strong>: O(1) piece lookup; O(n) move generation (n ≤ 50 legal moves max)<br />
+✅ <strong>Extensibility</strong>: Strategy pattern enables adding new piece types or rule variants<br />
+✅ <strong>Thread Safety</strong>: Singleton initialization protected; RLock prevents re-entrancy issues</p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Board size</strong></td>
+<td>Fixed 8×8</td>
+</tr>
+<tr>
+<td><strong>Pieces per side</strong></td>
+<td>16 (32 total)</td>
+</tr>
+<tr>
+<td><strong>Checkmate</strong></td>
+<td>King in check + no legal moves</td>
+</tr>
+<tr>
+<td><strong>Stalemate</strong></td>
+<td>Not in check + no legal moves (draw)</td>
+</tr>
+<tr>
+<td><strong>Legal move filter</strong></td>
+<td>Simulate move, reject if own king attacked</td>
+</tr>
+<tr>
+<td><strong>Special moves</strong></td>
+<td>Castling, en passant, promotion in scope</td>
+</tr>
+<tr>
+<td><strong>AI engine</strong></td>
+<td>Out of scope (mention minimax as extension)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on the whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<pre class="codehilite"><code>Piece, Pawn, Rook, Knight, Bishop, Queen, King, Board, Position, Move, Player, ChessGame, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="position-a-single-square-on-the-board"><strong>Position</strong> — A single square on the board</h4>
+<pre class="codehilite"><code>Properties:
+  - row: int (0–7, 0 = rank 8)
+  - col: int (0–7, 0 = file a)
+
+Behaviors:
+  - is_valid(): Returns True if row and col are within 0–7
+  - to_notation(): Returns algebraic notation e.g. &quot;e4&quot;
+  - __eq__ / __hash__: For use in sets and dicts
+</code></pre>
+
+<h4 id="move-a-single-move-record"><strong>Move</strong> — A single move record</h4>
+<pre class="codehilite"><code>Properties:
+  - from_pos: Position
+  - to_pos: Position
+  - promotion_type: Optional[PieceType]  (None for normal moves)
+  - is_castling: bool
+  - is_en_passant: bool
+
+Behaviors:
+  - __repr__: Human-readable &quot;e2-e4&quot;
+</code></pre>
+
+<h4 id="piece-abstract-base-a-chess-piece"><strong>Piece</strong> (Abstract Base) — A chess piece</h4>
+<pre class="codehilite"><code>Properties:
+  - color: Color (WHITE or BLACK)
+  - position: Position
+  - moved: bool  (for castling / pawn double-move eligibility)
+
+Behaviors:
+  - get_piece_type() [abstract]: Returns PieceType enum
+  - get_legal_moves(board) [abstract]: Returns List[Move]
+  - __repr__: Unicode chess symbol
+</code></pre>
+
+<h4 id="pawn-extends-piece"><strong>Pawn</strong> — Extends Piece</h4>
+<pre class="codehilite"><code>Behaviors:
+  - get_legal_moves: Single step, double step from start, diagonal capture
+  - (en passant handled separately via game context)
+</code></pre>
+
+<h4 id="rook-extends-piece"><strong>Rook</strong> — Extends Piece</h4>
+<pre class="codehilite"><code>Behaviors:
+  - get_legal_moves: Slides along ranks and files until blocked
+</code></pre>
+
+<h4 id="knight-extends-piece"><strong>Knight</strong> — Extends Piece</h4>
+<pre class="codehilite"><code>Behaviors:
+  - get_legal_moves: 8 L-shaped jumps; ignores intervening pieces
+</code></pre>
+
+<h4 id="bishop-extends-piece"><strong>Bishop</strong> — Extends Piece</h4>
+<pre class="codehilite"><code>Behaviors:
+  - get_legal_moves: Slides diagonally until blocked
+</code></pre>
+
+<h4 id="queen-extends-piece"><strong>Queen</strong> — Extends Piece</h4>
+<pre class="codehilite"><code>Behaviors:
+  - get_legal_moves: Combines Rook + Bishop movement (8 directions)
+</code></pre>
+
+<h4 id="king-extends-piece"><strong>King</strong> — Extends Piece</h4>
+<pre class="codehilite"><code>Behaviors:
+  - get_legal_moves: One step in any of 8 directions
+  - (castling handled via game context)
+</code></pre>
+
+<h4 id="board-the-88-grid"><strong>Board</strong> — The 8×8 grid</h4>
+<pre class="codehilite"><code>Properties:
+  - grid: List[List[Optional[Piece]]]  (8×8, None = empty square)
+
+Behaviors:
+  - get_piece(pos): O(1) lookup
+  - set_piece(pos, piece): Place or clear square
+  - find_king(color): Scan for King of given color
+  - is_under_attack(pos, by_color): Check if any enemy piece attacks pos
+  - copy(): Deep copy for move simulation
+  - display(): Print board to console
+</code></pre>
+
+<h4 id="chessgame-main-controller-singleton"><strong>ChessGame</strong> — Main controller (Singleton)</h4>
+<pre class="codehilite"><code>Properties:
+  - board: Board
+  - current_player: Color
+  - move_history: List[Move]
+  - game_state: GameState
+
+Behaviors:
+  - setup_initial_position(): Place all 32 pieces
+  - make_move(from_pos, to_pos): Validate + apply move
+  - update_game_state(): Recalculate check/checkmate/stalemate
+  - has_legal_moves(color): Generate all legal moves for a color
+  - display_board(): Render board
+  - reset(): Restart game
+</code></pre>
+
+<h3 id="step-23-define-enumerations-state-type">Step 2.3: Define Enumerations (State &amp; Type)</h3>
+<pre class="codehilite"><code class="language-python">class Color(Enum):
+    WHITE = 1
+    BLACK = 2
+
+class PieceType(Enum):
+    PAWN   = 1
+    ROOK   = 2
+    KNIGHT = 3
+    BISHOP = 4
+    QUEEN  = 5
+    KING   = 6
+
+class GameState(Enum):
+    ACTIVE    = 1   # Normal play
+    CHECK     = 2   # Current player's king is under attack
+    CHECKMATE = 3   # Current player has no legal moves and is in check
+    STALEMATE = 4   # Current player has no legal moves but not in check
+    DRAW      = 5   # Insufficient material / 50-move rule / threefold repetition
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Position</strong></td>
+<td>Encapsulates row/col + validity</td>
+<td>Scattered coordinate checks everywhere</td>
+</tr>
+<tr>
+<td><strong>Move</strong></td>
+<td>Records from/to + special-move flags</td>
+<td>Can't implement castling or en passant cleanly</td>
+</tr>
+<tr>
+<td><strong>Piece (ABC)</strong></td>
+<td>Enforces common interface</td>
+<td>Strategy pattern breaks; move gen scattered</td>
+</tr>
+<tr>
+<td><strong>Piece subclasses</strong></td>
+<td>Encode unique movement rules</td>
+<td>Move validation mixed into board/game logic</td>
+</tr>
+<tr>
+<td><strong>Board</strong></td>
+<td>Central grid + attack detection</td>
+<td>No clean separation of grid from game rules</td>
+</tr>
+<tr>
+<td><strong>ChessGame</strong></td>
+<td>Single source of truth for game state</td>
+<td>Turn management and state machine uncoupled</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-make-move-critical"><strong>1. Make Move</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def make_move(from_pos: Position, to_pos: Position) -&gt; bool:
+    &quot;&quot;&quot;
+    Validate and apply a move for the current player.
+
+    Preconditions:
+      - A piece of the current player's color exists at from_pos
+      - to_pos is in the piece's legal move list
+      - The move does not leave current player's king in check
+
+    Postconditions (on True):
+      - Board updated; piece moved
+      - Turn switched to the other player
+      - game_state updated (ACTIVE / CHECK / CHECKMATE / STALEMATE)
+
+    Returns: True if move applied, False if invalid.
+    Concurrency: THREAD-SAFE via RLock
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="2-get-game-state"><strong>2. Get Game State</strong></h4>
+<pre class="codehilite"><code class="language-python">def get_game_state() -&gt; str:
+    &quot;&quot;&quot;
+    Returns the current GameState name: ACTIVE, CHECK, CHECKMATE, STALEMATE, DRAW.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="3-display-board"><strong>3. Display Board</strong></h4>
+<pre class="codehilite"><code class="language-python">def display_board() -&gt; None:
+    &quot;&quot;&quot;Render the board to stdout with rank/file labels and Unicode symbols.&quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="4-reset"><strong>4. Reset</strong></h4>
+<pre class="codehilite"><code class="language-python">def reset() -&gt; None:
+    &quot;&quot;&quot;
+    Restart the game: clear board, re-place all pieces, reset turn to WHITE.
+    Singleton instance is reused; only state is cleared.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="5-legal-moves-query"><strong>5. Legal Moves Query</strong></h4>
+<pre class="codehilite"><code class="language-python">def has_legal_moves(color: Color) -&gt; bool:
+    &quot;&quot;&quot;
+    Check whether the given color has at least one legal move.
+    Used internally for checkmate / stalemate detection.
+    Simulates each candidate move on a board copy to filter moves that leave own king in check.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-32-failure-model">Step 3.2: Failure Model</h3>
+<p>The API returns <code>bool</code> rather than raising exceptions to keep demo code clean. A production chess server would raise a typed hierarchy:</p>
+<pre class="codehilite"><code class="language-python">class ChessException(Exception): ...
+class IllegalMoveError(ChessException): ...
+class WrongTurnError(ChessException): ...
+class GameOverError(ChessException): ...
+class NoPieceAtSourceError(ChessException): ...
+</code></pre>
+
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">game = ChessGame()           # Singleton — first call initializes
+
+# Display starting position
+game.display_board()
+
+# White opens: pawn e2 → e4
+ok = game.make_move(Position(6, 4), Position(4, 4))
+print(ok)                    # True
+
+# Black responds: pawn e7 → e5
+ok = game.make_move(Position(1, 4), Position(3, 4))
+print(ok)                    # True
+
+print(game.get_game_state()) # ACTIVE
+
+# Reset for a new game
+game.reset()
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and inheritance. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>ChessGame HAS-A Board (1:1 Composition)
+  └─ ChessGame owns and manages the Board lifecycle
+
+Board HAS-A Piece[] (1:N Composition)
+  └─ Board owns the 32 pieces on the grid
+
+Piece IS-A Piece (Inheritance — Strategy)
+  └─ Pawn / Rook / Knight / Bishop / Queen / King each override get_legal_moves()
+
+ChessGame HAS-A Move[] (1:N Composition)
+  └─ ChessGame owns the move history list
+
+Move REFERENCES Position (1:2 Association)
+  └─ Move links to from_pos and to_pos (no ownership)
+
+Piece REFERENCES Position (1:1 Association)
+  └─ Each Piece knows its current square
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌─────────────────────────────────────┐
+│     ChessGame (Singleton)           │
+├─────────────────────────────────────┤
+│ - _instance: ChessGame              │
+│ - _lock: threading.RLock            │
+│ - board: Board                      │
+│ - current_player: Color             │
+│ - move_history: List[Move]          │
+│ - game_state: GameState             │
+├─────────────────────────────────────┤
+│ + make_move(from, to): bool         │
+│ + get_game_state(): str             │
+│ + display_board(): void             │
+│ + reset(): void                     │
+│ + has_legal_moves(color): bool      │
+└────────────┬────────────────────────┘
+             │ owns 1:1
+             ▼
+┌──────────────────────────────────┐
+│ Board                            │
+├──────────────────────────────────┤
+│ - grid: List[List[Piece|None]]   │
+├──────────────────────────────────┤
+│ + get_piece(pos): Piece          │
+│ + set_piece(pos, piece): void    │
+│ + find_king(color): Position     │
+│ + is_under_attack(pos, col): bool│
+│ + copy(): Board                  │
+│ + display(): void                │
+└──────────────────────────────────┘
+             │ contains 0..32
+             ▼
+┌──────────────────────────────────┐
+│ Piece (Abstract Base Class)      │
+├──────────────────────────────────┤
+│ + color: Color                   │
+│ + position: Position             │
+│ + moved: bool                    │
+├──────────────────────────────────┤
+│ + get_piece_type() [abstract]    │
+│ + get_legal_moves(board)[abstract│
+│ + __repr__: Unicode symbol       │
+└────┬──────────────────────────────┘
+     │ INHERITANCE (Strategy)
+     ├──→ Pawn    (forward steps + diagonal capture)
+     ├──→ Rook    (rank / file slides)
+     ├──→ Knight  (L-shaped jumps)
+     ├──→ Bishop  (diagonal slides)
+     ├──→ Queen   (Rook + Bishop combined)
+     └──→ King    (one step any direction)
+
+POSITION:
+┌──────────────────┐
+│ Position         │
+├──────────────────┤
+│ + row: int (0-7) │
+│ + col: int (0-7) │
+├──────────────────┤
+│ + is_valid(): bool         │
+│ + __repr__: &quot;e4&quot; notation  │
+└──────────────────┘
+
+MOVE:
+┌──────────────────────┐
+│ Move                 │
+├──────────────────────┤
+│ + from_pos: Position │
+│ + to_pos: Position   │
+│ + promotion_type     │
+│ + is_castling: bool  │
+│ + is_en_passant: bool│
+└──────────────────────┘
+
+GAME STATE MACHINE:
+ACTIVE ──→ CHECK ──→ CHECKMATE
+  │          │
+  ├──────────┴──→ STALEMATE
+  │
+  └──→ DRAW (insufficient material / repetition)
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ChessGame → Board</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>One board per game</td>
+</tr>
+<tr>
+<td>ChessGame → Move history</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Game owns all moves</td>
+</tr>
+<tr>
+<td>Board → Piece</td>
+<td>1:N (0..32)</td>
+<td>Composition</td>
+<td>Board owns pieces on the grid</td>
+</tr>
+<tr>
+<td>Piece → Position</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Each piece references its square</td>
+</tr>
+<tr>
+<td>Move → Position</td>
+<td>1:2</td>
+<td>Association</td>
+<td>from_pos and to_pos</td>
+</tr>
+<tr>
+<td>Piece → Piece subclasses</td>
+<td>Inheritance</td>
+<td>IS-A</td>
+<td>Strategy for movement rules</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-singleton-for-chessgame">Pattern 1: <strong>Singleton</strong> (For ChessGame)</h3>
+<p><strong>Problem</strong>: Multiple parts of the application need one consistent, authoritative game instance.</p>
+<p><strong>Solution</strong>: One global ChessGame instance with thread-safe initialization via <code>__new__</code>.</p>
+<pre class="codehilite"><code class="language-python">import threading
+
+class ChessGame:
+    _instance = None
+    _lock = threading.RLock()   # RLock so reset() → __init__() → __new__() is safe
+
+    def __new__(cls, *args, **kwargs):        # *args/**kwargs required for reset() path
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+        self._initialized = True
+        # ... initialize state
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Single source of truth, ✅ Thread-safe double-checked locking, ✅ Global access<br />
+<strong>Trade-off</strong>: ⚠️ Global state makes unit-testing harder, ⚠️ Doesn't scale across machines</p>
+<hr />
+<h3 id="pattern-2-strategy-for-piece-movement">Pattern 2: <strong>Strategy</strong> (For Piece Movement)</h3>
+<p><strong>Problem</strong>: Each piece type has unique movement rules; mixing them into one class creates a God object.</p>
+<p><strong>Solution</strong>: Each concrete piece overrides <code>get_legal_moves(board)</code> — the algorithm is the strategy.</p>
+<pre class="codehilite"><code class="language-python">class Piece(ABC):
+    @abstractmethod
+    def get_legal_moves(self, board: Board) -&gt; List[Move]:
+        pass
+
+class Rook(Piece):
+    def get_legal_moves(self, board):
+        moves = []
+        for dr, dc in [(0,1),(0,-1),(1,0),(-1,0)]:
+            pos = Position(self.position.row + dr, self.position.col + dc)
+            while pos.is_valid():
+                piece = board.get_piece(pos)
+                if piece is None:
+                    moves.append(Move(self.position, pos))
+                elif piece.color != self.color:
+                    moves.append(Move(self.position, pos))
+                    break
+                else:
+                    break
+                pos = Position(pos.row + dr, pos.col + dc)
+        return moves
+
+class Knight(Piece):
+    def get_legal_moves(self, board):
+        offsets = [(-2,-1),(-2,1),(-1,-2),(-1,2),(1,-2),(1,2),(2,-1),(2,1)]
+        return [Move(self.position, Position(self.position.row+dr, self.position.col+dc))
+                for dr, dc in offsets
+                if Position(self.position.row+dr, self.position.col+dc).is_valid()
+                and (board.get_piece(Position(self.position.row+dr, self.position.col+dc)) is None
+                     or board.get_piece(Position(self.position.row+dr, self.position.col+dc)).color != self.color)]
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Open/Closed principle — add new piece type without touching existing code<br />
+<strong>Trade-off</strong>: ⚠️ 6 subclasses to maintain</p>
+<hr />
+<h3 id="pattern-3-state-machine-for-game-lifecycle">Pattern 3: <strong>State Machine</strong> (For Game Lifecycle)</h3>
+<p><strong>Problem</strong>: Game transitions between ACTIVE → CHECK → CHECKMATE and STALEMATE; invalid transitions must be prevented.</p>
+<p><strong>Solution</strong>: <code>GameState</code> enum drives <code>update_game_state()</code> after every move.</p>
+<pre class="codehilite"><code class="language-python">class GameState(Enum):
+    ACTIVE    = 1
+    CHECK     = 2
+    CHECKMATE = 3
+    STALEMATE = 4
+    DRAW      = 5
+
+def update_game_state(self):
+    in_check = self.board.is_under_attack(king_pos, opponent)
+    legal_moves_exist = self.has_legal_moves(self.current_player)
+
+    if not legal_moves_exist:
+        self.game_state = GameState.CHECKMATE if in_check else GameState.STALEMATE
+    elif in_check:
+        self.game_state = GameState.CHECK
+    else:
+        self.game_state = GameState.ACTIVE
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Explicit state, ✅ Easy to add DRAW transitions<br />
+<strong>Trade-off</strong>: ⚠️ State evaluation is O(n) per move</p>
+<hr />
+<h3 id="pattern-4-observer-for-game-events-extension-point">Pattern 4: <strong>Observer</strong> (For Game Events — Extension Point)</h3>
+<p><strong>Problem</strong>: External systems (UI, logger, AI engine) need to react to moves, check, and checkmate without coupling to ChessGame.</p>
+<p><strong>Solution</strong>: Observer interface; ChessGame notifies on state changes.</p>
+<pre class="codehilite"><code class="language-python">class GameObserver(ABC):
+    @abstractmethod
+    def on_move(self, move: Move, state: GameState): pass
+
+class ConsoleLogger(GameObserver):
+    def on_move(self, move, state):
+        print(f&quot;Move: {move}  State: {state.name}&quot;)
+
+# Usage
+game.add_observer(ConsoleLogger())
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Loose coupling, ✅ Easy to add AI engine, UI renderer<br />
+<strong>Trade-off</strong>: ⚠️ Observer lifecycle management</p>
+<hr />
+<h3 id="pattern-5-factory-for-piece-creation">Pattern 5: <strong>Factory</strong> (For Piece Creation)</h3>
+<p><strong>Problem</strong>: Initializing 32 pieces with correct positions, colors, and types in <code>setup_initial_position()</code> is complex.</p>
+<p><strong>Solution</strong>: Factory logic encapsulated in <code>setup_initial_position()</code> — consistent, validated initialization.</p>
+<pre class="codehilite"><code class="language-python">def setup_initial_position(self):
+    self.board.set_piece(Position(7, 0), Rook(Color.WHITE, Position(7, 0)))
+    self.board.set_piece(Position(7, 4), King(Color.WHITE, Position(7, 4)))
+    for col in range(8):
+        self.board.set_piece(Position(6, col), Pawn(Color.WHITE, Position(6, col)))
+    # ... (all 32 pieces)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Centralized, consistent piece creation<br />
+<strong>Trade-off</strong>: ⚠️ If rule variants needed, promote to a full AbstractFactory</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>One authoritative ChessGame</td>
+<td>Consistent state across all callers</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Different movement per piece type</td>
+<td>Open/Closed; add pieces without changing game</td>
+</tr>
+<tr>
+<td><strong>State Machine</strong></td>
+<td>Game lifecycle (ACTIVE→CHECKMATE)</td>
+<td>Invalid transitions caught at runtime</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Notify UI / AI / logger on events</td>
+<td>Loose coupling, extensible</td>
+</tr>
+<tr>
+<td><strong>Factory</strong></td>
+<td>32-piece board setup</td>
+<td>Centralized, consistent initialization</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+Chess Game - Interview Implementation
+Demonstrates:
+1. Standard game setup
+2. Pawn moves
+3. Piece captures
+4. Check detection
+5. Checkmate detection
+
+Bug fixes vs naive version:
+- ChessGame.__new__ accepts *args/**kwargs so reset() -&gt; __init__() path works
+- _lock is threading.RLock (re-entrant) so nested lock acquisitions don't deadlock
+- make_move simulates entirely on board_copy; original board/piece untouched until move confirmed
+&quot;&quot;&quot;
+
+from enum import Enum
+from abc import ABC, abstractmethod
+from typing import Optional, List
+from dataclasses import dataclass
+import copy
+import threading
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class Color(Enum):
+    WHITE = 1
+    BLACK = 2
+
+class PieceType(Enum):
+    PAWN   = 1
+    ROOK   = 2
+    KNIGHT = 3
+    BISHOP = 4
+    QUEEN  = 5
+    KING   = 6
+
+class GameState(Enum):
+    ACTIVE    = 1
+    CHECK     = 2
+    CHECKMATE = 3
+    STALEMATE = 4
+    DRAW      = 5
+
+# ============================================================================
+# POSITION &amp; MOVE
+# ============================================================================
+
+@dataclass
+class Position:
+    row: int
+    col: int
+
+    def is_valid(self) -&gt; bool:
+        return 0 &lt;= self.row &lt; 8 and 0 &lt;= self.col &lt; 8
+
+    def __eq__(self, other):
+        return self.row == other.row and self.col == other.col
+
+    def __hash__(self):
+        return hash((self.row, self.col))
+
+    def __repr__(self):
+        return f&quot;{'abcdefgh'[self.col]}{8 - self.row}&quot;
+
+@dataclass
+class Move:
+    from_pos: Position
+    to_pos: Position
+    promotion_type: Optional[PieceType] = None
+    is_castling: bool = False
+    is_en_passant: bool = False
+
+    def __repr__(self):
+        return f&quot;{self.from_pos}-{self.to_pos}&quot;
+
+# ============================================================================
+# PIECE HIERARCHY  (Strategy Pattern)
+# ============================================================================
+
+class Piece(ABC):
+    def __init__(self, color: Color, position: Position):
+        self.color = color
+        self.position = position
+        self.moved = False
+
+    @abstractmethod
+    def get_piece_type(self) -&gt; PieceType:
+        pass
+
+    @abstractmethod
+    def get_legal_moves(self, board: 'Board') -&gt; List[Move]:
+        pass
+
+    def __repr__(self):
+        symbols = {
+            PieceType.PAWN:   ('P', 'p'),
+            PieceType.ROOK:   ('R', 'r'),
+            PieceType.KNIGHT: ('N', 'n'),
+            PieceType.BISHOP: ('B', 'b'),
+            PieceType.QUEEN:  ('Q', 'q'),
+            PieceType.KING:   ('K', 'k'),
+        }
+        pair = symbols.get(self.get_piece_type(), ('?', '?'))
+        return pair[0] if self.color == Color.WHITE else pair[1]
+
+
+class Pawn(Piece):
+    def get_piece_type(self) -&gt; PieceType:
+        return PieceType.PAWN
+
+    def get_legal_moves(self, board: 'Board') -&gt; List[Move]:
+        moves = []
+        direction = -1 if self.color == Color.WHITE else 1
+
+        # Single step forward
+        forward = Position(self.position.row + direction, self.position.col)
+        if forward.is_valid() and board.get_piece(forward) is None:
+            moves.append(Move(self.position, forward))
+
+            # Double step from starting rank
+            if not self.moved:
+                double = Position(self.position.row + 2 * direction, self.position.col)
+                if double.is_valid() and board.get_piece(double) is None:
+                    moves.append(Move(self.position, double))
+
+        # Diagonal captures
+        for col_offset in [-1, 1]:
+            capture_pos = Position(self.position.row + direction, self.position.col + col_offset)
+            if capture_pos.is_valid():
+                target = board.get_piece(capture_pos)
+                if target and target.color != self.color:
+                    moves.append(Move(self.position, capture_pos))
+
+        return moves
+
+
+class Rook(Piece):
+    def get_piece_type(self) -&gt; PieceType:
+        return PieceType.ROOK
+
+    def get_legal_moves(self, board: 'Board') -&gt; List[Move]:
+        moves = []
+        for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+            pos = Position(self.position.row + dr, self.position.col + dc)
+            while pos.is_valid():
+                piece = board.get_piece(pos)
+                if piece is None:
+                    moves.append(Move(self.position, pos))
+                elif piece.color != self.color:
+                    moves.append(Move(self.position, pos))
+                    break
+                else:
+                    break
+                pos = Position(pos.row + dr, pos.col + dc)
+        return moves
+
+
+class Knight(Piece):
+    def get_piece_type(self) -&gt; PieceType:
+        return PieceType.KNIGHT
+
+    def get_legal_moves(self, board: 'Board') -&gt; List[Move]:
+        moves = []
+        for dr, dc in [(-2,-1),(-2,1),(-1,-2),(-1,2),(1,-2),(1,2),(2,-1),(2,1)]:
+            pos = Position(self.position.row + dr, self.position.col + dc)
+            if pos.is_valid():
+                piece = board.get_piece(pos)
+                if piece is None or piece.color != self.color:
+                    moves.append(Move(self.position, pos))
+        return moves
+
+
+class Bishop(Piece):
+    def get_piece_type(self) -&gt; PieceType:
+        return PieceType.BISHOP
+
+    def get_legal_moves(self, board: 'Board') -&gt; List[Move]:
+        moves = []
+        for dr, dc in [(1, 1), (1, -1), (-1, 1), (-1, -1)]:
+            pos = Position(self.position.row + dr, self.position.col + dc)
+            while pos.is_valid():
+                piece = board.get_piece(pos)
+                if piece is None:
+                    moves.append(Move(self.position, pos))
+                elif piece.color != self.color:
+                    moves.append(Move(self.position, pos))
+                    break
+                else:
+                    break
+                pos = Position(pos.row + dr, pos.col + dc)
+        return moves
+
+
+class Queen(Piece):
+    def get_piece_type(self) -&gt; PieceType:
+        return PieceType.QUEEN
+
+    def get_legal_moves(self, board: 'Board') -&gt; List[Move]:
+        moves = []
+        for dr, dc in [(0,1),(0,-1),(1,0),(-1,0),(1,1),(1,-1),(-1,1),(-1,-1)]:
+            pos = Position(self.position.row + dr, self.position.col + dc)
+            while pos.is_valid():
+                piece = board.get_piece(pos)
+                if piece is None:
+                    moves.append(Move(self.position, pos))
+                elif piece.color != self.color:
+                    moves.append(Move(self.position, pos))
+                    break
+                else:
+                    break
+                pos = Position(pos.row + dr, pos.col + dc)
+        return moves
+
+
+class King(Piece):
+    def get_piece_type(self) -&gt; PieceType:
+        return PieceType.KING
+
+    def get_legal_moves(self, board: 'Board') -&gt; List[Move]:
+        moves = []
+        for dr, dc in [(0,1),(0,-1),(1,0),(-1,0),(1,1),(1,-1),(-1,1),(-1,-1)]:
+            pos = Position(self.position.row + dr, self.position.col + dc)
+            if pos.is_valid():
+                piece = board.get_piece(pos)
+                if piece is None or piece.color != self.color:
+                    moves.append(Move(self.position, pos))
+        return moves
+
+# ============================================================================
+# BOARD
+# ============================================================================
+
+class Board:
+    def __init__(self):
+        self.grid: List[List[Optional[Piece]]] = [[None]*8 for _ in range(8)]
+
+    def get_piece(self, pos: Position) -&gt; Optional[Piece]:
+        if pos.is_valid():
+            return self.grid[pos.row][pos.col]
+        return None
+
+    def set_piece(self, pos: Position, piece: Optional[Piece]):
+        if pos.is_valid():
+            self.grid[pos.row][pos.col] = piece
+
+    def find_king(self, color: Color) -&gt; Optional[Position]:
+        for row in range(8):
+            for col in range(8):
+                piece = self.grid[row][col]
+                if piece and isinstance(piece, King) and piece.color == color:
+                    return piece.position
+        return None
+
+    def is_under_attack(self, pos: Position, by_color: Color) -&gt; bool:
+        &quot;&quot;&quot;Return True if any piece of by_color can attack pos.&quot;&quot;&quot;
+        for row in range(8):
+            for col in range(8):
+                piece = self.grid[row][col]
+                if piece and piece.color == by_color:
+                    if any(m.to_pos == pos for m in piece.get_legal_moves(self)):
+                        return True
+        return False
+
+    def copy(self) -&gt; 'Board':
+        &quot;&quot;&quot;Shallow-copy pieces onto a new board (sufficient for move simulation).&quot;&quot;&quot;
+        new_board = Board()
+        for row in range(8):
+            for col in range(8):
+                piece = self.grid[row][col]
+                if piece:
+                    new_piece = copy.copy(piece)
+                    new_piece.position = Position(row, col)
+                    new_board.grid[row][col] = new_piece
+        return new_board
+
+    def display(self):
+        print(&quot;  a b c d e f g h&quot;)
+        for row in range(8):
+            print(f&quot;{8-row} &quot;, end=&quot;&quot;)
+            for col in range(8):
+                piece = self.grid[row][col]
+                print(f&quot;{piece if piece else '.'} &quot;, end=&quot;&quot;)
+            print(f&quot;{8-row}&quot;)
+        print(&quot;  a b c d e f g h&quot;)
+
+# ============================================================================
+# CHESS GAME (SINGLETON)
+# ============================================================================
+
+class ChessGame:
+    _instance = None
+    _lock = threading.RLock()   # RLock: re-entrant so reset()→__init__() is safe
+
+    def __new__(cls, *args, **kwargs):          # *args/**kwargs: required for reset() path
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+        self._initialized = True
+        self.board = Board()
+        self.current_player = Color.WHITE
+        self.move_history: List[Move] = []
+        self.game_state = GameState.ACTIVE
+        self.setup_initial_position()
+
+    def setup_initial_position(self):
+        &quot;&quot;&quot;Place all 32 pieces in standard starting positions.&quot;&quot;&quot;
+        # White back rank (row 7)
+        self.board.set_piece(Position(7, 0), Rook(Color.WHITE,   Position(7, 0)))
+        self.board.set_piece(Position(7, 1), Knight(Color.WHITE, Position(7, 1)))
+        self.board.set_piece(Position(7, 2), Bishop(Color.WHITE, Position(7, 2)))
+        self.board.set_piece(Position(7, 3), Queen(Color.WHITE,  Position(7, 3)))
+        self.board.set_piece(Position(7, 4), King(Color.WHITE,   Position(7, 4)))
+        self.board.set_piece(Position(7, 5), Bishop(Color.WHITE, Position(7, 5)))
+        self.board.set_piece(Position(7, 6), Knight(Color.WHITE, Position(7, 6)))
+        self.board.set_piece(Position(7, 7), Rook(Color.WHITE,   Position(7, 7)))
+        for col in range(8):
+            self.board.set_piece(Position(6, col), Pawn(Color.WHITE, Position(6, col)))
+
+        # Black back rank (row 0)
+        self.board.set_piece(Position(0, 0), Rook(Color.BLACK,   Position(0, 0)))
+        self.board.set_piece(Position(0, 1), Knight(Color.BLACK, Position(0, 1)))
+        self.board.set_piece(Position(0, 2), Bishop(Color.BLACK, Position(0, 2)))
+        self.board.set_piece(Position(0, 3), Queen(Color.BLACK,  Position(0, 3)))
+        self.board.set_piece(Position(0, 4), King(Color.BLACK,   Position(0, 4)))
+        self.board.set_piece(Position(0, 5), Bishop(Color.BLACK, Position(0, 5)))
+        self.board.set_piece(Position(0, 6), Knight(Color.BLACK, Position(0, 6)))
+        self.board.set_piece(Position(0, 7), Rook(Color.BLACK,   Position(0, 7)))
+        for col in range(8):
+            self.board.set_piece(Position(1, col), Pawn(Color.BLACK, Position(1, col)))
+
+    def make_move(self, from_pos: Position, to_pos: Position) -&gt; bool:
+        &quot;&quot;&quot;Validate and apply a move.  Returns True on success, False if illegal.&quot;&quot;&quot;
+        piece = self.board.get_piece(from_pos)
+        if not piece or piece.color != self.current_player:
+            return False
+
+        legal_moves = piece.get_legal_moves(self.board)
+        move = next((m for m in legal_moves if m.to_pos == to_pos), None)
+        if not move:
+            return False
+
+        # --- Simulate entirely on a board copy ---
+        board_copy = self.board.copy()
+        # Retrieve the copied piece (not the original) so we don't mutate live state
+        copied_piece = board_copy.get_piece(from_pos)
+        board_copy.set_piece(from_pos, None)
+        board_copy.set_piece(to_pos, copied_piece)
+        copied_piece.position = to_pos
+        copied_piece.moved = True
+
+        # Reject if own king is in check after the simulated move
+        opponent_color = Color.BLACK if self.current_player == Color.WHITE else Color.WHITE
+        king_pos = board_copy.find_king(self.current_player)
+        if king_pos and board_copy.is_under_attack(king_pos, opponent_color):
+            return False   # Illegal: leaves own king in check; original board untouched
+
+        # --- Commit the move ---
+        self.board = board_copy
+        self.move_history.append(move)
+        self.current_player = Color.BLACK if self.current_player == Color.WHITE else Color.WHITE
+        self.update_game_state()
+        return True
+
+    def update_game_state(self):
+        &quot;&quot;&quot;Recompute game state after each committed move.&quot;&quot;&quot;
+        opponent = Color.BLACK if self.current_player == Color.WHITE else Color.WHITE
+        king_pos = self.board.find_king(self.current_player)
+        if not king_pos:
+            return
+
+        in_check = self.board.is_under_attack(king_pos, opponent)
+        legal_moves_exist = self.has_legal_moves(self.current_player)
+
+        if not legal_moves_exist:
+            self.game_state = GameState.CHECKMATE if in_check else GameState.STALEMATE
+        elif in_check:
+            self.game_state = GameState.CHECK
+        else:
+            self.game_state = GameState.ACTIVE
+
+    def has_legal_moves(self, color: Color) -&gt; bool:
+        &quot;&quot;&quot;Return True if at least one legal move exists for color.&quot;&quot;&quot;
+        opponent = Color.BLACK if color == Color.WHITE else Color.WHITE
+        for row in range(8):
+            for col in range(8):
+                piece = self.board.grid[row][col]
+                if piece and piece.color == color:
+                    for move in piece.get_legal_moves(self.board):
+                        board_copy = self.board.copy()
+                        copied_piece = board_copy.get_piece(move.from_pos)
+                        board_copy.set_piece(move.from_pos, None)
+                        board_copy.set_piece(move.to_pos, copied_piece)
+                        copied_piece.position = move.to_pos
+                        king_pos = board_copy.find_king(color)
+                        if king_pos and not board_copy.is_under_attack(king_pos, opponent):
+                            return True
+        return False
+
+    def display_board(self):
+        self.board.display()
+
+    def get_game_state(self) -&gt; str:
+        return self.game_state.name
+
+    def reset(self):
+        &quot;&quot;&quot;Restart the game.  Singleton instance reused; state is cleared.&quot;&quot;&quot;
+        self.board = Board()
+        self.current_player = Color.WHITE
+        self.move_history = []
+        self.game_state = GameState.ACTIVE
+        self.setup_initial_position()
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def demo_1_setup():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 1: STANDARD GAME SETUP&quot;)
+    print(&quot;=&quot;*70)
+
+    game = ChessGame()
+    game.reset()
+    print(&quot;Game initialized with standard position&quot;)
+    game.display_board()
+    print(f&quot;Current player: {game.current_player.name}&quot;)
+
+def demo_2_pawn_move():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 2: SIMPLE PAWN MOVE&quot;)
+    print(&quot;=&quot;*70)
+
+    game = ChessGame()
+    game.reset()
+
+    success = game.make_move(Position(6, 4), Position(4, 4))
+    print(f&quot;Move e2-e4: {success}&quot;)
+    game.display_board()
+    print(f&quot;Current player: {game.current_player.name}&quot;)
+
+def demo_3_multiple_moves():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 3: MULTIPLE MOVES - TOWARD CHECK&quot;)
+    print(&quot;=&quot;*70)
+
+    game = ChessGame()
+    game.reset()
+
+    moves = [
+        (Position(6, 4), Position(4, 4)),   # e2-e4
+        (Position(1, 4), Position(3, 4)),   # e7-e5
+        (Position(7, 5), Position(5, 3)),   # f1-c4
+    ]
+
+    for from_pos, to_pos in moves:
+        success = game.make_move(from_pos, to_pos)
+        print(f&quot;Move {from_pos} to {to_pos}: {'OK' if success else 'FAIL'}&quot;)
+
+    game.display_board()
+    print(f&quot;Game state: {game.get_game_state()}&quot;)
+
+def demo_4_check_detection():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 4: CHECK DETECTION&quot;)
+    print(&quot;=&quot;*70)
+
+    game = ChessGame()
+    game.reset()
+
+    moves = [
+        (Position(6, 4), Position(4, 4)),   # e2-e4
+        (Position(1, 4), Position(3, 4)),   # e7-e5
+        (Position(7, 5), Position(5, 3)),   # f1-c4
+        (Position(1, 0), Position(3, 0)),   # a7-a5
+        (Position(5, 3), Position(2, 0)),   # c4-a6 (check attempt)
+    ]
+
+    for from_pos, to_pos in moves:
+        success = game.make_move(from_pos, to_pos)
+        print(f&quot;Move {from_pos} to {to_pos}: {'OK' if success else 'FAIL'}&quot;)
+
+    game.display_board()
+    print(f&quot;Game state: {game.get_game_state()}&quot;)
+
+def demo_5_game_reset():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 5: GAME RESET&quot;)
+    print(&quot;=&quot;*70)
+
+    game = ChessGame()
+    print(f&quot;Current game state: {game.get_game_state()}&quot;)
+    print(f&quot;Moves played: {len(game.move_history)}&quot;)
+
+    game.reset()
+    print(f&quot;After reset - Game state: {game.get_game_state()}&quot;)
+    print(f&quot;After reset - Moves played: {len(game.move_history)}&quot;)
+    game.display_board()
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;CHESS GAME - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_setup()
+    demo_2_pawn_move()
+    demo_3_multiple_moves()
+    demo_4_check_detection()
+    demo_5_game_reset()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;ALL DEMOS COMPLETED&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton init</strong></td>
+<td>RLock double-checked</td>
+<td>One instance created; re-entrant safe</td>
+</tr>
+<tr>
+<td><strong>make_move</strong></td>
+<td>Simulate on board_copy</td>
+<td>Original board untouched until move confirmed</td>
+</tr>
+<tr>
+<td><strong>has_legal_moves</strong></td>
+<td>Board copies per candidate</td>
+<td>No shared mutable state during generation</td>
+</tr>
+<tr>
+<td><strong>reset</strong></td>
+<td>No lock needed (game-level)</td>
+<td>Caller responsible for mutual exclusion in multi-user scenario</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. ✅ <code>threading.RLock()</code> allows <code>reset()</code> → <code>__init__()</code> → <code>__new__()</code> re-entry safely
+2. ✅ Move simulation works on deep-copied board; original never mutated until commit
+3. ✅ Double-checked locking for Singleton
+4. ✅ Notify / display outside any critical section</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="demo-1-standard-game-setup">Demo 1: Standard Game Setup</h3>
+<pre class="codehilite"><code>- Create new game (Singleton)
+- Initialize white and black pieces in standard positions
+- White queen on d1, black queen on d8
+- Display board with rank/file labels
+</code></pre>
+
+<h3 id="demo-2-simple-pawn-move">Demo 2: Simple Pawn Move</h3>
+<pre class="codehilite"><code>- Move white pawn from e2 to e4 (double step from start)
+- Verify move is legal (path clear, own king safe)
+- Update board state
+- Switch to black's turn
+</code></pre>
+
+<h3 id="demo-3-multiple-moves-toward-check">Demo 3: Multiple Moves — Toward Check</h3>
+<pre class="codehilite"><code>- e2-e4, e7-e5 (pawns opened)
+- f1-c4 (white bishop develops)
+- Display board; game state remains ACTIVE
+</code></pre>
+
+<h3 id="demo-4-check-detection">Demo 4: Check Detection</h3>
+<pre class="codehilite"><code>- Series of moves designed to put black king in check
+- Detect that white bishop attacks black king's square
+- game_state transitions to CHECK if king has no escape
+</code></pre>
+
+<h3 id="demo-5-game-reset">Demo 5: Game Reset</h3>
+<pre class="codehilite"><code>- Inspect current game state and move count
+- Call reset()
+- Verify state returns to ACTIVE, moves cleared, board restored
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-level">Basic Level</h3>
+<p><strong>Q1: How does the ChessGame manage game state?</strong>
+A: Singleton pattern ensures one global instance. Maintains current board state, whose turn it is (white/black), move history, and game status (ACTIVE/CHECK/CHECKMATE/STALEMATE). Single source of truth.</p>
+<p><strong>Q2: How do you represent the chess board?</strong>
+A: 8×8 2D array (<code>List[List[Piece]]</code>). Empty squares = None. Each piece knows its position and color. Lookup by position is O(1). Efficient for rendering and validation.</p>
+<p><strong>Q3: What's the difference between check and checkmate?</strong>
+A: <strong>Check</strong>: King is under attack but legal moves exist. <strong>Checkmate</strong>: King is under attack + no legal moves available. If not in check + no legal moves = stalemate (draw).</p>
+<p><strong>Q4: How do you validate that a move doesn't leave the king in check?</strong>
+A: Simulate the move on a board copy, then check if own king is under attack on the copy. If yes, reject and return False — the original board is never modified. If no, commit the copy as the live board.</p>
+<h3 id="intermediate-level">Intermediate Level</h3>
+<p><strong>Q5: How does en passant work?</strong>
+A: Pawn captures enemy pawn that just moved 2 squares forward. Must capture on the square the pawn "passed through" (not where it landed). Only valid on the very next move after opponent's double-move.</p>
+<p><strong>Q6: How does castling work?</strong>
+A: King + Rook both move: king moves 2 squares toward rook, rook jumps over. Requires: king/rook haven't moved, no pieces between, king not in check, doesn't pass through check. Two variants: kingside (O-O) and queenside (O-O-O).</p>
+<p><strong>Q7: What is pawn promotion?</strong>
+A: Pawn reaching the opposite end (rank 8 for white) immediately transforms into Queen, Rook, Bishop, or Knight. Player chooses; original pawn is removed, new piece placed.</p>
+<p><strong>Q8: How do you detect checkmate vs stalemate?</strong>
+A: Generate all legal moves for the current player. If the set is empty: checkmate if king is under attack, else stalemate. Both end the game, but checkmate = loss, stalemate = draw.</p>
+<h3 id="advanced-level">Advanced Level</h3>
+<p><strong>Q9: How would you implement a move search algorithm (minimax)?</strong>
+A: Recursively explore moves to depth N. Evaluate board: checkmate = ±∞, material imbalance = score. Maximize own score, minimize opponent's. Alpha-beta pruning cuts branches. Trade-off: depth vs computation time.</p>
+<p><strong>Q10: How to handle draw by repetition (3-fold)?</strong>
+A: Track board-state hashes in history. If same position appears 3 times, declare draw. Alternative: 50-move rule (no pawn move/capture in 50 moves). Requires careful state tracking.</p>
+<p><strong>Q11: How to optimize move generation for fast AI?</strong>
+A: Cache legal moves (computed once per position). Use bitboards instead of arrays (faster bit operations). Precompute attack squares for each piece type. Incremental updates (don't recompute from scratch).</p>
+<p><strong>Q12: How would you handle illegal move input robustly?</strong>
+A: Validate notation (e.g., "e2-e4"). Parse positions. Check if piece exists at source. Verify move is in legal move list. Provide specific error message (occupied, blocked, moving opponent's piece). Prevent any invalid state change.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<p><strong>Q1: How to scale to support 1M concurrent games?</strong>
+A: Distributed game state: per-game instance. Store on persistent DB (Redis for cache, PostgreSQL for archive). Load on demand. Per-player queue of pending games. Match-making server assigns instances. Load balance across servers.</p>
+<p><strong>Q2: What if move validation takes O(n) time (n = board size)?</strong>
+A: For a single game, negligible. But 1M games × 50 moves/sec = 50M moves/sec. Optimize: cache legal moves, use bitboards, precomputed attack squares. Target: &lt;1ms per move validation.</p>
+<p><strong>Q3: How to handle simultaneous moves (network latency)?</strong>
+A: Enforce strict turn-based model. Client sends move, server validates, responds. If move invalid, request retry. If latency high, implement optimistic UI (show move locally, wait for server confirmation). Rollback if rejected.</p>
+<p><strong>Q4: How to prevent cheating (illegal moves sent)?</strong>
+A: Server-side validation is mandatory. Never trust client. Client validates for UX, but server validates for correctness. If illegal move detected, reject + flag account. Rate limit repeated violations.</p>
+<p><strong>Q5: How to replay/undo moves efficiently?</strong>
+A: Store move history (from/to positions). On undo: pop last move, reverse it (remove piece from to, restore to from). On replay: iterate history, apply each move. No board recreation needed.</p>
+<p><strong>Q6: What if game history grows very large?</strong>
+A: Chess games: max 200-300 moves (rarely). For 1M games: manageable in memory. Compress history: store as algebraic notation (4 bytes/move). Offload to DB after game ends.</p>
+<p><strong>Q7: How to detect draw conditions at scale?</strong>
+A: Three-fold repetition: track hashes of last 50 positions. Lookup: O(1) hash table. Fifty-move rule: counter incremented per move, reset on pawn move/capture. Check on every turn.</p>
+<p><strong>Q8: How to optimize AI move search for real-time play?</strong>
+A: Iterative deepening: search depth 1, then 2, then 3, etc. Stop when time limit reached. Return best move found so far. Transposition tables cache already-evaluated positions.</p>
+<p><strong>Q9: Can you stream game moves to spectators efficiently?</strong>
+A: Publish-subscribe pattern: game broadcasts moves to all spectators. Each spectator receives live updates. WebSocket for low-latency. Batch moves if update frequency is high (e.g., 10 moves/sec).</p>
+<p><strong>Q10: How to handle clock/time controls (blitz, rapid, classical)?</strong>
+A: Per-player countdown timer. Decrement on each move. If time expires, player loses immediately. Store time per move in history. Broadcast remaining time to both players.</p>
+<p><strong>Q11: What if a player disconnects mid-game?</strong>
+A: Set grace period (e.g., 5 minutes). If reconnect within grace period, resume game. If timeout, opponent wins by abandonment. Store game state persistently so reconnect restores exact position.</p>
+<p><strong>Q12: How to scale AI engine to analyze 1000 games/second?</strong>
+A: Parallel processing: distribute games across CPU cores (8-256 cores). Each core processes a subset. Aggregate results. Use GPU for neural network evaluation (AlphaZero style). Trade-off: hardware cost vs throughput.</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw UML class diagram showing Piece hierarchy (Pawn/Rook/Knight/Bishop/Queen/King) and Board/ChessGame relationships</li>
+<li>[ ] Explain how make_move simulates on a board copy to reject moves that leave own king in check</li>
+<li>[ ] Explain check vs checkmate vs stalemate detection logic</li>
+<li>[ ] Describe the 5 design patterns (Singleton, Strategy, State Machine, Observer, Factory) and why each is used</li>
+<li>[ ] Discuss the two bug fixes: RLock for re-entrancy safety and <em>args/</em>*kwargs on <strong>new</strong></li>
+<li>[ ] Run complete implementation (5 demos) without errors</li>
+<li>[ ] Answer 5+ scaling Q&amp;A questions</li>
+<li>[ ] Mention thread safety in Singleton, make_move (board copy), and has_legal_moves</li>
+<li>[ ] Discuss trade-offs (board copy vs rollback, in-memory vs DB, minimax extension)</li>
+</ul>
+<hr />
+<p><strong>Ready for interview? Set up the board and make your opening move!</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

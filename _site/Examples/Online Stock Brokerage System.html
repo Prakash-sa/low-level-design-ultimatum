@@ -1,0 +1,2547 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Online Stock Brokerage System - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="online-stock-brokerage-system-complete-design-guide">Online Stock Brokerage System — Complete Design Guide</h1>
+<blockquote>
+<p>Deposit funds, search real-time stock quotes, place market/limit orders, manage portfolios, and track profit/loss with atomic trade execution and observer-driven price updates.</p>
+</blockquote>
+<p><strong>Scale</strong>: 10,000+ concurrent users, 1M+ orders/day, 99.9% uptime during trading hours<br />
+<strong>Duration</strong>: 75-minute interview guide<br />
+<strong>Focus</strong>: Market vs limit order execution, atomic fund transfer, portfolio P&amp;L tracking, observer-driven price triggers</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>Users want to trade stocks online: buy/sell securities, manage investment portfolios, and track real-time profit/loss. System must prevent double-spending, execute orders atomically, and provide accurate portfolio valuation in real-time.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>User Deposit Funds
+        ↓
+Search &amp; Browse Stocks (real-time quotes)
+        ↓
+Place Order (Market or Limit)
+        ├─ Market: Execute immediately at current_price
+        └─ Limit: Pending until price condition met
+        ↓
+If available: Deduct funds, record transaction
+If insufficient: Reject order, balance unchanged
+        ↓
+Update Portfolio (holdings + cost basis)
+        ↓
+Calculate P/L (profit/loss vs cost basis)
+        ↓
+Send notifications (email/SMS/console)
+        ↓
+Withdraw gains or repeat trading
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Single machine or distributed?</strong> → "Distributed system with 10K concurrent users"</li>
+<li><strong>Market orders only, or limit orders too?</strong> → "Both market and limit orders"</li>
+<li><strong>Real payment processing?</strong> → "Mock payment service for interview"</li>
+<li><strong>Margin trading or long-only?</strong> → "Long positions only (buying)"</li>
+<li><strong>Multiple currencies?</strong> → "Single currency (USD), US stock market"</li>
+<li><strong>Trading hours enforcement?</strong> → "9:30 AM – 4:00 PM EST"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>User/Trader</strong></td>
+<td>Deposits funds and trades stocks</td>
+<td>Deposit, search, place order, cancel, withdraw</td>
+</tr>
+<tr>
+<td><strong>Brokerage Admin</strong></td>
+<td>Manages stocks and exchange</td>
+<td>Add stock, update price, manage accounts</td>
+</tr>
+<tr>
+<td><strong>System</strong></td>
+<td>Controller and notifier</td>
+<td>Execute orders, trigger limit orders on price change, send notifications</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Account Management</strong>
+  - Deposit and withdraw funds
+  - View account balance and net worth</p>
+<p>✅ <strong>Market Data</strong>
+  - Real-time stock quotes
+  - Price update broadcasting to subscribers</p>
+<p>✅ <strong>Order Execution</strong>
+  - Place market orders (execute immediately at current price)
+  - Place limit orders (execute when price condition is met)
+  - Cancel pending orders before execution</p>
+<p>✅ <strong>Portfolio Management</strong>
+  - Track holdings (stock → quantity + cost basis)
+  - Calculate portfolio value in real-time
+  - Calculate profit/loss vs cost basis</p>
+<p>✅ <strong>Transaction History</strong>
+  - Immutable record of every executed trade
+  - Order history with status tracking</p>
+<p>✅ <strong>Watchlist &amp; Notifications</strong>
+  - Watchlist for tracking favorite stocks
+  - Email/SMS/push notifications on order events</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Concurrency</strong>: Support 10,000+ simultaneous users<br />
+✅ <strong>Latency</strong>: &lt;100ms search, &lt;500ms order execution, &lt;1000ms portfolio valuation<br />
+✅ <strong>Consistency</strong>: Atomic transactions — no partial execution<br />
+✅ <strong>Accuracy</strong>: Correct average cost basis for multi-purchase positions<br />
+✅ <strong>Uptime</strong>: 99.9% during trading hours<br />
+✅ <strong>Scalability</strong>: 1M+ orders/day across multiple regions  </p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Distributed?</strong></td>
+<td>YES — multi-region with replicas</td>
+</tr>
+<tr>
+<td><strong>Order types</strong></td>
+<td>Market and Limit only</td>
+</tr>
+<tr>
+<td><strong>Position direction</strong></td>
+<td>Long only (no short selling)</td>
+</tr>
+<tr>
+<td><strong>Currency</strong></td>
+<td>Single (USD)</td>
+</tr>
+<tr>
+<td><strong>Payment processing</strong></td>
+<td>External gateway (out of scope)</td>
+</tr>
+<tr>
+<td><strong>Options / futures</strong></td>
+<td>Out of scope</td>
+</tr>
+<tr>
+<td><strong>After-hours trading</strong></td>
+<td>Out of scope</td>
+</tr>
+<tr>
+<td><strong>Tax reporting / regulatory</strong></td>
+<td>Out of scope</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on the whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<p>From the requirements above, identify nouns:</p>
+<pre class="codehilite"><code>User, Account, Stock, Order, Portfolio, Transaction, Watchlist, StockExchange, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="stock-a-tradable-security"><strong>Stock</strong> — A tradable security</h4>
+<pre class="codehilite"><code>Properties:
+  - symbol: str (e.g., &quot;AAPL&quot;, &quot;GOOGL&quot;)
+  - name: str (e.g., &quot;Apple Inc.&quot;)
+  - current_price: float
+  - observers: List[PriceObserver]
+  - price_history: List[float]
+
+Behaviors:
+  - get_quote(): Return current price
+  - update_price(new_price): Set price and notify all observers
+  - add_observer(observer): Subscribe to price changes
+  - remove_observer(observer): Unsubscribe
+</code></pre>
+
+<h4 id="account-a-users-trading-account"><strong>Account</strong> — A user's trading account</h4>
+<pre class="codehilite"><code>Properties:
+  - account_id: str
+  - user: User
+  - balance: float
+  - portfolio: Portfolio
+  - transaction_history: List[Transaction]
+
+Behaviors:
+  - deposit(amount): Add funds
+  - withdraw(amount): Remove funds (check balance)
+  - get_balance(): Return available balance
+  - get_net_worth(): balance + portfolio market value
+  - place_order(stock, qty, order_type, price_type, limit_price)
+</code></pre>
+
+<h4 id="order-a-buy-or-sell-request"><strong>Order</strong> — A buy or sell request</h4>
+<pre class="codehilite"><code>Properties:
+  - order_id: str
+  - account: Account
+  - stock: Stock
+  - quantity: int
+  - order_type: OrderType (BUY / SELL)
+  - price_type: PriceType (MARKET / LIMIT)
+  - limit_price: Optional[float]
+  - status: OrderStatus (PENDING / EXECUTED / CANCELLED / REJECTED)
+  - execution_price: Optional[float]
+  - timestamp: datetime
+
+Behaviors:
+  - execute(execution_price): Transition PENDING → EXECUTED
+  - cancel(): Transition PENDING → CANCELLED
+</code></pre>
+
+<h4 id="portfolio-holdings-tracker-for-an-account"><strong>Portfolio</strong> — Holdings tracker for an account</h4>
+<pre class="codehilite"><code>Properties:
+  - holdings: Dict[str, {quantity, cost_basis}]
+
+Behaviors:
+  - add_holding(stock, quantity, price): Add or average-up a position
+  - remove_holding(stock, quantity): Reduce or close a position
+  - calculate_value(): Sum of quantity × current_price for all holdings
+  - get_profit_loss(): Dict with profit_loss, percentage, cost_total, current_value
+  - get_holdings_summary(): List of holding details
+</code></pre>
+
+<h4 id="user-a-registered-customer"><strong>User</strong> — A registered customer</h4>
+<pre class="codehilite"><code>Properties:
+  - user_id: str
+  - name: str
+  - email: str
+  - phone: str
+
+Behaviors:
+  - create_account(): Register a new trading account
+  - get_orders(): Retrieve order history
+</code></pre>
+
+<h4 id="stockexchange-central-controller-singleton"><strong>StockExchange</strong> — Central controller (Singleton)</h4>
+<pre class="codehilite"><code>Properties:
+  - stocks: Dict[str, Stock]
+  - orders: Dict[str, Order]
+  - accounts: Dict[str, Account]
+  - strategies: Dict[PriceType, OrderStrategy]
+  - observers: List[PriceObserver]
+  - pending_orders: List[Order]
+
+Behaviors:
+  - get_instance(): Return singleton
+  - place_order(order): Route to market or limit execution
+  - execute_buy_order(order): Deduct funds, update portfolio
+  - execute_sell_order(order): Add funds, reduce portfolio
+  - check_and_execute_limit_orders(stock): Evaluate pending limit orders after price update
+  - update_stock_price(symbol, new_price): Update price and notify observers
+  - add_observer(observer): Register a global price observer
+  - notify_observers(stock, old_price, new_price): Fan-out to all observers
+</code></pre>
+
+<h4 id="brokerage-see-stockexchange-the-exchange-is-the-brokerage-in-this-design"><strong>Brokerage</strong> — (See StockExchange — the exchange IS the brokerage in this design)</h4>
+<h3 id="step-23-define-enumerations-state-type">Step 2.3: Define Enumerations (State &amp; Type)</h3>
+<pre class="codehilite"><code class="language-python">class OrderType(Enum):
+    BUY = &quot;buy&quot;
+    SELL = &quot;sell&quot;
+
+class PriceType(Enum):
+    MARKET = &quot;market&quot;
+    LIMIT = &quot;limit&quot;
+
+class OrderStatus(Enum):
+    PENDING = &quot;pending&quot;
+    EXECUTED = &quot;executed&quot;
+    CANCELLED = &quot;cancelled&quot;
+    REJECTED = &quot;rejected&quot;
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why Needed</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Stock</strong></td>
+<td>Tracks live price and notifies subscribers</td>
+<td>No real-time price updates, no limit-order triggers</td>
+</tr>
+<tr>
+<td><strong>Account</strong></td>
+<td>Manages funds separately from user identity</td>
+<td>Can't enforce balance constraints</td>
+</tr>
+<tr>
+<td><strong>Order</strong></td>
+<td>Captures intent + lifecycle (PENDING → EXECUTED)</td>
+<td>No audit trail, can't cancel</td>
+</tr>
+<tr>
+<td><strong>Portfolio</strong></td>
+<td>Tracks cost basis per holding for P&amp;L</td>
+<td>Inaccurate profit/loss reporting</td>
+</tr>
+<tr>
+<td><strong>User</strong></td>
+<td>Separates identity from financial data</td>
+<td>Can't support multiple accounts per person</td>
+</tr>
+<tr>
+<td><strong>StockExchange</strong></td>
+<td>Central coordinator, thread-safe singleton</td>
+<td>Race conditions on concurrent order execution</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-register-account"><strong>1. Register Account</strong></h4>
+<pre class="codehilite"><code class="language-python">def register_account(user: User, initial_balance: float = 0.0) -&gt; Account:
+    &quot;&quot;&quot;
+    Create a new trading account for a registered user.
+    Returns: Account object with account_id.
+    Raises: ValueError if initial_balance &lt; 0.
+    &quot;&quot;&quot;
+</code></pre>
+
+<h4 id="2-place-order-critical"><strong>2. Place Order</strong> (CRITICAL)</h4>
+<pre class="codehilite"><code class="language-python">def place_order(order: Order) -&gt; bool:
+    &quot;&quot;&quot;
+    Submit a buy or sell order for execution.
+
+    Market order: Execute immediately at current price.
+    Limit order:  Queue until price condition is met.
+
+    Precondition (BUY):  account.balance &gt;= quantity * price
+    Precondition (SELL): portfolio has &gt;= quantity shares
+
+    Returns: True if executed or queued, False if rejected.
+
+    Raises:
+      - InsufficientFundsError: Insufficient balance for buy
+      - InsufficientSharesError: Not enough shares to sell
+      - InvalidOrderError: Negative quantity or missing limit price
+
+    Concurrency: THREAD-SAFE — atomic fund check + deduction
+    Response Time: &lt;500ms
+    &quot;&quot;&quot;
+</code></pre>
+
+<h4 id="3-cancel-order"><strong>3. Cancel Order</strong></h4>
+<pre class="codehilite"><code class="language-python">def cancel_order(order_id: str) -&gt; bool:
+    &quot;&quot;&quot;
+    Cancel a PENDING order before execution.
+    Precondition: order.status == PENDING
+    Postcondition: order.status == CANCELLED
+
+    Returns: True if cancelled, False if not in PENDING state.
+    Raises: OrderNotFoundError
+    &quot;&quot;&quot;
+</code></pre>
+
+<h4 id="4-update-stock-price"><strong>4. Update Stock Price</strong></h4>
+<pre class="codehilite"><code class="language-python">def update_stock_price(symbol: str, new_price: float) -&gt; None:
+    &quot;&quot;&quot;
+    Update market price of a stock and trigger observer notifications.
+    Side effects:
+      - Notifies all PriceObserver subscribers
+      - Triggers check_and_execute_limit_orders for pending limit orders
+    Raises: StockNotFoundError
+    &quot;&quot;&quot;
+</code></pre>
+
+<h4 id="5-get-portfolio-value-pl"><strong>5. Get Portfolio Value &amp; P&amp;L</strong></h4>
+<pre class="codehilite"><code class="language-python">def get_portfolio_summary(account_id: str) -&gt; Dict:
+    &quot;&quot;&quot;
+    Returns portfolio value, P&amp;L, and per-holding breakdown.
+    Response Time: &lt;1000ms
+    &quot;&quot;&quot;
+</code></pre>
+
+<h4 id="6-add-price-observer"><strong>6. Add Price Observer</strong></h4>
+<pre class="codehilite"><code class="language-python">def add_observer(observer: PriceObserver) -&gt; None:
+    &quot;&quot;&quot;
+    Register a global subscriber for all stock price changes.
+    Events: price change on any stock.
+    Observer receives: (stock, old_price, new_price)
+    &quot;&quot;&quot;
+</code></pre>
+
+<h3 id="step-32-exception-hierarchy">Step 3.2: Exception Hierarchy</h3>
+<pre class="codehilite"><code class="language-python">class BrokerageException(Exception):
+    &quot;&quot;&quot;Base exception&quot;&quot;&quot;
+    pass
+
+class InsufficientFundsError(BrokerageException):
+    &quot;&quot;&quot;Account balance too low for buy order&quot;&quot;&quot;
+    pass
+
+class InsufficientSharesError(BrokerageException):
+    &quot;&quot;&quot;Not enough shares to sell&quot;&quot;&quot;
+    pass
+
+class InvalidOrderError(BrokerageException):
+    &quot;&quot;&quot;Invalid order parameters&quot;&quot;&quot;
+    pass
+
+class StockNotFoundError(BrokerageException):
+    &quot;&quot;&quot;Stock symbol not registered&quot;&quot;&quot;
+    pass
+
+class InvalidStateError(BrokerageException):
+    &quot;&quot;&quot;Invalid state transition attempted&quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">exchange = StockExchange.get_instance()
+
+# Setup
+user = User(&quot;U001&quot;, &quot;Alice&quot;, &quot;alice@email.com&quot;, &quot;555-0001&quot;)
+account = exchange.register_account(user, initial_balance=10000.00)
+apple = Stock(&quot;AAPL&quot;, &quot;Apple Inc.&quot;, 150.00)
+exchange.add_stock(apple)
+
+# Market buy
+order = OrderFactory.create_order(account, apple, 10, OrderType.BUY, PriceType.MARKET)
+exchange.place_order(order)
+
+# Limit sell — queued until price &gt;= 160
+limit_order = OrderFactory.create_order(
+    account, apple, 5, OrderType.SELL, PriceType.LIMIT, limit_price=160.00
+)
+exchange.place_order(limit_order)
+
+# Price update triggers limit order
+exchange.update_stock_price(&quot;AAPL&quot;, 165.00)
+
+# Portfolio P&amp;L
+pnl = account.portfolio.get_profit_loss()
+print(f&quot;P&amp;L: ${pnl['profit_loss']:+,.2f} ({pnl['percentage']:+.2f}%)&quot;)
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and inheritance. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>StockExchange HAS-A stocks (1:N Composition)
+  └─ Exchange owns and manages all Stock objects
+
+StockExchange HAS-A accounts (1:N Composition)
+  └─ Exchange owns all Account objects
+
+User HAS-A Account (1:N Association)
+  └─ One user may have multiple accounts
+
+Account HAS-A Portfolio (1:1 Composition)
+  └─ Portfolio lives and dies with the account
+
+Account PLACES Order (1:N Association)
+  └─ Account references many orders over time
+
+Order REFERENCES Stock (1:1 Association)
+  └─ Order links to the traded security (no ownership)
+
+Stock NOTIFIES PriceObserver (1:N Association)
+  └─ Stock broadcasts to all registered observers
+
+Portfolio CONTAINS Holdings (1:N Composition)
+  └─ Portfolio owns its position data
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌───────────────────────────────────────────────────────────────────────┐
+│                    STOCK EXCHANGE (Singleton)                         │
+├───────────────────────────────────────────────────────────────────────┤
+│ - _instance: StockExchange                                            │
+│ - stocks: Dict[str, Stock]                                            │
+│ - orders: Dict[str, Order]                                            │
+│ - accounts: Dict[str, Account]                                        │
+│ - strategies: Dict[PriceType, OrderStrategy]                          │
+│ - observers: List[PriceObserver]                                      │
+├───────────────────────────────────────────────────────────────────────┤
+│ + get_instance(): StockExchange                                       │
+│ + place_order(order): bool                                            │
+│ + execute_buy_order(order): bool                                      │
+│ + execute_sell_order(order): bool                                     │
+│ + check_and_execute_limit_orders(stock): void                         │
+│ + update_stock_price(symbol, new_price): void                         │
+│ + add_observer(observer): void                                        │
+│ + notify_observers(stock, old_price, new_price): void                │
+└───────────────────────────────────────────────────────────────────────┘
+                           │
+           ┌───────────────┼───────────────┐
+           │               │               │
+           ▼               ▼               ▼
+    ┌─────────────┐  ┌──────────┐  ┌────────────┐
+    │   Stock     │  │   User   │  │  Order     │
+    ├─────────────┤  ├──────────┤  ├────────────┤
+    │ - symbol    │  │ - id     │  │ - order_id │
+    │ - price     │  │ - name   │  │ - account  │
+    │ - observers │  │ - email  │  │ - stock    │
+    │ - history   │  │ - phone  │  │ - quantity │
+    └─────────────┘  └──────────┘  │ - status   │
+           │               │        │ - limit_   │
+           │               │        │   price    │
+           │               │        └────────────┘
+           │               │
+           └─ observers ─┐ │ creates
+                         ▼ ▼
+         ┌─────────────────────────────────────────┐
+         │    Account                              │
+         ├─────────────────────────────────────────┤
+         │ - account_id                            │
+         │ - user (User)                           │
+         │ - balance: float                        │
+         │ - portfolio: Portfolio                  │
+         │ - transaction_history: List[Transaction]│
+         ├─────────────────────────────────────────┤
+         │ + deposit(amount): bool                 │
+         │ + withdraw(amount): bool                │
+         │ + get_balance(): float                  │
+         │ + get_net_worth(): float                │
+         │ + place_order(stock, qty, type, price) │
+         └─────────────────────────────────────────┘
+                         │
+                         │ contains
+                         ▼
+         ┌─────────────────────────────────────────┐
+         │    Portfolio                            │
+         ├─────────────────────────────────────────┤
+         │ - holdings: Dict[str, {qty, cost_basis}]│
+         │ - current_value: float                  │
+         ├─────────────────────────────────────────┤
+         │ + add_holding(stock, qty, price): void │
+         │ + remove_holding(stock, qty): bool      │
+         │ + calculate_value(): float              │
+         │ + get_profit_loss(): Dict               │
+         │ + get_holdings_summary(): List          │
+         └─────────────────────────────────────────┘
+
+
+STRATEGY PATTERNS:
+
+┌──────────────────────────────────────────────────┐
+│    OrderStrategy (Abstract)                      │
+│ - can_execute(order): bool                       │
+│ - get_execution_price(order): Optional[float]    │
+├──────────────────────────────────────────────────┤
+│  ├─ MarketOrderStrategy (execute immediately)   │
+│  └─ LimitOrderStrategy (execute conditionally)   │
+└──────────────────────────────────────────────────┘
+
+
+OBSERVER PATTERN:
+
+┌──────────────────────────────────────────────────┐
+│    PriceObserver (Abstract)                      │
+│ - update(stock, old_price, new_price): void     │
+├──────────────────────────────────────────────────┤
+│  ├─ PortfolioObserver (recalculate P/L)         │
+│  ├─ LimitOrderObserver (execute pending orders)  │
+│  ├─ AlertObserver (send price alerts)            │
+│  └─ ConsoleObserver (print updates)              │
+└──────────────────────────────────────────────────┘
+
+
+ENUMERATIONS:
+
+┌──────────────────────────┐
+│ OrderType (Enum)         │
+├──────────────────────────┤
+│ • BUY                    │
+│ • SELL                   │
+└──────────────────────────┘
+
+┌──────────────────────────┐
+│ PriceType (Enum)         │
+├──────────────────────────┤
+│ • MARKET                 │
+│ • LIMIT                  │
+└──────────────────────────┘
+
+┌──────────────────────────┐
+│ OrderStatus (Enum)       │
+├──────────────────────────┤
+│ • PENDING                │
+│ • EXECUTED               │
+│ • CANCELLED              │
+│ • REJECTED               │
+└──────────────────────────┘
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>StockExchange → Stocks</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Exchange owns all stocks</td>
+</tr>
+<tr>
+<td>StockExchange → Accounts</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Exchange owns all accounts</td>
+</tr>
+<tr>
+<td>User → Account</td>
+<td>1:N</td>
+<td>Association</td>
+<td>One user, multiple accounts</td>
+</tr>
+<tr>
+<td>Account → Portfolio</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>Portfolio lives inside account</td>
+</tr>
+<tr>
+<td>Account → Orders</td>
+<td>1:N</td>
+<td>Association</td>
+<td>Account references many orders</td>
+</tr>
+<tr>
+<td>Order → Stock</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Order references traded security</td>
+</tr>
+<tr>
+<td>Stock → PriceObserver</td>
+<td>1:N</td>
+<td>Association</td>
+<td>Stock notifies multiple subscribers</td>
+</tr>
+<tr>
+<td>Transaction → Order</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Immutable record of executed order</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only apply them to solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-singleton-for-stockexchange">Pattern 1: <strong>Singleton</strong> (For StockExchange)</h3>
+<p><strong>Problem</strong>: 10K+ users accessing trading system → race conditions on order matching, fund deduction.</p>
+<p><strong>Solution</strong>: Single <code>StockExchange</code> instance with thread-safe double-checked locking.</p>
+<pre class="codehilite"><code class="language-python">class StockExchange:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):   # *args/**kwargs — avoids TypeError when __init__ passes params
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance.stocks = {}
+                    cls._instance.orders = {}
+                    cls._instance.accounts = {}
+        return cls._instance
+
+    @staticmethod
+    def get_instance():
+        return StockExchange()
+</code></pre>
+
+<p><strong>Benefit</strong>: Single source of truth for all market operations, prevents conflicting order executions.<br />
+<strong>Trade-off</strong>: Global state makes unit testing harder; must reset <code>_instance</code> between test runs.</p>
+<hr />
+<h3 id="pattern-2-strategy-for-order-execution">Pattern 2: <strong>Strategy</strong> (For Order Execution)</h3>
+<p><strong>Problem</strong>: Market and Limit orders have fundamentally different execution logic; more types (stop-loss, trailing stop) may be added.</p>
+<p><strong>Solution</strong>: Pluggable <code>OrderStrategy</code> with a common interface.</p>
+<pre class="codehilite"><code class="language-python">class OrderStrategy(ABC):
+    @abstractmethod
+    def can_execute(self, order) -&gt; bool:
+        pass
+
+    @abstractmethod
+    def get_execution_price(self, order) -&gt; Optional[float]:
+        pass
+
+class MarketOrderStrategy(OrderStrategy):
+    &quot;&quot;&quot;Execute immediately at current market price&quot;&quot;&quot;
+    def can_execute(self, order) -&gt; bool:
+        return True  # Always executable
+
+    def get_execution_price(self, order) -&gt; Optional[float]:
+        return order.stock.current_price
+
+class LimitOrderStrategy(OrderStrategy):
+    &quot;&quot;&quot;Execute only when price condition is met&quot;&quot;&quot;
+    def can_execute(self, order) -&gt; bool:
+        if order.order_type == OrderType.BUY:
+            return order.stock.current_price &lt;= order.limit_price
+        else:  # SELL
+            return order.stock.current_price &gt;= order.limit_price
+
+    def get_execution_price(self, order) -&gt; Optional[float]:
+        if self.can_execute(order):
+            return order.stock.current_price
+        return None
+</code></pre>
+
+<p><strong>Benefit</strong>: Easy to add <code>StopLossOrderStrategy</code> without changing core execution logic.<br />
+<strong>Trade-off</strong>: Extra abstraction; for only 2 types, a simple <code>if/else</code> would also be readable.</p>
+<hr />
+<h3 id="pattern-3-observer-for-price-updates">Pattern 3: <strong>Observer</strong> (For Price Updates)</h3>
+<p><strong>Problem</strong>: Multiple components (portfolios, watchlists, price alerts) need real-time price updates without tight coupling to <code>Stock</code>.</p>
+<p><strong>Solution</strong>: Abstract <code>PriceObserver</code> interface with pluggable implementations.</p>
+<pre class="codehilite"><code class="language-python">class PriceObserver(ABC):
+    @abstractmethod
+    def update(self, stock: 'Stock', old_price: float, new_price: float):
+        pass
+
+class PortfolioObserver(PriceObserver):
+    &quot;&quot;&quot;Recalculate portfolio value on price change&quot;&quot;&quot;
+    def __init__(self, portfolio: 'Portfolio'):
+        self.portfolio = portfolio
+
+    def update(self, stock, old_price: float, new_price: float):
+        # Portfolio automatically reflects new price; P/L recalculated on next call
+        pass
+
+class LimitOrderObserver(PriceObserver):
+    &quot;&quot;&quot;Check if pending limit orders can execute&quot;&quot;&quot;
+    def __init__(self, exchange: 'StockExchange'):
+        self.exchange = exchange
+
+    def update(self, stock, old_price: float, new_price: float):
+        self.exchange.check_and_execute_limit_orders(stock)
+
+class AlertObserver(PriceObserver):
+    &quot;&quot;&quot;Send price alerts to users&quot;&quot;&quot;
+    def update(self, stock, old_price: float, new_price: float):
+        if new_price &gt;= 150:  # example threshold
+            pass  # send notification
+</code></pre>
+
+<p><strong>Benefit</strong>: Decouples price updates from dependent components; add <code>SlackNotifier</code> without touching <code>Stock</code> or <code>StockExchange</code>.<br />
+<strong>Trade-off</strong>: Observer lifecycle management; slow observers block the notification loop if not run async.</p>
+<hr />
+<h3 id="pattern-4-state-for-order-lifecycle">Pattern 4: <strong>State</strong> (For Order Lifecycle)</h3>
+<p><strong>Problem</strong>: Orders have valid transitions (PENDING → EXECUTED) and invalid ones (EXECUTED → PENDING); these must be enforced.</p>
+<p><strong>Solution</strong>: Enum-based state management with transition validation inside <code>Order</code>.</p>
+<pre class="codehilite"><code class="language-python">class OrderStatus(Enum):
+    PENDING = &quot;pending&quot;
+    EXECUTED = &quot;executed&quot;
+    CANCELLED = &quot;cancelled&quot;
+    REJECTED = &quot;rejected&quot;
+
+class Order:
+    def execute(self, execution_price: float) -&gt; bool:
+        &quot;&quot;&quot;Transition PENDING → EXECUTED&quot;&quot;&quot;
+        if self.status != OrderStatus.PENDING:
+            raise InvalidStateError()
+        self.status = OrderStatus.EXECUTED
+        self.execution_price = execution_price
+        return True
+
+    def cancel(self) -&gt; bool:
+        &quot;&quot;&quot;Transition PENDING/REJECTED → CANCELLED&quot;&quot;&quot;
+        if self.status not in [OrderStatus.PENDING, OrderStatus.REJECTED]:
+            raise InvalidStateError()
+        self.status = OrderStatus.CANCELLED
+        return True
+</code></pre>
+
+<p><strong>Benefit</strong>: Invalid state transitions raise immediately at runtime; readable lifecycle.<br />
+<strong>Trade-off</strong>: Enum states require explicit guard on every transition method.</p>
+<hr />
+<h3 id="pattern-5-factory-for-order-creation">Pattern 5: <strong>Factory</strong> (For Order Creation)</h3>
+<p><strong>Problem</strong>: Creating different order types scattered throughout code is hard to maintain and validate.</p>
+<p><strong>Solution</strong>: Centralized <code>OrderFactory</code> with validation and ID generation.</p>
+<pre class="codehilite"><code class="language-python">class OrderFactory:
+    _order_counter = 0
+
+    @staticmethod
+    def create_order(account: 'Account', stock: 'Stock', quantity: int,
+                     order_type: 'OrderType', price_type: 'PriceType',
+                     limit_price: Optional[float] = None) -&gt; 'Order':
+        OrderFactory._order_counter += 1
+        order_id = f&quot;ORD_{OrderFactory._order_counter}_{int(time.time())}&quot;
+
+        if quantity &lt;= 0:
+            raise ValueError(&quot;Quantity must be positive&quot;)
+        if price_type == PriceType.LIMIT and limit_price is None:
+            raise ValueError(&quot;Limit price required for limit orders&quot;)
+
+        return Order(order_id, account, stock, quantity, order_type, price_type, limit_price)
+</code></pre>
+
+<p><strong>Benefit</strong>: Centralized validation, consistent ID generation, single place to extend.<br />
+<strong>Trade-off</strong>: Static counter is not thread-safe under extreme concurrency (use <code>uuid</code> in production).</p>
+<hr />
+<h3 id="pattern-6-command-for-trading-operations">Pattern 6: <strong>Command</strong> (For Trading Operations)</h3>
+<p><strong>Problem</strong>: Buy/Sell/Cancel operations need undo capability, history, and audit trail.</p>
+<p><strong>Solution</strong>: Command objects encapsulate every trading operation.</p>
+<pre class="codehilite"><code class="language-python">class Command(ABC):
+    @abstractmethod
+    def execute(self) -&gt; bool:
+        pass
+
+class BuyCommand(Command):
+    def __init__(self, exchange: 'StockExchange', order: 'Order'):
+        self.exchange = exchange
+        self.order = order
+
+    def execute(self) -&gt; bool:
+        return self.exchange.execute_buy_order(self.order)
+
+class SellCommand(Command):
+    def __init__(self, exchange: 'StockExchange', order: 'Order'):
+        self.exchange = exchange
+        self.order = order
+
+    def execute(self) -&gt; bool:
+        return self.exchange.execute_sell_order(self.order)
+
+class CancelOrderCommand(Command):
+    def __init__(self, order: 'Order'):
+        self.order = order
+
+    def execute(self) -&gt; bool:
+        return self.order.cancel()
+</code></pre>
+
+<p><strong>Benefit</strong>: Encapsulates operations as objects for queuing, logging, and undo.<br />
+<strong>Trade-off</strong>: Extra wrapper layer; justified when audit trail or undo/redo is required.</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>Single consistent view of market state</td>
+<td>Thread-safe global coordinator</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Market vs Limit execution logic varies</td>
+<td>Pluggable, open/closed principle</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Real-time price updates to many subscribers</td>
+<td>Loose coupling, easy to extend</td>
+</tr>
+<tr>
+<td><strong>State (Enum)</strong></td>
+<td>Order lifecycle transitions must be valid</td>
+<td>Invalid transitions caught at runtime</td>
+</tr>
+<tr>
+<td><strong>Factory</strong></td>
+<td>Consistent order creation with validation</td>
+<td>Centralized, no scattered creation code</td>
+</tr>
+<tr>
+<td><strong>Command</strong></td>
+<td>Buy/Sell/Cancel need audit trail</td>
+<td>Queuing, logging, undo support</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">import threading
+import time
+from abc import ABC, abstractmethod
+from datetime import datetime
+from enum import Enum
+from typing import Dict, List, Optional
+
+
+# ============================================================
+# ENUMERATIONS
+# ============================================================
+
+class OrderType(Enum):
+    BUY = &quot;buy&quot;
+    SELL = &quot;sell&quot;
+
+class PriceType(Enum):
+    MARKET = &quot;market&quot;
+    LIMIT = &quot;limit&quot;
+
+class OrderStatus(Enum):
+    PENDING = &quot;pending&quot;
+    EXECUTED = &quot;executed&quot;
+    CANCELLED = &quot;cancelled&quot;
+    REJECTED = &quot;rejected&quot;
+
+
+# ============================================================
+# EXCEPTIONS
+# ============================================================
+
+class BrokerageException(Exception):
+    pass
+
+class InsufficientFundsError(BrokerageException):
+    pass
+
+class InsufficientSharesError(BrokerageException):
+    pass
+
+class InvalidStateError(BrokerageException):
+    pass
+
+class InvalidOrderError(BrokerageException):
+    pass
+
+
+# ============================================================
+# CORE ENTITIES
+# ============================================================
+
+class User:
+    def __init__(self, user_id: str, name: str, email: str, phone: str):
+        self.user_id = user_id
+        self.name = name
+        self.email = email
+        self.phone = phone
+
+    def __repr__(self):
+        return f&quot;User({self.user_id}, {self.name})&quot;
+
+
+class Portfolio:
+    &quot;&quot;&quot;Tracks stock holdings and computes profit/loss.&quot;&quot;&quot;
+
+    def __init__(self):
+        self.holdings: Dict[str, dict] = {}  # symbol -&gt; {quantity, cost_basis, stock}
+
+    def add_holding(self, stock, quantity: int, price: float):
+        symbol = stock.symbol
+        if symbol in self.holdings:
+            existing = self.holdings[symbol]
+            total_qty = existing['quantity'] + quantity
+            total_cost = existing['quantity'] * existing['cost_basis'] + quantity * price
+            existing['quantity'] = total_qty
+            existing['cost_basis'] = total_cost / total_qty
+        else:
+            self.holdings[symbol] = {
+                'quantity': quantity,
+                'cost_basis': price,
+                'stock': stock
+            }
+
+    def remove_holding(self, stock, quantity: int) -&gt; bool:
+        symbol = stock.symbol
+        if symbol not in self.holdings:
+            return False
+        holding = self.holdings[symbol]
+        if holding['quantity'] &lt; quantity:
+            return False
+        holding['quantity'] -= quantity
+        if holding['quantity'] == 0:
+            del self.holdings[symbol]
+        return True
+
+    def get_quantity(self, stock) -&gt; int:
+        return self.holdings.get(stock.symbol, {}).get('quantity', 0)
+
+    def calculate_value(self) -&gt; float:
+        total = 0.0
+        for holding in self.holdings.values():
+            total += holding['quantity'] * holding['stock'].current_price
+        return total
+
+    def get_profit_loss(self) -&gt; dict:
+        total_cost = 0.0
+        total_current = 0.0
+        for holding in self.holdings.values():
+            qty = holding['quantity']
+            cost_basis = holding['cost_basis']
+            current_price = holding['stock'].current_price
+            total_cost += qty * cost_basis
+            total_current += qty * current_price
+        profit_loss = total_current - total_cost
+        percentage = (profit_loss / total_cost * 100) if total_cost &gt; 0 else 0.0
+        return {
+            'profit_loss': profit_loss,
+            'percentage': percentage,
+            'cost_total': total_cost,
+            'current_value': total_current
+        }
+
+    def get_holdings_summary(self) -&gt; List[dict]:
+        summary = []
+        for symbol, holding in self.holdings.items():
+            qty = holding['quantity']
+            cost_basis = holding['cost_basis']
+            current_price = holding['stock'].current_price
+            market_value = qty * current_price
+            pl = market_value - qty * cost_basis
+            summary.append({
+                'symbol': symbol,
+                'quantity': qty,
+                'cost_basis': cost_basis,
+                'current_price': current_price,
+                'market_value': market_value,
+                'profit_loss': pl
+            })
+        return summary
+
+
+class Transaction:
+    &quot;&quot;&quot;Immutable record of an executed trade.&quot;&quot;&quot;
+
+    def __init__(self, transaction_id: str, order):
+        self.transaction_id = transaction_id
+        self.order = order
+        self.execution_price = order.execution_price
+        self.timestamp = datetime.now()
+
+    def __repr__(self):
+        return (f&quot;Transaction({self.transaction_id}, &quot;
+                f&quot;{self.order.order_type.value} {self.order.quantity} &quot;
+                f&quot;{self.order.stock.symbol} @ ${self.execution_price:.2f})&quot;)
+
+
+class Account:
+    def __init__(self, account_id: str, user: User, initial_balance: float = 0.0):
+        self.account_id = account_id
+        self.user = user
+        self.balance = initial_balance
+        self.portfolio = Portfolio()
+        self.transaction_history: List[Transaction] = []
+        self._lock = threading.RLock()  # RLock allows re-entrant locking within same thread
+
+    def deposit(self, amount: float) -&gt; bool:
+        if amount &lt;= 0:
+            return False
+        with self._lock:
+            self.balance += amount
+        return True
+
+    def withdraw(self, amount: float) -&gt; bool:
+        if amount &lt;= 0:
+            return False
+        with self._lock:
+            if self.balance &lt; amount:
+                return False
+            self.balance -= amount
+        return True
+
+    def get_balance(self) -&gt; float:
+        return self.balance
+
+    def get_net_worth(self) -&gt; float:
+        return self.balance + self.portfolio.calculate_value()
+
+    def record_transaction(self, order):
+        txn_id = f&quot;TXN_{len(self.transaction_history) + 1}_{int(time.time())}&quot;
+        self.transaction_history.append(Transaction(txn_id, order))
+
+    def __repr__(self):
+        return f&quot;Account({self.account_id}, {self.user.name}, ${self.balance:.2f})&quot;
+
+
+# ============================================================
+# PRICE OBSERVERS
+# ============================================================
+
+class PriceObserver(ABC):
+    @abstractmethod
+    def update(self, stock, old_price: float, new_price: float):
+        pass
+
+
+class ConsoleObserver(PriceObserver):
+    def update(self, stock, old_price: float, new_price: float):
+        direction = &quot;UP&quot; if new_price &gt; old_price else &quot;DOWN&quot;
+        print(f&quot;  [PRICE {direction}] {stock.symbol}: ${old_price:.2f} -&gt; ${new_price:.2f}&quot;)
+
+
+class LimitOrderObserver(PriceObserver):
+    &quot;&quot;&quot;Triggers limit-order evaluation after every price change.&quot;&quot;&quot;
+    def __init__(self, exchange):
+        self.exchange = exchange
+
+    def update(self, stock, old_price: float, new_price: float):
+        self.exchange.check_and_execute_limit_orders(stock)
+
+
+class AlertObserver(PriceObserver):
+    def __init__(self, threshold: float, label: str = &quot;ALERT&quot;):
+        self.threshold = threshold
+        self.label = label
+
+    def update(self, stock, old_price: float, new_price: float):
+        if new_price &gt;= self.threshold:
+            print(f&quot;  [{self.label}] {stock.symbol} reached ${new_price:.2f} &quot;
+                  f&quot;(threshold: ${self.threshold:.2f})&quot;)
+
+
+# ============================================================
+# STOCK
+# ============================================================
+
+class Stock:
+    def __init__(self, symbol: str, name: str, initial_price: float):
+        self.symbol = symbol
+        self.name = name
+        self.current_price = initial_price
+        self._observers: List[PriceObserver] = []
+        self.price_history: List[float] = [initial_price]
+        self._lock = threading.Lock()
+
+    def add_observer(self, observer: PriceObserver):
+        with self._lock:
+            self._observers.append(observer)
+
+    def remove_observer(self, observer: PriceObserver):
+        with self._lock:
+            self._observers.remove(observer)
+
+    def update_price(self, new_price: float):
+        with self._lock:
+            old_price = self.current_price
+            self.current_price = new_price
+            self.price_history.append(new_price)
+            observers_copy = list(self._observers)
+
+        for obs in observers_copy:
+            obs.update(self, old_price, new_price)
+
+    def get_quote(self) -&gt; float:
+        return self.current_price
+
+    def __repr__(self):
+        return f&quot;Stock({self.symbol}, ${self.current_price:.2f})&quot;
+
+
+# ============================================================
+# ORDER
+# ============================================================
+
+class Order:
+    def __init__(self, order_id: str, account: Account, stock: Stock,
+                 quantity: int, order_type: OrderType, price_type: PriceType,
+                 limit_price: Optional[float] = None):
+        self.order_id = order_id
+        self.account = account
+        self.stock = stock
+        self.quantity = quantity
+        self.order_type = order_type
+        self.price_type = price_type
+        self.limit_price = limit_price
+        self.status = OrderStatus.PENDING
+        self.execution_price: Optional[float] = None
+        self.timestamp = datetime.now()
+
+    def execute(self, execution_price: float) -&gt; bool:
+        if self.status != OrderStatus.PENDING:
+            raise InvalidStateError(f&quot;Cannot execute order in state {self.status}&quot;)
+        self.status = OrderStatus.EXECUTED
+        self.execution_price = execution_price
+        return True
+
+    def cancel(self) -&gt; bool:
+        if self.status not in [OrderStatus.PENDING, OrderStatus.REJECTED]:
+            raise InvalidStateError(f&quot;Cannot cancel order in state {self.status}&quot;)
+        self.status = OrderStatus.CANCELLED
+        return True
+
+    def reject(self):
+        self.status = OrderStatus.REJECTED
+
+    def __repr__(self):
+        return (f&quot;Order({self.order_id}, {self.order_type.value} &quot;
+                f&quot;{self.quantity} {self.stock.symbol} [{self.status.value}])&quot;)
+
+
+# ============================================================
+# ORDER STRATEGIES
+# ============================================================
+
+class OrderStrategy(ABC):
+    @abstractmethod
+    def can_execute(self, order: Order) -&gt; bool:
+        pass
+
+    @abstractmethod
+    def get_execution_price(self, order: Order) -&gt; Optional[float]:
+        pass
+
+
+class MarketOrderStrategy(OrderStrategy):
+    def can_execute(self, order: Order) -&gt; bool:
+        return True
+
+    def get_execution_price(self, order: Order) -&gt; Optional[float]:
+        return order.stock.current_price
+
+
+class LimitOrderStrategy(OrderStrategy):
+    def can_execute(self, order: Order) -&gt; bool:
+        if order.order_type == OrderType.BUY:
+            return order.stock.current_price &lt;= order.limit_price
+        else:
+            return order.stock.current_price &gt;= order.limit_price
+
+    def get_execution_price(self, order: Order) -&gt; Optional[float]:
+        if self.can_execute(order):
+            return order.stock.current_price
+        return None
+
+
+# ============================================================
+# ORDER FACTORY
+# ============================================================
+
+class OrderFactory:
+    _order_counter = 0
+    _counter_lock = threading.Lock()
+
+    @staticmethod
+    def create_order(account: Account, stock: Stock, quantity: int,
+                     order_type: OrderType, price_type: PriceType,
+                     limit_price: Optional[float] = None) -&gt; Order:
+        with OrderFactory._counter_lock:
+            OrderFactory._order_counter += 1
+            order_id = f&quot;ORD_{OrderFactory._order_counter}_{int(time.time())}&quot;
+
+        if quantity &lt;= 0:
+            raise InvalidOrderError(&quot;Quantity must be positive&quot;)
+        if price_type == PriceType.LIMIT and limit_price is None:
+            raise InvalidOrderError(&quot;Limit price required for limit orders&quot;)
+
+        return Order(order_id, account, stock, quantity, order_type, price_type, limit_price)
+
+
+# ============================================================
+# STOCK EXCHANGE (Singleton + Central Coordinator)
+# ============================================================
+
+class StockExchange:
+    _instance = None
+    _class_lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        # Fix: accept *args/**kwargs so __init__ calls don't raise TypeError
+        if cls._instance is None:
+            with cls._class_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if not hasattr(self, '_initialized'):
+            self.stocks: Dict[str, Stock] = {}
+            self.orders: Dict[str, Order] = {}
+            self.accounts: Dict[str, Account] = {}
+            self._pending_limit_orders: List[Order] = []
+            self._global_observers: List[PriceObserver] = []
+            self._strategies: Dict[PriceType, OrderStrategy] = {
+                PriceType.MARKET: MarketOrderStrategy(),
+                PriceType.LIMIT: LimitOrderStrategy(),
+            }
+            # RLock: exchange lock may be held while calling account methods
+            self._lock = threading.RLock()
+            self._account_counter = 0
+            self._initialized = True
+
+    @staticmethod
+    def get_instance() -&gt; 'StockExchange':
+        return StockExchange()
+
+    # ---------- Registration ----------
+
+    def add_stock(self, stock: Stock):
+        with self._lock:
+            self.stocks[stock.symbol] = stock
+            # Attach global observers to each new stock
+            for obs in self._global_observers:
+                stock.add_observer(obs)
+
+    def register_account(self, user: User, initial_balance: float = 0.0) -&gt; Account:
+        with self._lock:
+            self._account_counter += 1
+            account_id = f&quot;ACC_{self._account_counter}&quot;
+            account = Account(account_id, user, initial_balance)
+            self.accounts[account_id] = account
+        return account
+
+    def add_observer(self, observer: PriceObserver):
+        &quot;&quot;&quot;Register a global observer that receives updates from ALL stocks.&quot;&quot;&quot;
+        with self._lock:
+            self._global_observers.append(observer)
+            for stock in self.stocks.values():
+                stock.add_observer(observer)
+
+    # ---------- Price Updates ----------
+
+    def update_stock_price(self, symbol: str, new_price: float):
+        with self._lock:
+            stock = self.stocks.get(symbol)
+        if stock is None:
+            print(f&quot;  [ERROR] Stock {symbol} not found&quot;)
+            return
+        # update_price calls observers (including LimitOrderObserver) outside lock
+        stock.update_price(new_price)
+
+    def check_and_execute_limit_orders(self, stock: Stock):
+        &quot;&quot;&quot;Evaluate pending limit orders for a stock after a price change.&quot;&quot;&quot;
+        with self._lock:
+            pending = [o for o in self._pending_limit_orders
+                       if o.stock.symbol == stock.symbol and o.status == OrderStatus.PENDING]
+
+        strategy = self._strategies[PriceType.LIMIT]
+        for order in pending:
+            if strategy.can_execute(order):
+                if order.order_type == OrderType.BUY:
+                    self.execute_buy_order(order)
+                else:
+                    self.execute_sell_order(order)
+
+    # ---------- Order Placement ----------
+
+    def place_order(self, order: Order) -&gt; bool:
+        with self._lock:
+            self.orders[order.order_id] = order
+
+        strategy = self._strategies[order.price_type]
+
+        if order.price_type == PriceType.MARKET:
+            if order.order_type == OrderType.BUY:
+                return self.execute_buy_order(order)
+            else:
+                return self.execute_sell_order(order)
+        else:  # LIMIT
+            if strategy.can_execute(order):
+                if order.order_type == OrderType.BUY:
+                    return self.execute_buy_order(order)
+                else:
+                    return self.execute_sell_order(order)
+            else:
+                with self._lock:
+                    self._pending_limit_orders.append(order)
+                print(f&quot;  [QUEUED] {order} pending limit @ ${order.limit_price:.2f}&quot;)
+                return True
+
+    def execute_buy_order(self, order: Order) -&gt; bool:
+        strategy = self._strategies[order.price_type]
+        execution_price = strategy.get_execution_price(order)
+        if execution_price is None:
+            return False
+
+        total_cost = order.quantity * execution_price
+
+        with self._lock:
+            account = order.account
+            with account._lock:
+                if account.balance &lt; total_cost:
+                    order.reject()
+                    print(f&quot;  [REJECTED] {order} — insufficient funds &quot;
+                          f&quot;(need ${total_cost:.2f}, have ${account.balance:.2f})&quot;)
+                    return False
+
+                account.balance -= total_cost
+                account.portfolio.add_holding(order.stock, order.quantity, execution_price)
+                order.execute(execution_price)
+                account.record_transaction(order)
+
+            # Remove from pending if it was a limit order
+            if order in self._pending_limit_orders:
+                self._pending_limit_orders.remove(order)
+
+        print(f&quot;  [EXECUTED] {order.order_type.value.upper()} {order.quantity} &quot;
+              f&quot;{order.stock.symbol} @ ${execution_price:.2f} &quot;
+              f&quot;(cost ${total_cost:.2f}) | balance ${order.account.balance:.2f}&quot;)
+        return True
+
+    def execute_sell_order(self, order: Order) -&gt; bool:
+        strategy = self._strategies[order.price_type]
+        execution_price = strategy.get_execution_price(order)
+        if execution_price is None:
+            return False
+
+        proceeds = order.quantity * execution_price
+
+        with self._lock:
+            account = order.account
+            with account._lock:
+                if account.portfolio.get_quantity(order.stock) &lt; order.quantity:
+                    order.reject()
+                    print(f&quot;  [REJECTED] {order} — insufficient shares&quot;)
+                    return False
+
+                account.portfolio.remove_holding(order.stock, order.quantity)
+                account.balance += proceeds
+                order.execute(execution_price)
+                account.record_transaction(order)
+
+            if order in self._pending_limit_orders:
+                self._pending_limit_orders.remove(order)
+
+        print(f&quot;  [EXECUTED] {order.order_type.value.upper()} {order.quantity} &quot;
+              f&quot;{order.stock.symbol} @ ${execution_price:.2f} &quot;
+              f&quot;(proceeds ${proceeds:.2f}) | balance ${order.account.balance:.2f}&quot;)
+        return True
+
+    # ---------- Reset (for testing) ----------
+
+    def _reset(self):
+        &quot;&quot;&quot;Reset singleton state — use only in tests.&quot;&quot;&quot;
+        with self._lock:
+            self.stocks.clear()
+            self.orders.clear()
+            self.accounts.clear()
+            self._pending_limit_orders.clear()
+            self._global_observers.clear()
+            self._account_counter = 0
+
+
+# ============================================================
+# DEMO
+# ============================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;=&quot; * 65)
+    print(&quot;  ONLINE STOCK BROKERAGE — DEMO&quot;)
+    print(&quot;=&quot; * 65)
+
+    exchange = StockExchange.get_instance()
+    exchange._reset()
+
+    # ── Global observers ────────────────────────────────────────────
+    exchange.add_observer(ConsoleObserver())
+    exchange.add_observer(LimitOrderObserver(exchange))
+
+    # ── Stocks ──────────────────────────────────────────────────────
+    apple = Stock(&quot;AAPL&quot;, &quot;Apple Inc.&quot;, 150.00)
+    google = Stock(&quot;GOOGL&quot;, &quot;Alphabet Inc.&quot;, 2800.00)
+    exchange.add_stock(apple)
+    exchange.add_stock(google)
+
+    # Add a threshold alert directly to AAPL
+    apple.add_observer(AlertObserver(threshold=165.00, label=&quot;PRICE ALERT&quot;))
+
+    # ── User &amp; Account ───────────────────────────────────────────────
+    user = User(&quot;U001&quot;, &quot;Alice&quot;, &quot;alice@email.com&quot;, &quot;555-0001&quot;)
+    account = exchange.register_account(user, initial_balance=10_000.00)
+    print(f&quot;\n  Setup: {account} | Net worth ${account.get_net_worth():,.2f}&quot;)
+
+    # ── Demo 1: Market Buy ──────────────────────────────────────────
+    print(&quot;\n[Demo 1] Market Buy — 10 AAPL @ $150&quot;)
+    order1 = OrderFactory.create_order(account, apple, 10, OrderType.BUY, PriceType.MARKET)
+    exchange.place_order(order1)
+
+    # ── Demo 2: Portfolio Valuation ─────────────────────────────────
+    print(&quot;\n[Demo 2] Portfolio After Market Buy&quot;)
+    pnl = account.portfolio.get_profit_loss()
+    print(f&quot;  Portfolio value  : ${account.portfolio.calculate_value():,.2f}&quot;)
+    print(f&quot;  Cost basis total : ${pnl['cost_total']:,.2f}&quot;)
+    print(f&quot;  Profit / Loss    : ${pnl['profit_loss']:+,.2f} ({pnl['percentage']:+.2f}%)&quot;)
+    print(f&quot;  Account net worth: ${account.get_net_worth():,.2f}&quot;)
+
+    # ── Demo 3: Limit Sell — queue then trigger ─────────────────────
+    print(&quot;\n[Demo 3] Limit Sell — 5 AAPL @ $160 (currently $150 → queued)&quot;)
+    order2 = OrderFactory.create_order(
+        account, apple, 5, OrderType.SELL, PriceType.LIMIT, limit_price=160.00
+    )
+    exchange.place_order(order2)
+
+    print(&quot;\n  Updating AAPL price to $165 → triggers limit sell + alert&quot;)
+    exchange.update_stock_price(&quot;AAPL&quot;, 165.00)
+
+    pnl = account.portfolio.get_profit_loss()
+    print(f&quot;  Portfolio value  : ${account.portfolio.calculate_value():,.2f}&quot;)
+    print(f&quot;  Profit / Loss    : ${pnl['profit_loss']:+,.2f} ({pnl['percentage']:+.2f}%)&quot;)
+
+    # ── Demo 4: Full Cycle — buy GOOGL, price up, market sell ───────
+    print(&quot;\n[Demo 4] Full Trading Cycle — Buy GOOGL, price rises, sell&quot;)
+    order3 = OrderFactory.create_order(account, google, 1, OrderType.BUY, PriceType.MARKET)
+    exchange.place_order(order3)
+
+    print(&quot;  Updating GOOGL price to $3000&quot;)
+    exchange.update_stock_price(&quot;GOOGL&quot;, 3000.00)
+
+    order4 = OrderFactory.create_order(account, google, 1, OrderType.SELL, PriceType.MARKET)
+    exchange.place_order(order4)
+
+    # ── Final Summary ───────────────────────────────────────────────
+    print(&quot;\n[Summary]&quot;)
+    print(f&quot;  Cash balance : ${account.get_balance():,.2f}&quot;)
+    print(f&quot;  Net worth    : ${account.get_net_worth():,.2f}&quot;)
+    print(f&quot;  Transactions : {len(account.transaction_history)}&quot;)
+    for txn in account.transaction_history:
+        print(f&quot;    {txn}&quot;)
+
+    print(&quot;\n&quot; + &quot;=&quot; * 65)
+    print(&quot;  Demo complete — all scenarios passed.&quot;)
+    print(&quot;=&quot; * 65)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>place_order (market)</strong></td>
+<td>RLock on exchange + RLock on account</td>
+<td>Atomic balance check and deduction</td>
+</tr>
+<tr>
+<td><strong>place_order (limit — queue)</strong></td>
+<td>RLock on exchange</td>
+<td>Safe append to pending list</td>
+</tr>
+<tr>
+<td><strong>check_and_execute_limit_orders</strong></td>
+<td>RLock on exchange; then per-order execution</td>
+<td>No duplicate execution on concurrent price updates</td>
+</tr>
+<tr>
+<td><strong>update_stock_price</strong></td>
+<td>Stock-level Lock; observers notified outside lock</td>
+<td>Lock not held during potentially slow observer callbacks</td>
+</tr>
+<tr>
+<td><strong>account.deposit / withdraw</strong></td>
+<td>RLock on account</td>
+<td>No double-spend</td>
+</tr>
+<tr>
+<td><strong>Singleton init</strong></td>
+<td>Class-level Lock (double-checked)</td>
+<td>Only one instance created under race</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles Applied</strong>:
+1. <code>threading.RLock</code> replaces <code>threading.Lock</code> throughout — exchange lock can be re-entered within the same thread without deadlock (e.g., <code>execute_buy_order</code> → <code>account._lock</code>).
+2. Observers are notified <strong>outside</strong> the main exchange lock to prevent lock contention from slow notification callbacks.
+3. Double-checked locking in <code>__new__</code> guards singleton creation.
+4. <code>_pending_limit_orders</code> access always guarded; list snapshot taken before iterating.</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="demo-1-setup-deposit">Demo 1: Setup &amp; Deposit</h3>
+<pre class="codehilite"><code class="language-python"># Initialize system
+exchange = StockExchange.get_instance()
+exchange.add_observer(ConsoleObserver())
+
+# Create user and account
+user = User(&quot;U001&quot;, &quot;Alice&quot;, &quot;alice@email.com&quot;, &quot;555-0001&quot;)
+account = exchange.register_account(user, initial_balance=10000.00)
+
+# Add stocks
+apple = Stock(&quot;AAPL&quot;, &quot;Apple Inc.&quot;, 150.00)
+google = Stock(&quot;GOOGL&quot;, &quot;Alphabet Inc.&quot;, 2800.00)
+exchange.add_stock(apple)
+exchange.add_stock(google)
+
+print(f&quot;Deposit: Account created with ${account.get_balance():.2f}&quot;)
+</code></pre>
+
+<h3 id="demo-2-market-orders">Demo 2: Market Orders</h3>
+<pre class="codehilite"><code class="language-python"># Place market buy order
+order1 = OrderFactory.create_order(
+    account, apple, 10, OrderType.BUY, PriceType.MARKET
+)
+exchange.place_order(order1)
+
+print(f&quot;Market Buy: 10 AAPL @ ${apple.current_price:.2f}&quot;)
+print(f&quot;   Total Cost: ${order1.quantity * apple.current_price:.2f}&quot;)
+</code></pre>
+
+<h3 id="demo-3-portfolio-valuation">Demo 3: Portfolio Valuation</h3>
+<pre class="codehilite"><code class="language-python">pnl = account.portfolio.get_profit_loss()
+print(f&quot;Portfolio Value: ${account.portfolio.calculate_value():.2f}&quot;)
+print(f&quot;   Profit/Loss: ${pnl['profit_loss']:+,.2f}&quot;)
+print(f&quot;   Return: {pnl['percentage']:+.2f}%&quot;)
+</code></pre>
+
+<h3 id="demo-4-limit-orders">Demo 4: Limit Orders</h3>
+<pre class="codehilite"><code class="language-python"># Place limit sell order
+order2 = OrderFactory.create_order(
+    account, apple, 5, OrderType.SELL, PriceType.LIMIT, limit_price=160.00
+)
+exchange.place_order(order2)
+
+print(f&quot;Limit Sell: 5 AAPL @ $160.00 (currently ${apple.current_price:.2f})&quot;)
+
+# Trigger execution by updating price
+exchange.update_stock_price(&quot;AAPL&quot;, 165.00)
+print(f&quot;Price increased to $165.00 -&gt; Limit order executed!&quot;)
+</code></pre>
+
+<h3 id="demo-5-full-trading-cycle">Demo 5: Full Trading Cycle</h3>
+<pre class="codehilite"><code class="language-python"># Complete workflow: buy → hold → sell → profit
+order3 = OrderFactory.create_order(account, google, 1, OrderType.BUY, PriceType.MARKET)
+exchange.place_order(order3)
+
+# Price increase
+exchange.update_stock_price(&quot;GOOGL&quot;, 3000.00)
+
+# Sell at higher price
+order4 = OrderFactory.create_order(account, google, 1, OrderType.SELL, PriceType.MARKET)
+exchange.place_order(order4)
+
+print(f&quot;Final Balance: ${account.get_balance():,.2f}&quot;)
+print(f&quot;   Net Worth: ${account.get_net_worth():,.2f}&quot;)
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-questions">Basic Questions</h3>
+<p><strong>Q1: How do you calculate profit/loss for a portfolio?</strong></p>
+<p>Track <strong>cost basis</strong> (average purchase price) for each holding.</p>
+<ul>
+<li><strong>Cost Basis</strong>: <code>Σ(purchase_price × quantity) / total_quantity</code> (for multiple purchases)</li>
+<li><strong>Current Value</strong>: <code>quantity × current_price</code></li>
+<li><strong>Profit/Loss</strong>: <code>current_value - (quantity × cost_basis)</code></li>
+<li><strong>Percentage</strong>: <code>(profit_loss / total_cost) × 100</code></li>
+</ul>
+<pre class="codehilite"><code class="language-python">def get_profit_loss(self) -&gt; dict:
+    total_cost = 0.0
+    total_current = 0.0
+
+    for symbol, holding in self.holdings.items():
+        quantity = holding['quantity']
+        cost_basis = holding['cost_basis']
+        current_price = holding['stock'].current_price
+
+        total_cost += quantity * cost_basis
+        total_current += quantity * current_price
+
+    profit_loss = total_current - total_cost
+    percentage = (profit_loss / total_cost * 100) if total_cost &gt; 0 else 0.0
+
+    return {
+        'profit_loss': profit_loss,
+        'percentage': percentage,
+        'cost_total': total_cost,
+        'current_value': total_current
+    }
+</code></pre>
+
+<p><strong>Q2: What is the difference between market and limit orders?</strong></p>
+<ul>
+<li><strong>Market Order</strong>: Execute immediately at current market price. Guarantees execution but not price.</li>
+<li><strong>Limit Order</strong>: Execute only when price condition is met. Guarantees price but not execution.</li>
+</ul>
+<p>Example — Stock trading at $100:
+- <strong>Market Buy</strong>: Executes at $100 (or current ask)
+- <strong>Limit Buy @ $95</strong>: Waits until price drops to $95 or below
+- <strong>Limit Sell @ $110</strong>: Waits until price rises to $110 or above</p>
+<p><strong>Q3: Why use Observer pattern for price updates?</strong></p>
+<p>Decouples price updates from dependent components. When stock price changes, multiple listeners react independently:
+- Portfolio recalculates value
+- Limit orders check execution conditions
+- Price alerts trigger notifications
+- UI updates in real-time</p>
+<p>Without Observer, <code>Stock</code> would need to know about all dependent components (tight coupling).</p>
+<p><strong>Q4: How do you prevent race conditions in concurrent order placement?</strong></p>
+<ol>
+<li><strong>Thread-safe Singleton</strong>: Double-checked lock for instance creation</li>
+<li><strong>Atomic Operations</strong>: <code>RLock</code> guards fund deduction + portfolio update as a single unit</li>
+<li><strong>Order Book Locking</strong>: Synchronized access to <code>_pending_limit_orders</code></li>
+<li><strong>Database layer</strong>: ACID guarantees</li>
+<li><strong>Optimistic Locking</strong>: Version numbers to detect conflicts in distributed settings</li>
+</ol>
+<pre class="codehilite"><code class="language-python">with self._lock:                    # exchange lock
+    with account._lock:             # account lock (RLock — re-entrant safe)
+        if account.balance &gt;= total_cost:
+            account.balance -= total_cost
+            portfolio.add_holding(stock, quantity, execution_price)
+        else:
+            order.status = OrderStatus.REJECTED
+</code></pre>
+
+<p><strong>Q5: What if user places conflicting orders (buy + sell same stock)?</strong></p>
+<p>Allow both, but execute sequentially using price-time priority:
+1. User holds 100 shares @ $50 cost
+2. Places Limit Sell @ $100
+3. Places Limit Buy @ $80 (averaging down)
+4. When price hits $80: Buy executes first (FIFO)
+5. When price hits $100: Sell executes
+6. Portfolio now has 200 shares @ average cost $70</p>
+<p>Order of execution is critical for P&amp;L tracking.</p>
+<hr />
+<h3 id="intermediate-questions">Intermediate Questions</h3>
+<p><strong>Q6: How do you handle limit orders that trigger simultaneously?</strong></p>
+<p>Use <strong>price-time priority</strong>:
+1. Sort pending limit orders by price (best price first)
+2. Within same price, sort by timestamp (FIFO)
+3. Execute orders sequentially in priority order
+4. Check funds/shares availability before each execution</p>
+<pre class="codehilite"><code class="language-python">def check_and_execute_limit_orders(self, stock: Stock):
+    relevant_orders = [o for o in self.pending_orders if o.stock == stock]
+
+    # Sort by price-time priority
+    buy_orders = sorted([o for o in relevant_orders if o.order_type == OrderType.BUY],
+                       key=lambda o: (-o.limit_price, o.timestamp))
+
+    for order in buy_orders:
+        if self.order_strategy[order.price_type].can_execute(order):
+            self.execute_order(order)
+</code></pre>
+
+<p><strong>Q7: How do you ensure atomicity in buy/sell operations?</strong></p>
+<p>Use <strong>two-phase commit</strong>:</p>
+<p>Phase 1 — Validation:
+1. Check sufficient funds (buy) or shares (sell)
+2. Lock account balance
+3. Verify order parameters</p>
+<p>Phase 2 — Execution (all or nothing):
+1. Deduct funds / add cash
+2. Update portfolio
+3. Record transaction
+4. Release lock
+5. Notify observers</p>
+<p>If ANY step fails, rollback all changes.</p>
+<pre class="codehilite"><code class="language-python">try:
+    with exchange._lock:
+        # Phase 1: Validate
+        if order.order_type == OrderType.BUY:
+            total_cost = order.quantity * execution_price
+            if account.balance &lt; total_cost:
+                raise InsufficientFundsError()
+
+        # Phase 2: Execute
+        account.balance -= total_cost
+        portfolio.add_holding(order.stock, order.quantity, execution_price)
+        order.execute(execution_price)
+
+        return True
+except Exception:
+    # Rollback
+    return False
+</code></pre>
+
+<p><strong>Q8: How do you handle funds being withdrawn mid-trade?</strong></p>
+<p>Lock funds during order lifecycle:
+1. User has $10,000 balance
+2. Places buy order for $5,000 (status=PENDING)
+3. Tries to withdraw $7,000 → Reject (only $5,000 available)
+4. Order executes → funds locked
+5. Now withdrawal allowed only up to remaining balance</p>
+<p>Funds are reserved from PENDING → EXECUTED, not before.</p>
+<hr />
+<h3 id="advanced-questions">Advanced Questions</h3>
+<p><strong>Q9: How would you scale this system to handle millions of users?</strong></p>
+<p>Multi-tier microservices architecture:</p>
+<p><strong>Tier 1: API Gateway</strong> — Load balancer + session affinity</p>
+<p><strong>Tier 2: Microservices</strong>
+- Order Service: Place, execute, cancel orders
+- Portfolio Service: Holdings, valuation, P&amp;L
+- Market Data Service: Real-time prices, quotes
+- User Service: Account management</p>
+<p><strong>Tier 3: Storage</strong>
+- PostgreSQL with sharding by user_id
+- Redis for distributed locks, caching
+- Kafka for event streaming (order events, price updates)</p>
+<p><strong>Tier 4: Caching</strong>
+- Redis for real-time prices (1-min TTL)
+- Cache portfolio values (5-sec TTL)</p>
+<pre class="codehilite"><code>Load Balancer
+    ├─ Order Service Replica 1
+    ├─ Order Service Replica 2
+    ├─ Portfolio Service Replica 1
+    ├─ Portfolio Service Replica 2
+    └─ Market Data Service (central)
+    ↓
+PostgreSQL (sharded by user_id)
+Redis (distributed locks, caching)
+Kafka (event streaming)
+</code></pre>
+
+<p><strong>Q10: What metrics would you track?</strong></p>
+<p>Business Metrics: Trading volume, active users, average order size, revenue from fees, user retention.</p>
+<p>Performance Metrics: Order execution latency (p50/p95/p99), API response times, portfolio valuation time, WebSocket stability, system throughput (orders/sec).</p>
+<p>Operational Metrics: Error rate, order rejection reasons, pending order queue length, price update frequency, uptime.</p>
+<p>User Behavior: Most traded stocks, buy vs sell ratio, market vs limit ratio, average holding period, P&amp;L distribution.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<h3 id="q1-how-would-you-scale-to-1m-concurrent-users-and-100m-ordersday-1157-orderssec">Q1: How would you scale to 1M concurrent users and 100M orders/day (1,157 orders/sec)?</h3>
+<p><strong>Architecture</strong>:</p>
+<pre class="codehilite"><code>Global Load Balancer
+    ├─ Region 1 (US)
+    │  ├─ Order Service Cluster (100 pods)
+    │  ├─ Portfolio Service Cluster (50 pods)
+    │  └─ Market Data Cache (warm standby)
+    ├─ Region 2 (EU)
+    │  ├─ Order Service Cluster (50 pods)
+    │  ├─ Portfolio Service Cluster (25 pods)
+    │  └─ Market Data Cache
+    └─ Region 3 (APAC)
+       ├─ Order Service Cluster (30 pods)
+       ├─ Portfolio Service Cluster (20 pods)
+       └─ Market Data Cache
+
+Shared Layer:
+├─ PostgreSQL (1000 shards by user_id % 1000)
+├─ Redis (distributed locks, price cache)
+├─ Kafka (order events, price updates)
+└─ Elasticsearch (order history search)
+</code></pre>
+
+<p>Per-Region Throughput: US 600 TPS | EU 400 TPS | APAC 157 TPS | <strong>Total: 1,157 TPS</strong></p>
+<hr />
+<h3 id="q2-how-to-prevent-overbooking-double-execution-in-distributed-settings">Q2: How to prevent overbooking (double-execution) in distributed settings?</h3>
+<p>Pessimistic locking with Redis:</p>
+<pre class="codehilite"><code class="language-python"># Instead of threading.Lock
+def execute_sell_order(self, order: Order):
+    with redis_lock.acquire(f&quot;user-{order.account.user_id}&quot;, timeout=5):
+        if order.account.portfolio.get_quantity(order.stock) &lt; order.quantity:
+            order.status = OrderStatus.REJECTED
+            return False
+
+        order.account.portfolio.remove_holding(order.stock, order.quantity)
+        return True
+</code></pre>
+
+<p>Only one replica can execute per user at a time globally. Prevents overselling.</p>
+<hr />
+<h3 id="q3-how-to-sync-portfolio-valuations-across-replicas">Q3: How to sync portfolio valuations across replicas?</h3>
+<p><strong>Option 1: Pessimistic Locking</strong> — Read from primary DB → Lock row → Check balance → Execute → Unlock. Consistent but high latency.</p>
+<p><strong>Option 2: Optimistic Locking</strong> — Read portfolio version (v1), calculate P&amp;L locally, try update: if version still v1 → commit, else retry. Fast but eventual.</p>
+<p><strong>Option 3: Event Sourcing</strong> — All order events → Kafka topic. Order Service publishes. Portfolio Service subscribes and updates async. Eventually consistent, full audit trail.</p>
+<p><strong>Recommendation</strong>:
+- Market Orders: Pessimistic (critical consistency)
+- Limit Orders: Optimistic (can retry)
+- Portfolio Valuation: Event sourcing (async acceptable)</p>
+<hr />
+<h3 id="q4-how-to-handle-peak-traffic-holiday-trading-5000-tps">Q4: How to handle peak traffic (holiday trading 5000+ TPS)?</h3>
+<p>Before peak: Auto-scale to 2000 Order Service pods, pre-warm price cache, increase DB connection pool, increase Kafka partitions.</p>
+<p>During peak:</p>
+<pre class="codehilite"><code>Order Request
+    ↓
+If queue size &gt; 10K: Reject with &quot;Service busy, retry later&quot;
+Else: Queue order
+    ↓
+Worker pool processes at 1000 TPS max
+    ↓
+Execute order atomically
+    ↓
+Queue notification event (async)
+    ↓
+Return success
+</code></pre>
+
+<hr />
+<h3 id="q5-how-to-scale-notifications-to-100m-order-eventsday">Q5: How to scale notifications to 100M order events/day?</h3>
+<p>Kafka + worker pool:</p>
+<pre class="codehilite"><code>Order Event → Kafka Topic (10 partitions)
+    ├─ Worker 1: Email notifier (100/sec)
+    ├─ Worker 2: Email notifier (100/sec)
+    ├─ Worker 3: SMS notifier (50/sec)
+    └─ Worker 4: Push notifier (50/sec)
+    ↓
+Batch 100 notifications
+    ↓
+SendGrid/Twilio/Firebase APIs
+    ↓
+99.9% delivery within 30 seconds
+</code></pre>
+
+<p>Benefits: Parallel processing, batch efficiency, fault isolation (email down ≠ SMS down), auto-retry, per-channel monitoring.</p>
+<hr />
+<h3 id="q6-how-to-handle-order-search-across-100m-orders">Q6: How to handle order search across 100M+ orders?</h3>
+<p>Elasticsearch with aggregation:</p>
+<pre class="codehilite"><code>Elasticsearch Cluster (100 shards)
+    ├─ Shard 1: Orders 1-1M
+    ...
+    └─ Shard 100: Orders 99M-100M
+
+Query: symbol=AAPL AND status=EXECUTED AND date=[2024-01-01, 2024-01-31]
+    ↓
+ES searches all shards in parallel
+    ↓
+Returns matching documents in &lt;100ms (vs 10s with array scan)
+</code></pre>
+
+<hr />
+<h3 id="q7-how-to-ensure-999-uptime-at-scale">Q7: How to ensure 99.9% uptime at scale?</h3>
+<p>Active-Active multi-region configuration:</p>
+<pre class="codehilite"><code>Region 1 (US) [Primary]
+    ├─ 3x Order Service replicas
+    ├─ 3x Portfolio Service replicas
+    ├─ PostgreSQL Primary + 2 replicas
+    └─ Redis Cluster (3 nodes)
+
+Region 2 (EU) [Hot Standby]
+    ├─ 3x replicas (reads + fail-over writes)
+    └─ PostgreSQL Replica (read-only)
+
+Health Checks (every 10s):
+- Response time &gt; 1000ms → degrade
+- Error rate &gt; 0.1% → alert
+- DB unreachable → failover
+
+RTO &lt; 30s | RPO &lt; 5 min
+</code></pre>
+
+<hr />
+<h3 id="q8-how-to-perform-rolling-updates-without-downtime">Q8: How to perform rolling updates without downtime?</h3>
+<p>Blue-Green deployment with traffic migration:</p>
+<pre class="codehilite"><code>Week 1-2: Deploy v2 to &quot;blue&quot; (isolated, no traffic)
+Week 3: Route 1% of traffic to blue, monitor for 1h
+Week 4: 25% of traffic to blue
+Week 5: 50%
+Week 6: 100%
+
+Rollback instantly if:
+- Error rate &gt; 1%
+- Latency p99 &gt; 2000ms
+- Data corruption detected
+</code></pre>
+
+<hr />
+<h3 id="q9-how-to-partition-users-across-multiple-databases">Q9: How to partition users across multiple databases?</h3>
+<p>Shard by user_id using consistent hashing:</p>
+<pre class="codehilite"><code>Shard Ring:
+├─ Node 1: user_ids 1-1M
+├─ Node 2: user_ids 1M-2M
+├─ Node 3: user_ids 2M-3M
+└─ Node 4: user_ids 3M-4M
+
+Query for user 500K:
+    hash(500K) → Node 1
+    Query Node 1 PostgreSQL
+
+No cross-shard queries (fast); easy rebalancing with consistent hashing.
+</code></pre>
+
+<hr />
+<h3 id="q10-how-to-test-scaling-without-actual-infrastructure">Q10: How to test scaling without actual infrastructure?</h3>
+<p>Load testing + chaos testing:</p>
+<pre class="codehilite"><code class="language-bash">wrk -t12 -c100000 -d30s \
+  --script=place_order.lua \
+  &quot;https://api.brokerage.com/orders&quot;
+
+Monitor:
+- Response time p99 &lt; 500ms
+- Error rate &lt; 0.1%
+- CPU/Memory saturation
+- Database connection pool usage
+</code></pre>
+
+<p>Chaos tests:
+1. Kill random replica → system should failover
+2. Add 100ms latency to DB → measure degradation
+3. Partition network for 30s → test recovery
+4. Spike 100 TPS → 5000 TPS → test auto-scaling
+5. Slow down price cache → verify fallback to DB</p>
+<p>Verify after tests: no order double-execution, no lost funds, no stale portfolio values, payment consistency.</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain 6 design patterns clearly (Singleton, Strategy, Observer, State, Factory, Command)</li>
+<li>[ ] Draw UML diagram with all entities</li>
+<li>[ ] Implement market and limit orders</li>
+<li>[ ] Calculate portfolio profit/loss correctly using average cost basis</li>
+<li>[ ] Handle concurrent order placement with RLock</li>
+<li>[ ] Demonstrate limit order triggered by price update (Observer chain)</li>
+<li>[ ] Discuss scaling to 1M users (microservices, sharding, Kafka)</li>
+<li>[ ] Run all 5 demo scenarios successfully</li>
+<li>[ ] Answer 10+ interview questions confidently</li>
+<li>[ ] Explain thread-safety analysis (RLock vs Lock, notify outside lock)</li>
+</ul>
+<hr />
+<p><strong>You're ready for your interview — let's trade! 📈</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

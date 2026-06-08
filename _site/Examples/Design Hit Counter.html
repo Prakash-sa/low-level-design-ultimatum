@@ -1,0 +1,1846 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Design Hit Counter - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="hit-counter-complete-design-guide">Hit Counter — Complete Design Guide</h1>
+<blockquote>
+<p>Time-windowed request counting with pluggable strategies (fixed-window, sliding-window, probabilistic), per-endpoint memory management, event-driven observability, and snapshot-based rollback.</p>
+</blockquote>
+<p><strong>Scale</strong>: 1K–1M+ requests/second per endpoint, multiple strategies for accuracy/memory trade-offs<br />
+<strong>Duration</strong>: 75-minute interview guide<br />
+<strong>Focus</strong>: Windowing strategies, Strategy pattern for counting algorithms, pruning discipline, memory-bounded data structures</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>A service needs to track how many times each endpoint was called within the last X seconds — for rate limiting, analytics, and observability. The accuracy/memory trade-off matters: exact timestamp storage is precise but memory-intensive; bucket aggregation is fast but coarse; probabilistic counters are tiny but approximate. The system must support swapping strategies at runtime without changing calling code.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>Record Hit → Update Strategy State → Prune (sliding only) → Update Metrics → Emit Event
+                                                                                    |
+Query Count ← Aggregate Hits in Window ←────────────────────────────────────────────
+                     |
+             Snapshot / Restore (testing &amp; rollback)
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Single machine or distributed?</strong> → "Single-process in-memory for the interview"</li>
+<li><strong>Exact counts or approximate?</strong> → "Pluggable — support both exact and approximate"</li>
+<li><strong>Multiple endpoints?</strong> → "Yes, arbitrary string endpoint keys"</li>
+<li><strong>Memory bounding required?</strong> → "Yes — sliding window must prune old data"</li>
+<li><strong>Observability / monitoring needed?</strong> → "Yes — emit events for external listeners"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Service / API Layer</strong></td>
+<td>Records hits and queries counts</td>
+<td><code>record_hit("/api")</code>, <code>query_hits("/api", 10)</code></td>
+</tr>
+<tr>
+<td><strong>Monitoring System</strong></td>
+<td>Listens to lifecycle events</td>
+<td>Subscribe to <code>hit_recorded</code>, <code>pruned</code>, <code>strategy_swapped</code></td>
+</tr>
+<tr>
+<td><strong>Admin / Config</strong></td>
+<td>Adjusts counting strategy at runtime</td>
+<td><code>swap_strategy(MorrisApproxStrategy())</code></td>
+</tr>
+<tr>
+<td><strong>Test Harness</strong></td>
+<td>Captures and restores state</td>
+<td><code>take_snapshot()</code>, <code>restore_snapshot(snap)</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Record Hits</strong>
+  - Record a hit for a named endpoint with an optional timestamp
+  - Support arbitrary string endpoint identifiers</p>
+<p>✅ <strong>Query Counts</strong>
+  - Return hit count for an endpoint within the last N seconds
+  - Query must be non-destructive</p>
+<p>✅ <strong>Multiple Counting Strategies</strong>
+  - Fixed Window: divide time into equal buckets, aggregate overlapping buckets
+  - Sliding Window: store per-hit timestamps, count those within the query window
+  - Morris Approximation: probabilistic counter — O(1) memory per endpoint</p>
+<p>✅ <strong>Strategy Swap</strong>
+  - Swap counting algorithm at runtime without changing call sites
+  - Incompatible strategies trigger a state reset (documented limitation)</p>
+<p>✅ <strong>Pruning (Memory Management)</strong>
+  - Sliding window must prune timestamps older than <code>max_window_s</code>
+  - Metrics must track pruned event count</p>
+<p>✅ <strong>Event Emission (Observability)</strong>
+  - Fire events on <code>hit_recorded</code>, <code>pruned</code>, <code>strategy_swapped</code>, <code>snapshot_taken</code>, <code>metrics_updated</code>
+  - Support multiple registered listeners</p>
+<p>✅ <strong>Snapshot / Restore</strong>
+  - Capture full state + metrics as a Memento
+  - Restore for testing or rollback</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Latency</strong>: Record operation &lt; 1 ms; Query operation &lt; 10 ms<br />
+✅ <strong>Memory</strong>: Bounded via pruning — sliding window never grows unboundedly<br />
+✅ <strong>Concurrency</strong>: Thread-safe record/query/swap via locking<br />
+✅ <strong>Extensibility</strong>: New strategies added without modifying <code>HitCounter</code><br />
+✅ <strong>Observability</strong>: Events emitted for all lifecycle transitions  </p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Distribution</strong></td>
+<td>Single-process in-memory only</td>
+</tr>
+<tr>
+<td><strong>Accuracy</strong></td>
+<td>Fixed / Sliding = exact; Morris = statistical (~±50% for large counts)</td>
+</tr>
+<tr>
+<td><strong>Strategy swap</strong></td>
+<td>Cannot losslessly convert old state — state is reset on type change</td>
+</tr>
+<tr>
+<td><strong>Persistence</strong></td>
+<td>No disk persistence; snapshots are in-memory only</td>
+</tr>
+<tr>
+<td><strong>Clock</strong></td>
+<td>Caller-supplied timestamps accepted; defaults to <code>time.time()</code></td>
+</tr>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>One <code>HitCounter</code> instance per process</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on the whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<pre class="codehilite"><code>HitCounter, CountingStrategy, FixedWindowStrategy, SlidingWindowStrategy,
+MorrisApproxStrategy, Snapshot, Listener/Event, Metrics, State (per-endpoint)
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="countingstrategy-abstract-base-for-all-counting-implementations"><strong>CountingStrategy</strong> — Abstract base for all counting implementations</h4>
+<pre class="codehilite"><code>Properties:
+  - (none — pure behavior)
+
+Behaviors:
+  - name(): Returns class name for logging
+  - record(state, endpoint, ts): Record a hit in the strategy's internal representation
+  - query(state, endpoint, now, last_seconds): Return hit count within window
+  - prune(state, endpoint, now): Remove stale entries; returns pruned count
+  - memory_entries(state): Return total tracked entries across all endpoints
+</code></pre>
+
+<h4 id="fixedwindowstrategy-bucket-based-aggregation"><strong>FixedWindowStrategy</strong> — Bucket-based aggregation</h4>
+<pre class="codehilite"><code>Properties:
+  - window_size_s: int (bucket granularity in seconds, e.g. 10)
+
+Behaviors:
+  - record(): bucket_key = floor(ts / window_size_s); increment bucket counter
+  - query(): sum buckets where start_bucket &lt;= key &lt;= end_bucket
+  - memory_entries(): total number of non-empty buckets across all endpoints
+</code></pre>
+
+<h4 id="slidingwindowstrategy-per-hit-timestamp-list"><strong>SlidingWindowStrategy</strong> — Per-hit timestamp list</h4>
+<pre class="codehilite"><code>Properties:
+  - max_window_s: int (maximum retention window for pruning, e.g. 60)
+
+Behaviors:
+  - record(): append ts to endpoint's timestamp list
+  - prune(): remove timestamps older than (now - max_window_s)
+  - query(): count timestamps &gt;= (now - last_seconds)
+  - memory_entries(): total timestamps stored across all endpoints
+</code></pre>
+
+<h4 id="morrisapproxstrategy-probabilistic-counter"><strong>MorrisApproxStrategy</strong> — Probabilistic counter</h4>
+<pre class="codehilite"><code>Properties:
+  - (none — counter per endpoint is a single int in state)
+
+Behaviors:
+  - record(): increment counter c with probability 1 / 2^c (Morris algorithm)
+  - query(): return estimate = 2^c - 1
+  - memory_entries(): number of endpoints tracked (one int per endpoint)
+</code></pre>
+
+<h4 id="snapshot-memento-for-state-rollback"><strong>Snapshot</strong> — Memento for state rollback</h4>
+<pre class="codehilite"><code>Properties:
+  - state: Dict[str, Any]   (deep copy of per-endpoint strategy state)
+  - metrics: Dict[str, int] (deep copy of metrics at capture time)
+
+Behaviors:
+  - (pure data holder — restored by HitCounter.restore_snapshot())
+</code></pre>
+
+<h4 id="hitcounter-central-coordinator-singleton"><strong>HitCounter</strong> — Central coordinator (Singleton)</h4>
+<pre class="codehilite"><code>Properties:
+  - _instance: Optional[HitCounter]   (class-level singleton reference)
+  - _lock: threading.RLock            (class-level creation lock)
+  - strategy: CountingStrategy        (current counting implementation)
+  - state: Dict[str, Any]             (per-endpoint strategy state)
+  - metrics: Dict[str, int]           (total_hits, endpoints_count, pruned_events, memory_entries)
+  - listeners: List[Callable]         (event subscribers)
+  - lock: threading.RLock             (instance-level re-entrant operation lock)
+
+Behaviors:
+  - record_hit(endpoint, ts): Record a hit; prune if strategy supports it; emit events
+  - query_hits(endpoint, last_seconds): Query strategy for hit count in window
+  - swap_strategy(strategy): Replace counting algorithm; reset state if incompatible
+  - take_snapshot(): Deep-copy state + metrics into a Snapshot (Memento)
+  - restore_snapshot(snap): Replace state + metrics from snapshot
+  - register_listener(fn): Subscribe to lifecycle events
+  - get_metrics(): Return copy of current metrics dict
+</code></pre>
+
+<h3 id="step-23-define-enumerations-data-classes">Step 2.3: Define Enumerations / Data Classes</h3>
+<pre class="codehilite"><code class="language-python">from dataclasses import dataclass
+from typing import Dict, Any
+
+@dataclass
+class Snapshot:
+    &quot;&quot;&quot;Memento: captures entire HitCounter state for rollback&quot;&quot;&quot;
+    state: Dict[str, Any]
+    metrics: Dict[str, int]
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>CountingStrategy (ABC)</strong></td>
+<td>Defines pluggable counting contract</td>
+<td>Can't swap algorithms at runtime</td>
+</tr>
+<tr>
+<td><strong>FixedWindowStrategy</strong></td>
+<td>O(1) record/query, low memory</td>
+<td>No fast approximate counting</td>
+</tr>
+<tr>
+<td><strong>SlidingWindowStrategy</strong></td>
+<td>Exact per-hit granularity</td>
+<td>No precise sliding-window counts</td>
+</tr>
+<tr>
+<td><strong>MorrisApproxStrategy</strong></td>
+<td>Single int per endpoint</td>
+<td>No memory-efficient option at scale</td>
+</tr>
+<tr>
+<td><strong>HitCounter</strong></td>
+<td>Central thread-safe coordinator</td>
+<td>No consistent shared state</td>
+</tr>
+<tr>
+<td><strong>Snapshot</strong></td>
+<td>Memento for testing/rollback</td>
+<td>Can't undo state changes in tests</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-record-hit-critical"><strong>1. Record Hit</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def record_hit(endpoint: str, ts: Optional[float] = None) -&gt; None:
+    &quot;&quot;&quot;
+    Record a hit for the named endpoint at the given timestamp.
+
+    If ts is None, defaults to time.time().
+
+    Side Effects:
+      - Updates strategy-internal state for endpoint
+      - Triggers prune if strategy supports it (sliding window)
+      - Increments metrics: total_hits, endpoints_count, memory_entries
+      - Emits: 'hit_recorded', 'metrics_updated', optionally 'pruned'
+
+    Concurrency: THREAD-SAFE (re-entrant lock)
+    Latency: &lt; 1 ms
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="2-query-hits-critical"><strong>2. Query Hits</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def query_hits(endpoint: str, last_seconds: int) -&gt; int:
+    &quot;&quot;&quot;
+    Return the number of hits for endpoint within the last last_seconds seconds.
+
+    Uses current time as the query anchor (now = time.time()).
+
+    Returns: int (exact for Fixed/Sliding; approximate for Morris)
+
+    Note: Morris approximation has statistical error ~±50% for large counts.
+
+    Concurrency: THREAD-SAFE
+    Latency: &lt; 10 ms
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="3-swap-strategy"><strong>3. Swap Strategy</strong></h4>
+<pre class="codehilite"><code class="language-python">def swap_strategy(strategy: CountingStrategy) -&gt; None:
+    &quot;&quot;&quot;
+    Replace the current counting algorithm with a new one.
+
+    If the new strategy type differs from the current:
+      - State is reset to {} (incompatible internal representations)
+      - Emits: 'strategy_reset', then 'strategy_swapped'
+
+    If same type: state is preserved, no reset.
+
+    Concurrency: THREAD-SAFE
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="4-snapshot-restore"><strong>4. Snapshot &amp; Restore</strong></h4>
+<pre class="codehilite"><code class="language-python">def take_snapshot() -&gt; Snapshot:
+    &quot;&quot;&quot;
+    Capture a deep copy of current state + metrics.
+    Emits: 'snapshot_taken'
+    Returns: Snapshot (Memento object)
+    &quot;&quot;&quot;
+    pass
+
+def restore_snapshot(snap: Snapshot) -&gt; None:
+    &quot;&quot;&quot;
+    Restore state and metrics from a previously captured Snapshot.
+    Replaces current state entirely.
+    Emits: 'snapshot_restored'
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="5-register-listener"><strong>5. Register Listener</strong></h4>
+<pre class="codehilite"><code class="language-python">def register_listener(fn: Callable[[str, Dict[str, Any]], None]) -&gt; None:
+    &quot;&quot;&quot;
+    Subscribe to lifecycle events.
+    fn(event_name, payload_dict) is called on each event.
+    Events: hit_recorded, pruned, strategy_swapped, strategy_reset,
+            snapshot_taken, snapshot_restored, metrics_updated
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-32-failure-model">Step 3.2: Failure Model</h3>
+<p><code>HitCounter</code> uses a defensive / non-raising contract for interview clarity. Known failure modes:</p>
+<pre class="codehilite"><code class="language-python"># No exception hierarchy required for in-memory counter.
+# Failure modes are silent / logged:
+#   - Unknown endpoint on query → returns 0 (empty state)
+#   - Listener exceptions → caught, logged as [WARN], not re-raised
+#   - Strategy swap on same type → no-op reset (state preserved)
+</code></pre>
+
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">hc = HitCounter()
+
+# Subscribe to events
+hc.register_listener(lambda e, p: print(f&quot;[EVENT] {e}: {p}&quot;))
+
+# Record hits with explicit timestamps
+for t in [0.0, 5.0, 8.0, 15.0, 18.0]:
+    hc.record_hit(&quot;/api/search&quot;, ts=t)
+
+# Query: how many hits in last 10 seconds (from now)?
+count = hc.query_hits(&quot;/api/search&quot;, last_seconds=10)
+
+# Swap to probabilistic strategy (resets state)
+hc.swap_strategy(MorrisApproxStrategy())
+for _ in range(1000):
+    hc.record_hit(&quot;/api/search&quot;)
+estimate = hc.query_hits(&quot;/api/search&quot;, last_seconds=60)
+
+# Snapshot &amp; restore for testing
+snap = hc.take_snapshot()
+# ... run test mutations ...
+hc.restore_snapshot(snap)
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and association. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>HitCounter HAS-A CountingStrategy (1:1 Composition)
+  └─ HitCounter owns and manages lifecycle of the current strategy
+
+HitCounter HAS-A state (1:1 Composition)
+  └─ State dict maps endpoint → strategy-specific representation
+     (buckets dict for Fixed, timestamp list for Sliding, int for Morris)
+
+HitCounter HAS-A metrics (1:1 Composition)
+  └─ Metrics dict owns total_hits, pruned_events, memory_entries, endpoints_count
+
+HitCounter HAS-A listeners (1:N Association)
+  └─ Multiple callables subscribed to events
+
+CountingStrategy IMPLEMENTED-BY FixedWindowStrategy (Inheritance)
+CountingStrategy IMPLEMENTED-BY SlidingWindowStrategy (Inheritance)
+CountingStrategy IMPLEMENTED-BY MorrisApproxStrategy (Inheritance)
+
+HitCounter CREATES Snapshot (Factory)
+  └─ take_snapshot() produces a Memento; restore_snapshot() consumes it
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌──────────────────────────────────────────┐
+│         HitCounter (Singleton)           │
+├──────────────────────────────────────────┤
+│ - _instance: Optional[HitCounter]        │
+│ - _lock: threading.RLock  (class-level)  │
+│ - strategy: CountingStrategy             │
+│ - state: Dict[str, Any]                  │
+│ - metrics: Dict[str, int]                │
+│ - listeners: List[Callable]              │
+│ - lock: threading.RLock  (inst-level)    │
+├──────────────────────────────────────────┤
+│ + record_hit(endpoint, ts): void         │
+│ + query_hits(endpoint, last_s): int      │
+│ + swap_strategy(strategy): void          │
+│ + take_snapshot(): Snapshot              │
+│ + restore_snapshot(snap): void           │
+│ + register_listener(fn): void            │
+│ + get_metrics(): Dict                    │
+└────────────────┬─────────────────────────┘
+                 │ owns 1:1
+                 ▼
+┌──────────────────────────────────────────┐
+│       CountingStrategy (ABC)             │
+├──────────────────────────────────────────┤
+│ + name(): str                            │
+│ + record(state, endpoint, ts): void      │
+│ + query(state, endpoint, now, last): int │
+│ + prune(state, endpoint, now): int       │
+│ + memory_entries(state): int             │
+└────┬──────────────┬────────────────┬─────┘
+     │              │                │
+     ▼              ▼                ▼
+┌──────────────┐ ┌───────────────┐ ┌────────────────┐
+│FixedWindow   │ │SlidingWindow  │ │MorrisApprox    │
+│Strategy      │ │Strategy       │ │Strategy        │
+├──────────────┤ ├───────────────┤ ├────────────────┤
+│-window_size_s│ │-max_window_s  │ │(no fields)     │
+├──────────────┤ ├───────────────┤ ├────────────────┤
+│state repr:   │ │state repr:    │ │state repr:     │
+│Dict[int,int] │ │List[float]    │ │int             │
+│(buckets)     │ │(timestamps)   │ │(counter c)     │
+├──────────────┤ ├───────────────┤ ├────────────────┤
+│record: O(1)  │ │record: O(1)   │ │record: O(1)    │
+│query: O(B)   │ │prune: O(n)    │ │query: O(1)     │
+│memory: O(B)  │ │query: O(n)    │ │memory: O(E)    │
+└──────────────┘ └───────────────┘ └────────────────┘
+
+MEMENTO PATTERN (Snapshot):
+┌─────────────────────────────┐
+│  Snapshot (dataclass)       │
+├─────────────────────────────┤
+│ + state: Dict[str, Any]     │
+│ + metrics: Dict[str, int]   │
+└─────────────────────────────┘
+
+Lifecycle:
+RECORD_HIT → STRATEGY.record() → STRATEGY.prune() → METRICS_UPDATE
+     └───────────────────────────────────────────→ EMIT_EVENT
+                                                        │
+                                              SNAPSHOT / RESTORE
+
+B = number of non-empty buckets per endpoint
+n = timestamps per endpoint within max_window_s
+E = number of distinct endpoints
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>HitCounter → CountingStrategy</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>Counter owns one active strategy</td>
+</tr>
+<tr>
+<td>HitCounter → state dict</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>State owned exclusively by counter</td>
+</tr>
+<tr>
+<td>HitCounter → metrics dict</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>Metrics owned exclusively by counter</td>
+</tr>
+<tr>
+<td>HitCounter → listeners</td>
+<td>1:N</td>
+<td>Association</td>
+<td>Multiple observers subscribe</td>
+</tr>
+<tr>
+<td>CountingStrategy → FixedWindowStrategy</td>
+<td>1:1</td>
+<td>Inheritance</td>
+<td>Concrete counting implementation</td>
+</tr>
+<tr>
+<td>CountingStrategy → SlidingWindowStrategy</td>
+<td>1:1</td>
+<td>Inheritance</td>
+<td>Concrete counting implementation</td>
+</tr>
+<tr>
+<td>CountingStrategy → MorrisApproxStrategy</td>
+<td>1:1</td>
+<td>Inheritance</td>
+<td>Concrete counting implementation</td>
+</tr>
+<tr>
+<td>state → per-endpoint data</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Each endpoint has independent state</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-singleton-for-hitcounter">Pattern 1: <strong>Singleton</strong> (For HitCounter)</h3>
+<p><strong>Problem</strong>: Multiple callers across threads need one consistent view of hit counts and metrics.</p>
+<p><strong>Solution</strong>: One global <code>HitCounter</code> instance with double-checked thread-safe initialization.</p>
+<pre class="codehilite"><code class="language-python">class HitCounter:
+    _instance = None
+    _lock = threading.RLock()
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Single source of truth, ✅ Thread-safe (double-checked lock), ✅ Global access<br />
+<strong>Trade-off</strong>: ⚠️ Global state (harder to unit-test in isolation), ⚠️ Does not scale across processes</p>
+<hr />
+<h3 id="pattern-2-strategy-for-counting-algorithms-central-pattern">Pattern 2: <strong>Strategy</strong> (For Counting Algorithms) — Central Pattern</h3>
+<p><strong>Problem</strong>: Different callers need different accuracy/memory trade-offs. Fixed window is fast but coarse; sliding window is exact but memory-intensive; Morris is tiny but probabilistic. These must be swappable without changing the calling code.</p>
+<p><strong>Solution</strong>: <code>CountingStrategy</code> ABC defines <code>record / query / prune / memory_entries</code>. <code>HitCounter</code> holds a reference to the current strategy and delegates all counting to it.</p>
+<pre class="codehilite"><code class="language-python">class CountingStrategy:
+    def record(self, state, endpoint, ts): raise NotImplementedError
+    def query(self, state, endpoint, now, last_seconds): raise NotImplementedError
+    def prune(self, state, endpoint, now): return 0
+    def memory_entries(self, state): raise NotImplementedError
+
+class FixedWindowStrategy(CountingStrategy):
+    def __init__(self, window_size_s: int = 10):
+        self.window_size_s = window_size_s
+
+    def record(self, state, endpoint, ts):
+        buckets = state.setdefault(endpoint, {})
+        key = int(ts // self.window_size_s)
+        buckets[key] = buckets.get(key, 0) + 1
+
+    def query(self, state, endpoint, now, last_seconds):
+        buckets = state.get(endpoint, {})
+        start = int((now - last_seconds) // self.window_size_s)
+        end = int(now // self.window_size_s)
+        return sum(c for k, c in buckets.items() if start &lt;= k &lt;= end)
+
+# Swap at runtime — HitCounter code unchanged:
+hc.swap_strategy(SlidingWindowStrategy(max_window_s=60))
+hc.swap_strategy(MorrisApproxStrategy())
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ New strategies added without touching <code>HitCounter</code>, ✅ Runtime swap, ✅ Clear separation of accuracy/memory trade-off<br />
+<strong>Trade-off</strong>: ⚠️ State reset required when switching between incompatible strategy types</p>
+<hr />
+<h3 id="pattern-3-observer-for-lifecycle-events">Pattern 3: <strong>Observer</strong> (For Lifecycle Events)</h3>
+<p><strong>Problem</strong>: Monitoring, logging, and testing code needs to react to hit counter events (record, prune, strategy swap, snapshot) without coupling to core logic.</p>
+<p><strong>Solution</strong>: <code>HitCounter</code> maintains a list of listener callables. <code>_emit(event, payload)</code> calls each on lifecycle transitions.</p>
+<pre class="codehilite"><code class="language-python">def register_listener(self, fn: Callable[[str, Dict], None]) -&gt; None:
+    self.listeners.append(fn)
+
+def _emit(self, event: str, payload: Dict) -&gt; None:
+    for fn in self.listeners:
+        try:
+            fn(event, payload)
+        except Exception as e:
+            print(f&quot;  [WARN] Listener error: {e}&quot;)
+
+# Usage: track pruning frequency for tuning
+pruned_total = [0]
+hc.register_listener(
+    lambda e, p: pruned_total.__setitem__(0, pruned_total[0] + p.get('removed', 0))
+    if e == 'pruned' else None
+)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Loose coupling, ✅ Multiple independent consumers, ✅ Easy to add new monitoring<br />
+<strong>Trade-off</strong>: ⚠️ Listener exceptions must be caught to prevent disrupting the caller</p>
+<hr />
+<h3 id="pattern-4-memento-for-snapshot-restore">Pattern 4: <strong>Memento</strong> (For Snapshot / Restore)</h3>
+<p><strong>Problem</strong>: Tests need to apply hits, compare different queries, then roll back state. Strategy swaps may also need to be undone.</p>
+<p><strong>Solution</strong>: <code>take_snapshot()</code> captures a deep copy of state + metrics into a <code>Snapshot</code> dataclass. <code>restore_snapshot()</code> replaces live state from the snapshot.</p>
+<pre class="codehilite"><code class="language-python">def take_snapshot(self) -&gt; Snapshot:
+    with self.lock:
+        state_copy = {
+            ep: (data.copy() if isinstance(data, (dict, list)) else data)
+            for ep, data in self.state.items()
+        }
+        snap = Snapshot(state=state_copy, metrics=self.metrics.copy())
+        self._emit('snapshot_taken', {'endpoints_count': len(self.state)})
+        return snap
+
+def restore_snapshot(self, snap: Snapshot) -&gt; None:
+    with self.lock:
+        self.state = {
+            ep: (data.copy() if isinstance(data, (dict, list)) else data)
+            for ep, data in snap.state.items()
+        }
+        self.metrics = snap.metrics.copy()
+        self._emit('snapshot_restored', {})
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Fast in-memory rollback, ✅ No impact on production state during testing<br />
+<strong>Trade-off</strong>: ⚠️ Snapshot is a point-in-time copy — does not capture strategy type itself</p>
+<hr />
+<h3 id="pattern-5-state-machine-per-endpoint-bucket-timestamp-counter">Pattern 5: <strong>State Machine</strong> (Per-Endpoint Bucket / Timestamp / Counter)</h3>
+<p><strong>Problem</strong>: Each endpoint has independent counting state whose representation differs by strategy. Mixing representations would corrupt counts.</p>
+<p><strong>Solution</strong>: Each strategy defines and owns its per-endpoint state representation inside the shared <code>state</code> dict. The state machine is implicit in the strategy's <code>record</code>, <code>prune</code>, and <code>query</code> methods.</p>
+<pre class="codehilite"><code class="language-python"># Fixed window: state[&quot;/api&quot;] = {0: 3, 1: 2}       (bucket_key → count)
+# Sliding:      state[&quot;/api&quot;] = [0.0, 5.0, 8.0]    (timestamps list)
+# Morris:       state[&quot;/api&quot;] = 4                    (counter c, single int)
+
+# Lifecycle:
+# EMPTY → record() → NON_EMPTY → prune() → PARTIAL → query() → (no mutation)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Clear separation of per-endpoint concerns, ✅ O(1) per-endpoint record for Fixed/Morris<br />
+<strong>Trade-off</strong>: ⚠️ State dict is weakly typed — requires trust that only the owning strategy modifies it</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>Single global HitCounter</td>
+<td>Consistent state across all callers</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Swappable accuracy/memory trade-offs</td>
+<td>Add new algorithms without changing HitCounter</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Lifecycle events for monitoring</td>
+<td>Loose coupling, event-driven observability</td>
+</tr>
+<tr>
+<td><strong>Memento</strong></td>
+<td>State rollback for testing</td>
+<td>Fast in-memory undo with no production impact</td>
+</tr>
+<tr>
+<td><strong>State Machine</strong></td>
+<td>Per-endpoint state isolation</td>
+<td>Clear strategy-owned representations</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+Hit Counter - Interview Implementation
+Demonstrates:
+1. Pluggable counting strategies (fixed, sliding, approximate)
+2. Per-endpoint state management
+3. Pruning for memory efficiency
+4. Event-driven lifecycle
+5. Snapshot/restore for testing
+&quot;&quot;&quot;
+
+from enum import Enum
+from typing import List, Optional, Dict, Any, Callable
+from dataclasses import dataclass, field
+from datetime import datetime
+import time
+import threading
+import random
+
+# ============================================================================
+# ENUMERATIONS &amp; DATA CLASSES
+# ============================================================================
+
+@dataclass
+class Snapshot:
+    &quot;&quot;&quot;Memento: captures entire state for rollback&quot;&quot;&quot;
+    state: Dict[str, Any]
+    metrics: Dict[str, int]
+
+# ============================================================================
+# COUNTING STRATEGIES (ABC)
+# ============================================================================
+
+class CountingStrategy:
+    &quot;&quot;&quot;Abstract base for counting implementations&quot;&quot;&quot;
+
+    def name(self) -&gt; str:
+        return self.__class__.__name__
+
+    def record(self, state: Dict[str, Any], endpoint: str, ts: float) -&gt; None:
+        raise NotImplementedError
+
+    def query(self, state: Dict[str, Any], endpoint: str, now: float, last_seconds: int) -&gt; int:
+        raise NotImplementedError
+
+    def prune(self, state: Dict[str, Any], endpoint: str, now: float) -&gt; int:
+        &quot;&quot;&quot;Returns number of entries pruned&quot;&quot;&quot;
+        return 0
+
+    def memory_entries(self, state: Dict[str, Any]) -&gt; int:
+        &quot;&quot;&quot;Returns total memory entries across all endpoints&quot;&quot;&quot;
+        raise NotImplementedError
+
+# ============================================================================
+# FIXED WINDOW STRATEGY
+# ============================================================================
+
+class FixedWindowStrategy(CountingStrategy):
+    &quot;&quot;&quot;Bucket aggregation: divide time into fixed windows&quot;&quot;&quot;
+
+    def __init__(self, window_size_s: int = 10):
+        self.window_size_s = window_size_s
+
+    def record(self, state: Dict[str, Any], endpoint: str, ts: float) -&gt; None:
+        &quot;&quot;&quot;Record hit in appropriate bucket&quot;&quot;&quot;
+        buckets = state.setdefault(endpoint, {})
+        bucket_key = int(ts // self.window_size_s)
+        buckets[bucket_key] = buckets.get(bucket_key, 0) + 1
+
+    def query(self, state: Dict[str, Any], endpoint: str, now: float, last_seconds: int) -&gt; int:
+        &quot;&quot;&quot;Query hits in time window (sum buckets)&quot;&quot;&quot;
+        buckets = state.get(endpoint, {})
+        if not buckets:
+            return 0
+
+        start_bucket = int((now - last_seconds) // self.window_size_s)
+        end_bucket = int(now // self.window_size_s)
+
+        return sum(count for b, count in buckets.items() if start_bucket &lt;= b &lt;= end_bucket)
+
+    def memory_entries(self, state: Dict[str, Any]) -&gt; int:
+        return sum(len(buckets) for buckets in state.values())
+
+# ============================================================================
+# SLIDING WINDOW STRATEGY
+# ============================================================================
+
+class SlidingWindowStrategy(CountingStrategy):
+    &quot;&quot;&quot;Per-hit timestamps with pruning&quot;&quot;&quot;
+
+    def __init__(self, max_window_s: int = 60):
+        self.max_window_s = max_window_s
+
+    def record(self, state: Dict[str, Any], endpoint: str, ts: float) -&gt; None:
+        &quot;&quot;&quot;Append hit timestamp&quot;&quot;&quot;
+        lst: List[float] = state.setdefault(endpoint, [])
+        lst.append(ts)
+
+    def prune(self, state: Dict[str, Any], endpoint: str, now: float) -&gt; int:
+        &quot;&quot;&quot;Remove timestamps older than max_window_s&quot;&quot;&quot;
+        lst: List[float] = state.get(endpoint, [])
+        if not lst:
+            return 0
+
+        cutoff = now - self.max_window_s
+        original_len = len(lst)
+
+        # Find first index &gt;= cutoff
+        keep_index = 0
+        for i, t in enumerate(lst):
+            if t &gt;= cutoff:
+                keep_index = i
+                break
+        else:
+            keep_index = original_len  # All old
+
+        removed = original_len - keep_index
+        lst[:] = lst[keep_index:]
+
+        return removed
+
+    def query(self, state: Dict[str, Any], endpoint: str, now: float, last_seconds: int) -&gt; int:
+        &quot;&quot;&quot;Count timestamps in window&quot;&quot;&quot;
+        lst: List[float] = state.get(endpoint, [])
+        if not lst:
+            return 0
+
+        cutoff = now - last_seconds
+        return sum(1 for t in lst if t &gt;= cutoff)
+
+    def memory_entries(self, state: Dict[str, Any]) -&gt; int:
+        return sum(len(lst) for lst in state.values())
+
+# ============================================================================
+# MORRIS APPROXIMATION STRATEGY
+# ============================================================================
+
+class MorrisApproxStrategy(CountingStrategy):
+    &quot;&quot;&quot;Probabilistic counter: increment with probability 1/2^c&quot;&quot;&quot;
+
+    def record(self, state: Dict[str, Any], endpoint: str, ts: float) -&gt; None:
+        &quot;&quot;&quot;Increment counter probabilistically&quot;&quot;&quot;
+        c = state.get(endpoint, 0)
+
+        # Increment with probability 1 / 2^c
+        prob = 1.0 / (2 ** c if c &gt; 0 else 1)
+        if random.random() &lt; prob:
+            c += 1
+
+        state[endpoint] = c
+
+    def query(self, state: Dict[str, Any], endpoint: str, now: float, last_seconds: int) -&gt; int:
+        &quot;&quot;&quot;Estimate count: 2^c - 1&quot;&quot;&quot;
+        c = state.get(endpoint, 0)
+        return int(2 ** c - 1) if c &gt; 0 else 0
+
+    def memory_entries(self, state: Dict[str, Any]) -&gt; int:
+        return len(state)
+
+# ============================================================================
+# HIT COUNTER (SINGLETON)
+# ============================================================================
+
+class HitCounter:
+    &quot;&quot;&quot;Central hit counter with pluggable strategies&quot;&quot;&quot;
+
+    _instance: Optional['HitCounter'] = None
+    _lock = threading.RLock()  # RLock: re-entrant so listeners can call back in safely
+
+    def __new__(cls, *args, **kwargs):
+        # Accept *args/**kwargs so subclass or explicit args don't raise TypeError
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+
+        self._initialized = True
+        self.strategy: CountingStrategy = FixedWindowStrategy(window_size_s=10)
+        self.state: Dict[str, Any] = {}
+        self.metrics: Dict[str, int] = {
+            'total_hits': 0,
+            'endpoints_count': 0,
+            'pruned_events': 0,
+            'memory_entries': 0,
+        }
+        self.listeners: List[Callable[[str, Dict[str, Any]], None]] = []
+        self.lock = threading.RLock()  # RLock: record_hit → _emit → listener → get_metrics (re-entrant)
+        print(&quot;HitCounter initialized&quot;)
+
+    def register_listener(self, fn: Callable[[str, Dict[str, Any]], None]) -&gt; None:
+        &quot;&quot;&quot;Subscribe to events&quot;&quot;&quot;
+        self.listeners.append(fn)
+
+    def _emit(self, event: str, payload: Dict[str, Any]) -&gt; None:
+        &quot;&quot;&quot;Emit event to all listeners&quot;&quot;&quot;
+        for listener_fn in self.listeners:
+            try:
+                listener_fn(event, payload)
+            except Exception as e:
+                print(f&quot;  [WARN] Listener error: {e}&quot;)
+
+    def record_hit(self, endpoint: str, ts: Optional[float] = None) -&gt; None:
+        &quot;&quot;&quot;Record a hit for endpoint&quot;&quot;&quot;
+        ts = ts or time.time()
+
+        with self.lock:
+            self.strategy.record(self.state, endpoint, ts)
+
+            # Prune if supported
+            removed = self.strategy.prune(self.state, endpoint, ts)
+            if removed &gt; 0:
+                self.metrics['pruned_events'] += removed
+                self._emit('pruned', {'endpoint': endpoint, 'removed': removed})
+
+            # Update metrics
+            self.metrics['total_hits'] += 1
+            self.metrics['endpoints_count'] = len(self.state)
+            self.metrics['memory_entries'] = self.strategy.memory_entries(self.state)
+
+            self._emit('hit_recorded', {'endpoint': endpoint, 'ts': ts})
+            self._emit('metrics_updated', {
+                'total_hits': self.metrics['total_hits'],
+                'memory_entries': self.metrics['memory_entries']
+            })
+
+    def query_hits(self, endpoint: str, last_seconds: int) -&gt; int:
+        &quot;&quot;&quot;Query hit count for endpoint in last_seconds&quot;&quot;&quot;
+        now = time.time()
+
+        with self.lock:
+            return self.strategy.query(self.state, endpoint, now, last_seconds)
+
+    def swap_strategy(self, strategy: CountingStrategy) -&gt; None:
+        &quot;&quot;&quot;Switch to different counting strategy&quot;&quot;&quot;
+        with self.lock:
+            old_name = self.strategy.name()
+            new_name = strategy.name()
+
+            # If incompatible, reset state
+            if type(strategy) is not type(self.strategy):
+                self.state = {}
+                self.metrics['endpoints_count'] = 0
+                self.metrics['pruned_events'] = 0
+                self._emit('strategy_reset', {
+                    'from': old_name,
+                    'to': new_name,
+                    'reason': 'incompatible_state_reset'
+                })
+
+            self.strategy = strategy
+            self.metrics['memory_entries'] = self.strategy.memory_entries(self.state)
+
+            self._emit('strategy_swapped', {'old': old_name, 'new': new_name})
+
+    def take_snapshot(self) -&gt; Snapshot:
+        &quot;&quot;&quot;Capture current state (Memento pattern)&quot;&quot;&quot;
+        with self.lock:
+            state_copy = {}
+            for endpoint, data in self.state.items():
+                if isinstance(data, dict):
+                    state_copy[endpoint] = data.copy()
+                elif isinstance(data, list):
+                    state_copy[endpoint] = data.copy()
+                else:
+                    state_copy[endpoint] = data
+
+            snap = Snapshot(state=state_copy, metrics=self.metrics.copy())
+            self._emit('snapshot_taken', {'endpoints_count': len(self.state)})
+            return snap
+
+    def restore_snapshot(self, snap: Snapshot) -&gt; None:
+        &quot;&quot;&quot;Restore state from snapshot&quot;&quot;&quot;
+        with self.lock:
+            self.state = {}
+            for endpoint, data in snap.state.items():
+                if isinstance(data, dict):
+                    self.state[endpoint] = data.copy()
+                elif isinstance(data, list):
+                    self.state[endpoint] = data.copy()
+                else:
+                    self.state[endpoint] = data
+
+            self.metrics = snap.metrics.copy()
+            self._emit('snapshot_restored', {})
+
+    def get_metrics(self) -&gt; Dict[str, int]:
+        &quot;&quot;&quot;Return current metrics&quot;&quot;&quot;
+        with self.lock:
+            return self.metrics.copy()
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def print_section(title: str):
+    print(f&quot;\n{'='*70}&quot;)
+    print(f&quot;  {title}&quot;)
+    print(f&quot;{'='*70}&quot;)
+
+def simple_listener(event: str, payload: Dict[str, Any]):
+    if event in ['pruned', 'strategy_swapped', 'strategy_reset']:
+        print(f&quot;  [EVENT] {event}: {payload}&quot;)
+
+def demo_1_fixed_window():
+    print_section(&quot;DEMO 1: FIXED WINDOW BASELINE&quot;)
+
+    hc = HitCounter()
+    hc.register_listener(simple_listener)
+
+    # Record hits at t=0, 5, 8, 15, 18
+    for i, t in enumerate([0, 5, 8, 15, 18]):
+        hc.record_hit(&quot;/api&quot;, ts=t)
+
+    # Query at different times
+    print(&quot;\n  Query at t=20s, last 10s:&quot;)
+    count = hc.query_hits(&quot;/api&quot;, last_seconds=10)
+    print(f&quot;  /api count: {count} hits&quot;)
+    print(f&quot;  Metrics: {hc.get_metrics()}&quot;)
+
+def demo_2_sliding_vs_fixed():
+    print_section(&quot;DEMO 2: SLIDING WINDOW VS FIXED&quot;)
+
+    hc = HitCounter()
+    hc.register_listener(simple_listener)
+
+    # Record same hits with sliding window
+    hc.swap_strategy(SlidingWindowStrategy(max_window_s=5))
+
+    for i, t in enumerate([0, 5, 8, 15, 18]):
+        hc.record_hit(&quot;/stream&quot;, ts=t)
+
+    print(&quot;\n  Sliding window queries:&quot;)
+    print(f&quot;  Last 1s:  {hc.query_hits('/stream', 1)} hits&quot;)
+    print(f&quot;  Last 5s:  {hc.query_hits('/stream', 5)} hits&quot;)
+    print(f&quot;  Last 20s: {hc.query_hits('/stream', 20)} hits&quot;)
+
+def demo_3_morris_approx():
+    print_section(&quot;DEMO 3: MORRIS APPROXIMATION&quot;)
+
+    hc = HitCounter()
+    hc.register_listener(simple_listener)
+    hc.swap_strategy(MorrisApproxStrategy())
+
+    # Record 1000 hits
+    print(&quot;  Recording 1000 hits...&quot;)
+    for i in range(1000):
+        hc.record_hit(&quot;/counter&quot;)
+
+    estimate = hc.query_hits(&quot;/counter&quot;, last_seconds=10)
+    print(f&quot;\n  Morris estimate: {estimate} (approx 1000, statistical error acceptable)&quot;)
+    print(f&quot;  Memory entries: {hc.get_metrics()['memory_entries']}&quot;)
+
+def demo_4_high_volume_prune():
+    print_section(&quot;DEMO 4: HIGH-VOLUME PRUNING&quot;)
+
+    hc = HitCounter()
+    hc.swap_strategy(SlidingWindowStrategy(max_window_s=1))
+
+    print(&quot;  Recording burst of hits over 2 seconds...&quot;)
+    start = time.time()
+    i = 0
+    while time.time() - start &lt; 2.0:
+        hc.record_hit(&quot;/burst&quot;, ts=time.time())
+        i += 1
+
+    metrics = hc.get_metrics()
+    print(f&quot;\n  Total hits: {metrics['total_hits']}&quot;)
+    print(f&quot;  Memory entries: {metrics['memory_entries']}&quot;)
+    print(f&quot;  Pruned events: {metrics['pruned_events']}&quot;)
+    print(f&quot;  Last 1s count: {hc.query_hits('/burst', 1)}&quot;)
+
+def demo_5_snapshot_restore():
+    print_section(&quot;DEMO 5: SNAPSHOT &amp; RESTORE&quot;)
+
+    hc = HitCounter()
+    hc.swap_strategy(FixedWindowStrategy(window_size_s=10))
+
+    # Record 50 hits
+    for i in range(50):
+        hc.record_hit(&quot;/home&quot;, ts=i * 0.1)
+
+    snap = hc.take_snapshot()
+    before_count = hc.query_hits(&quot;/home&quot;, last_seconds=10)
+    before_metrics = hc.get_metrics()
+
+    print(f&quot;\n  After first batch: {before_count} hits&quot;)
+
+    # Record 50 more
+    for i in range(50):
+        hc.record_hit(&quot;/home&quot;, ts=5 + i * 0.1)
+
+    after_count = hc.query_hits(&quot;/home&quot;, last_seconds=10)
+    after_metrics = hc.get_metrics()
+
+    print(f&quot;  After second batch: {after_count} hits&quot;)
+    print(f&quot;  Total hits: {after_metrics['total_hits']}&quot;)
+
+    # Restore
+    hc.restore_snapshot(snap)
+    restored_count = hc.query_hits(&quot;/home&quot;, last_seconds=10)
+    restored_metrics = hc.get_metrics()
+
+    print(f&quot;\n  After restore: {restored_count} hits&quot;)
+    print(f&quot;  Total hits: {restored_metrics['total_hits']}&quot;)
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if True:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DESIGN HIT COUNTER - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_fixed_window()
+    demo_2_sliding_vs_fixed()
+    demo_3_morris_approx()
+    demo_4_high_volume_prune()
+    demo_5_snapshot_restore()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;ALL DEMOS COMPLETED&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>record_hit</strong></td>
+<td>Instance RLock</td>
+<td>Atomic: strategy.record + prune + metrics update</td>
+</tr>
+<tr>
+<td><strong>query_hits</strong></td>
+<td>Instance RLock</td>
+<td>Consistent read of strategy state</td>
+</tr>
+<tr>
+<td><strong>swap_strategy</strong></td>
+<td>Instance RLock</td>
+<td>Atomic: reset state + swap + metrics update</td>
+</tr>
+<tr>
+<td><strong>take_snapshot</strong></td>
+<td>Instance RLock</td>
+<td>Deep copy under lock — snapshot is consistent</td>
+</tr>
+<tr>
+<td><strong>restore_snapshot</strong></td>
+<td>Instance RLock</td>
+<td>Atomic full state replacement</td>
+</tr>
+<tr>
+<td><strong>Singleton init</strong></td>
+<td>Class RLock</td>
+<td>Double-checked locking, single instance</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. ✅ <code>threading.RLock</code> (re-entrant) on both class-level and instance-level locks — listeners that call <code>get_metrics()</code> inside <code>record_hit</code> won't deadlock
+2. ✅ <code>__new__</code> accepts <code>*args, **kwargs</code> to avoid <code>TypeError</code> if subclassed or called with arguments
+3. ✅ Notifications (<code>_emit</code>) fire inside the lock so listeners see consistent state
+4. ✅ Minimal lock scope for <code>query_hits</code> — read-only, no mutation</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="demo-1-fixed-window-baseline">Demo 1: Fixed Window Baseline</h3>
+<pre class="codehilite"><code>- Record hits for /api endpoint: t=0, 5, 8, 15, 18s
+- Window size: 10 seconds
+- Query last 10s at t=20s
+- Buckets: [0-10]: 3 hits, [10-20]: 2 hits
+- Result: 5 hits (all buckets overlap)
+</code></pre>
+
+<h3 id="demo-2-sliding-vs-fixed">Demo 2: Sliding vs Fixed</h3>
+<pre class="codehilite"><code>- Same hits: t=0, 5, 8, 15, 18s
+- Fixed window (10s): reports 5 hits
+- Sliding window: exact count = 5 hits
+- Fixed boundary effect: hit at t=9.99s vs t=10.00s differs
+- Sliding always accurate
+</code></pre>
+
+<h3 id="demo-3-strategy-swap-to-morris">Demo 3: Strategy Swap to Morris</h3>
+<pre class="codehilite"><code>- Start with fixed window
+- 1000 hits recorded
+- Swap to Morris approximation
+- State reset (incompatible repr)
+- Continue recording
+- Estimate ≈ actual (statistical error ±50%)
+</code></pre>
+
+<h3 id="demo-4-high-volume-pruning">Demo 4: High-Volume Pruning</h3>
+<pre class="codehilite"><code>- Sliding window, max_window=5s
+- Record 1000 hits over 10 seconds
+- Pruning fires every record
+- Memory entry count stays ≤ 5000 (5s × 1K QPS max)
+- Without prune: would be 10K entries
+</code></pre>
+
+<h3 id="demo-5-snapshot-restore">Demo 5: Snapshot &amp; Restore</h3>
+<pre class="codehilite"><code>- Record 50 hits
+- Take snapshot
+- Record 50 more hits
+- Query shows 100 hits
+- Restore snapshot
+- Query shows 50 hits again
+- Metrics rolled back
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-level">Basic Level</h3>
+<p><strong>Q1: How do you record and query hits?</strong></p>
+<p>A: Record: call <code>strategy.record(endpoint, timestamp)</code> → updates internal state. Query: call <code>strategy.query(endpoint, now, last_seconds)</code> → aggregates hits in time window. Different strategies use different representations (buckets vs timestamps vs probabilistic counters).</p>
+<p><strong>Q2: What's the difference between fixed and sliding window strategies?</strong></p>
+<p>A: Fixed: divides time into buckets (e.g., 10-sec buckets). Record: increment bucket. Query: sum buckets overlapping window. Fast but coarse. Sliding: stores individual timestamps. Query: count timestamps &gt;= (now - last_seconds). Exact but memory-intensive.</p>
+<p><strong>Q3: What's Morris approximation?</strong></p>
+<p>A: Probabilistic counter. On record: increment counter c with probability 1/(2^c). Estimate = 2^c - 1. Extremely memory-efficient (single int per endpoint) but has statistical error (~±50% for large counts). Used when memory is critical.</p>
+<p><strong>Q4: Why do you need pruning?</strong></p>
+<p>A: Sliding window stores all timestamps. Without pruning, memory grows unbounded. Pruning: remove timestamps older than max_window_s. Called each record/query. Metrics track pruned_events.</p>
+<p><strong>Q5: How do you handle strategy swaps?</strong></p>
+<p>A: Different strategies use incompatible internal representations (buckets vs lists vs ints). Strategy swap: if incompatible, reset state (document limitation). Cannot losslessly convert approximate state to exact. Emit strategy_swapped event.</p>
+<h3 id="intermediate-level">Intermediate Level</h3>
+<p><strong>Q6: How do you calculate fixed window bucket key?</strong></p>
+<p>A: <code>bucket_key = floor(timestamp / window_size_s)</code>. Example: ts=25.7s, window=10s → bucket=2. Multiple hits in same second go to same bucket. Query iterates buckets [floor((now-last_s)/window), floor(now/window)].</p>
+<p><strong>Q7: How do you prevent memory explosion in sliding window?</strong></p>
+<p>A: Pruning policy: remove timestamps older than max_window_s. Example: max_window=60s. On query(endpoint, last_5s), also prune timestamps &lt; (now - 60). Cost: O(n) per prune. Trade-off: frequency of pruning vs memory growth.</p>
+<p><strong>Q8: What does snapshot capture?</strong></p>
+<p>A: Deep copy of entire state dict + metrics dict. Snapshot.restore() replaces current state. Used for testing (apply hits, snapshot, try different queries, restore). Or rollback if strategy swap fails.</p>
+<p><strong>Q9: How are events useful?</strong></p>
+<p>A: Listeners subscribe to events (hit_recorded, pruned, strategy_swapped, snapshot_taken, metrics_updated). Enables logging, monitoring, testing. Example: count pruned_events to tune pruning frequency.</p>
+<p><strong>Q10: How do you handle multiple endpoints?</strong></p>
+<p>A: Each endpoint has separate state (bucket dict for fixed, timestamp list for sliding, counter int for morris). HitCounter.state: dict[endpoint] → strategy-specific representation. Query per endpoint.</p>
+<h3 id="advanced-level">Advanced Level</h3>
+<p><strong>Q11: How to optimize query for millions of endpoints?</strong></p>
+<p>A: Partitioning: shard endpoints by hash(endpoint) % num_shards. Each shard is separate HitCounter instance. Query aggregates across shards. Fixed window: O(1) query (count hit buckets); sliding: O(n) where n = hits in window.</p>
+<p><strong>Q12: How to detect and handle clock skew (time going backwards)?</strong></p>
+<p>A: Fixed window: bucket_key always increases or stays same. Issue: negative drift → lower bucket. Mitigate: require monotonic timestamps (use max(ts, last_ts)). Sliding: filter out future timestamps (ts &gt; now + delta). Log anomalies.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<p><strong>Q1: Can you handle 1M requests/second?</strong></p>
+<p>A: Fixed window: O(1) record (hash lookup). Yes, easily. Sliding: O(1) append but memory grows 1M items/sec = 8 MB/sec. Need aggressive pruning (every 100ms). Morris: O(1) record, ~100 endpoints × 8 bytes = negligible. Choose strategy by SLA.</p>
+<p><strong>Q2: How much memory does each strategy use?</strong></p>
+<p>A: Fixed window (10-sec bucket, 1M endpoints): 1M × 100 buckets × 8 bytes = 800 MB. Sliding (60-sec window, 1K QPS): 1K × 60 = 60K entries × 8 bytes = 480 KB. Morris: 1M × 8 bytes = 8 MB. Morris wins for scale.</p>
+<p><strong>Q3: How to distribute across multiple machines?</strong></p>
+<p>A: Shard endpoints. Machine 1 handles endpoints A-M, Machine 2 handles N-Z, etc. Each machine runs independent HitCounter. Aggregation: query all shards, sum results. Scaling: add shard for each 10M hits/sec.</p>
+<p><strong>Q4: What if query arrives during pruning?</strong></p>
+<p>A: Lock state during prune. Readers wait. Alternative: copy-on-write snapshot during prune, readers use old version. Trade-off: latency vs memory copy. For hit counter, lock acceptable (&lt;1ms prune).</p>
+<p><strong>Q5: How to persist state for recovery?</strong></p>
+<p>A: Write-ahead log (WAL): append-only log of (record/query/strategy_swap) events. On restart: replay log → recover state. Or: checkpoint snapshots every N minutes + replay logs since last checkpoint.</p>
+<p><strong>Q6: Can you support sliding window for 100M requests/day?</strong></p>
+<p>A: 100M requests/day = 1.2K QPS. Sliding (60-sec): 1.2K × 60 = 72K timestamps × 8 bytes = 576 KB. Manageable. Prune every 10 seconds removes stale data. Yes, feasible.</p>
+<p><strong>Q7: How to adapt strategy based on load?</strong></p>
+<p>A: Monitor metrics (total_hits, memory_entries). If memory_entries &gt; threshold, swap to Morris (probabilistic). If high accuracy needed, swap to sliding (higher memory). Metrics inform strategy choice.</p>
+<p><strong>Q8: How to handle burst traffic?</strong></p>
+<p>A: Burst: 10M hits in 1 second. Fixed window: increment bucket by 10M (single int, safe). Sliding: append 10M timestamps (memory spike). Prune immediately after to recover. Or use fixed window as buffer.</p>
+<p><strong>Q9: Can you support real-time leaderboards (top endpoints)?</strong></p>
+<p>A: Track query counts per endpoint. Rank by (count DESC). Recompute every 5 minutes (batch sort). Cache top-100 in memory. Update on-demand if endpoint promoted/demoted. O(n log n) batch, O(log n) updates.</p>
+<p><strong>Q10: How to prevent double-counting (same request counted twice)?</strong></p>
+<p>A: Request ID deduplication: maintain set of seen IDs (bloom filter for space efficiency). On record: check if ID seen. If yes, skip. Tradeoff: false negatives acceptable for hit counts.</p>
+<p><strong>Q11: How to handle clock skew across distributed systems?</strong></p>
+<p>A: Use global clock (NTP-synchronized). Max clock delta: ±1 second. Sliding window: discard timestamps &gt; (now + 1s) or &lt; (now - max_window - 1s). Log anomalies. Alert on skew &gt; threshold.</p>
+<p><strong>Q12: How to support multi-level aggregation (per-second, per-minute, per-hour)?</strong></p>
+<p>A: Maintain separate HitCounter instances: 1-sec window, 60-sec window, 3600-sec window. Each runs independently. Query aggregates level needed. Or: single 3600-sec counter with sub-buckets (3600 / 1-sec).</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw UML class diagram with CountingStrategy hierarchy and HitCounter</li>
+<li>[ ] Explain the three strategy trade-offs: Fixed (fast, coarse) vs Sliding (exact, memory) vs Morris (tiny, approximate)</li>
+<li>[ ] Explain why Strategy pattern is the central pattern here and how swap works</li>
+<li>[ ] Discuss pruning: why it's needed for sliding window, what happens without it</li>
+<li>[ ] Explain how RLock prevents deadlock when listeners call back into HitCounter</li>
+<li>[ ] Run complete implementation (5 demos) without errors</li>
+<li>[ ] Answer 5+ scaling Q&amp;A questions</li>
+<li>[ ] Discuss Memento pattern: take_snapshot / restore_snapshot and its use in testing</li>
+<li>[ ] Discuss trade-offs: choosing strategy based on SLA (accuracy vs memory vs speed)</li>
+</ul>
+<hr />
+<p><strong>Ready for interview? Start counting those hits!</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

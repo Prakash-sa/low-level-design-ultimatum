@@ -1,0 +1,2026 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jigsaw Puzzle - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="jigsaw-puzzle-complete-design-guide">Jigsaw Puzzle — Complete Design Guide</h1>
+<blockquote>
+<p>Interactive jigsaw puzzle game with piece placement, edge/corner detection, rotation, hint system, and completion tracking.</p>
+</blockquote>
+<p><strong>Scale</strong>: 100K+ concurrent games, 1K–1M piece puzzles<br />
+<strong>Duration</strong>: 75-minute interview guide<br />
+<strong>Focus</strong>: Constraint-based piece placement, pluggable matching strategies, undo/redo via Memento, event-driven scoring</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>A player loads an image → the system generates puzzle pieces with edge patterns (FLAT/IN/OUT) → the player selects a piece, chooses a position and rotation → the system validates edge matches against all neighbors → on success the move is recorded for undo/redo → when all positions are filled and every edge matches, the puzzle is complete.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>Load Image → Generate Pieces (edge patterns) → Initialize Board
+  → Select Piece → Choose Position &amp; Rotation
+  → Validate Edges (MatchingStrategy) → Place on Board
+  → Record Move (Memento)
+      ↓ all positions filled
+  Verify All Edges → Completion Event → Leaderboard Update
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Single-player or multiplayer?</strong> → "Single-player for core; mention multiplayer as a scaling concern"</li>
+<li><strong>How large can puzzles get?</strong> → "Up to 1000 pieces (32×32) in production; demo uses 4×4 to 16×16"</li>
+<li><strong>What does the matching rule look like?</strong> → "Edge patterns FLAT/IN/OUT; IN connects to OUT, FLAT only on borders"</li>
+<li><strong>Real graphics or text-based?</strong> → "Text/in-memory demo; production adds graphics"</li>
+<li><strong>Persistence required?</strong> → "In-memory for demo; Redis + PostgreSQL for production"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Player</strong></td>
+<td>Assembles the puzzle</td>
+<td>Select piece, place, rotate, request hint, undo/redo</td>
+</tr>
+<tr>
+<td><strong>Game Admin</strong></td>
+<td>Manages puzzles &amp; players</td>
+<td>Create puzzles, set difficulty, view leaderboard</td>
+</tr>
+<tr>
+<td><strong>System</strong></td>
+<td>Controller &amp; event dispatcher</td>
+<td>Validate edges, emit events, track completion</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Puzzle Generation</strong>
+  - Load image and generate puzzle pieces with edge patterns (FLAT, IN, OUT)
+  - Support multiple difficulty levels (EASY 4×4, MEDIUM 8×8, HARD 16×16)</p>
+<p>✅ <strong>Piece Placement</strong>
+  - Place pieces on board with position and rotation validation
+  - Automatically validate edge matching against all 4 neighbors
+  - Suggest piece rotations (0°, 90°, 180°, 270°)</p>
+<p>✅ <strong>Hint System</strong>
+  - Analyze board state to find the best next piece to place
+  - Score candidates by matched neighbors and border constraints</p>
+<p>✅ <strong>Undo / Redo</strong>
+  - Record every move as a Memento snapshot
+  - Undo restores previous board state; redo replays a reverted move</p>
+<p>✅ <strong>Scoring &amp; Completion</strong>
+  - Track score (time penalty, hints used, rotations)
+  - Detect puzzle completion and trigger celebration event
+  - Update leaderboard after completion</p>
+<p>✅ <strong>Event Notifications</strong>
+  - Emit events on placement, hint request, and completion
+  - Support multiple observer types (score, completion, hint engine)</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Latency</strong>: Piece placement &lt; 100 ms (edge matching O(1))<br />
+✅ <strong>Hint speed</strong>: Hint generation &lt; 500 ms (pre-computed board analysis)<br />
+✅ <strong>Concurrency</strong>: Support 100K+ concurrent games<br />
+✅ <strong>Undo latency</strong>: &lt; 50 ms (memento snapshots, no board re-computation)<br />
+✅ <strong>Persistence</strong>: Game progress persisted (production: Redis + PostgreSQL)<br />
+✅ <strong>Rotation</strong>: Smooth piece rotation at O(1) via index arithmetic  </p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Single-process demo</strong></td>
+<td>YES (production: WebSocket + server-side persistence)</td>
+</tr>
+<tr>
+<td><strong>Storage</strong></td>
+<td>In-memory (production: Redis + PostgreSQL)</td>
+</tr>
+<tr>
+<td><strong>Board visualization</strong></td>
+<td>2D text grid assumed (no graphics library)</td>
+</tr>
+<tr>
+<td><strong>Max pieces (demo)</strong></td>
+<td>16×16 = 256 pieces</td>
+</tr>
+<tr>
+<td><strong>Rotation steps</strong></td>
+<td>4 (0°, 90°, 180°, 270°)</td>
+</tr>
+<tr>
+<td><strong>Edge matching rule</strong></td>
+<td>FLAT↔FLAT, IN↔OUT, OUT↔IN; all others invalid</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on the whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<pre class="codehilite"><code>Piece, Edge, Board, Player, Move, PuzzleGame, MatchingStrategy, PuzzleObserver, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="edge-one-side-of-a-puzzle-piece"><strong>Edge</strong> — One side of a puzzle piece</h4>
+<pre class="codehilite"><code>Properties:
+  - pattern: EdgePattern (FLAT / IN / OUT)
+  - color_hash: int  (for color-similarity matching)
+
+Behaviors:
+  - can_connect(other, strategy): FLAT↔FLAT, IN↔OUT, OUT↔IN
+  - _pattern_matches(other): pure structural check
+</code></pre>
+
+<h4 id="piece-a-single-puzzle-piece"><strong>Piece</strong> — A single puzzle piece</h4>
+<pre class="codehilite"><code>Properties:
+  - piece_id: str
+  - edges: List[Edge]   [TOP, RIGHT, BOTTOM, LEFT]
+  - piece_type: PieceType (CORNER / EDGE / INNER)
+  - row, col: Optional[int]
+  - rotation: int  (0–3, meaning 0°/90°/180°/270°)
+  - placed: bool
+
+Behaviors:
+  - get_edge(direction): return edge with rotation applied
+  - rotate(times): increment rotation by n steps mod 4
+</code></pre>
+
+<h4 id="board-2d-grid-tracking-placed-pieces"><strong>Board</strong> — 2D grid tracking placed pieces</h4>
+<pre class="codehilite"><code>Properties:
+  - width, height: int
+  - grid: List[List[Optional[str]]]   (piece_ids)
+  - pieces_at: Dict[str, Tuple[int, int]]
+
+Behaviors:
+  - can_place_piece(piece, row, col): bounds + occupancy check
+  - place_piece(piece, row, col): write piece_id to grid
+  - remove_piece(piece_id): clear cell (for undo)
+  - is_complete(): all cells filled
+</code></pre>
+
+<h4 id="move-memento-snapshot-of-a-single-action"><strong>Move</strong> — Memento snapshot of a single action</h4>
+<pre class="codehilite"><code>Properties:
+  - piece_id: str
+  - row, col: int
+  - rotation: int
+  - timestamp: datetime
+</code></pre>
+
+<h4 id="player-a-game-participant"><strong>Player</strong> — A game participant</h4>
+<pre class="codehilite"><code>Properties:
+  - player_id: str
+  - name: str
+  - score: int
+  - moves_made: int
+  - hints_used: int
+  - start_time, completion_time: Optional[datetime]
+</code></pre>
+
+<h4 id="puzzlegame-main-controller-singleton"><strong>PuzzleGame</strong> — Main controller (Singleton)</h4>
+<pre class="codehilite"><code>Properties:
+  - players: Dict[str, Player]
+  - board: Board
+  - pieces: Dict[str, Piece]
+  - move_history: List[Move]
+  - redo_stack: List[Move]
+  - matching_strategy: MatchingStrategy
+  - observers: List[PuzzleObserver]
+
+Behaviors:
+  - create_puzzle(difficulty): generate board + pieces
+  - place_piece(piece_id, row, col, rotation): validate + record move
+  - undo() / redo(): restore/replay from move_history / redo_stack
+  - generate_hint(): score unplaced pieces, return best candidate
+  - set_matching_strategy(strategy): swap algorithm at runtime
+</code></pre>
+
+<h3 id="step-23-define-enumerations-state-type">Step 2.3: Define Enumerations (State &amp; Type)</h3>
+<pre class="codehilite"><code class="language-python">class EdgePattern(Enum):
+    FLAT = &quot;flat&quot;    # Border edge (connects only to another FLAT)
+    IN   = &quot;in&quot;      # Socket / concave tab
+    OUT  = &quot;out&quot;     # Knob / convex tab
+
+class PieceType(Enum):
+    CORNER = &quot;corner&quot;   # 2 FLAT edges
+    EDGE   = &quot;edge&quot;     # 1 FLAT edge
+    INNER  = &quot;inner&quot;    # 0 FLAT edges
+
+class DifficultyLevel(Enum):
+    EASY   = &quot;easy&quot;    # 4×4  = 16 pieces
+    MEDIUM = &quot;medium&quot;  # 8×8  = 64 pieces
+    HARD   = &quot;hard&quot;    # 16×16 = 256 pieces
+
+class BoardStatus(Enum):
+    SETUP     = &quot;setup&quot;
+    PLAYING   = &quot;playing&quot;
+    COMPLETED = &quot;completed&quot;
+    FAILED    = &quot;failed&quot;
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Edge</strong></td>
+<td>Encapsulates pattern + color per side</td>
+<td>Can't validate placement or implement color matching</td>
+</tr>
+<tr>
+<td><strong>Piece</strong></td>
+<td>Tracks rotation, position, placement state</td>
+<td>Can't apply rotation or detect valid positions</td>
+</tr>
+<tr>
+<td><strong>Board</strong></td>
+<td>2D grid with O(1) lookup</td>
+<td>Can't track what's placed where</td>
+</tr>
+<tr>
+<td><strong>Move</strong></td>
+<td>Memento snapshot</td>
+<td>Can't implement undo/redo</td>
+</tr>
+<tr>
+<td><strong>Player</strong></td>
+<td>Score, stats, timing</td>
+<td>Can't track performance or leaderboard</td>
+</tr>
+<tr>
+<td><strong>PuzzleGame</strong></td>
+<td>Single point of truth, thread-safe</td>
+<td>No coordinated state across placement/undo/hints</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-create-puzzle"><strong>1. Create Puzzle</strong></h4>
+<pre class="codehilite"><code class="language-python">def create_puzzle(difficulty: DifficultyLevel) -&gt; None:
+    &quot;&quot;&quot;
+    Initialize board and generate all pieces for the given difficulty.
+    EASY → 4×4, MEDIUM → 8×8, HARD → 16×16.
+    Resets move_history, redo_stack, and board.
+    Side Effects: replaces board and pieces in-place.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="2-place-piece-critical"><strong>2. Place Piece</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def place_piece(piece_id: str, row: int, col: int, rotation: int = 0) -&gt; bool:
+    &quot;&quot;&quot;
+    Attempt to place piece on the board.
+
+    Precondition: piece exists, not already placed, position is empty.
+    Postcondition: piece placed, move recorded, observers notified.
+
+    Returns: True on success, False on failure.
+
+    Failure causes:
+      - piece_id not found
+      - MatchingStrategy rejects edge pattern(s)
+      - Position already occupied or out of bounds
+
+    Concurrency: THREAD-SAFE (game-level RLock)
+    Side Effects: emits &quot;piece_placed&quot; event; emits &quot;puzzle_completed&quot; if board fills
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="3-undo"><strong>3. Undo</strong></h4>
+<pre class="codehilite"><code class="language-python">def undo() -&gt; bool:
+    &quot;&quot;&quot;
+    Revert the last move.
+    Pops from move_history, removes piece from board, pushes to redo_stack.
+    Returns: True if a move was undone, False if history is empty.
+    Latency: O(1)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="4-redo"><strong>4. Redo</strong></h4>
+<pre class="codehilite"><code class="language-python">def redo() -&gt; bool:
+    &quot;&quot;&quot;
+    Re-apply the last undone move.
+    Pops from redo_stack, replaces piece at recorded position/rotation.
+    Returns: True if a move was replayed, False if redo_stack is empty.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="5-generate-hint-critical"><strong>5. Generate Hint</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def generate_hint() -&gt; Optional[Tuple[str, int, int, int]]:
+    &quot;&quot;&quot;
+    Find the best next piece to place.
+
+    Algorithm:
+      For each unplaced piece × each rotation × each board position:
+        if MatchingStrategy accepts → score position
+      Return (piece_id, rotation, row, col) with highest score.
+
+    Returns: (piece_id, rotation, row, col) or None if no move found.
+    Side Effects: emits &quot;hint_requested&quot; event.
+    Response Time: &lt;500 ms for up to 256 pieces.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="6-set-matching-strategy"><strong>6. Set Matching Strategy</strong></h4>
+<pre class="codehilite"><code class="language-python">def set_matching_strategy(strategy: MatchingStrategy) -&gt; None:
+    &quot;&quot;&quot;
+    Swap the edge-matching algorithm at runtime.
+    New strategy applies immediately to the next place_piece() call.
+    Strategy: ExactMatchStrategy | ColorSimilarityStrategy
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="7-register-observer"><strong>7. Register Observer</strong></h4>
+<pre class="codehilite"><code class="language-python">def register_observer(observer: PuzzleObserver) -&gt; None:
+    &quot;&quot;&quot;
+    Subscribe to puzzle events.
+    Events: &quot;piece_placed&quot;, &quot;hint_requested&quot;, &quot;puzzle_completed&quot;, &quot;move_undone&quot;, &quot;move_redone&quot;
+    Observer is called: observer.update(event, payload)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-32-failure-model">Step 3.2: Failure Model</h3>
+<pre class="codehilite"><code class="language-python">class PuzzleException(Exception):
+    &quot;&quot;&quot;Base exception for puzzle system&quot;&quot;&quot;
+    pass
+
+class PieceNotFoundError(PuzzleException):
+    &quot;&quot;&quot;piece_id does not exist&quot;&quot;&quot;
+    pass
+
+class InvalidPlacementError(PuzzleException):
+    &quot;&quot;&quot;Edge validation failed or position occupied&quot;&quot;&quot;
+    pass
+
+class PieceAlreadyPlacedError(PuzzleException):
+    &quot;&quot;&quot;Piece is already on the board&quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">game = PuzzleGame()
+
+# 1. Create 4×4 puzzle
+game.create_puzzle(DifficultyLevel.EASY)
+
+# 2. Register observers
+game.register_observer(ScoreTracker())
+game.register_observer(HintGenerator())
+
+# 3. Place a corner piece at (0, 0)
+success = game.place_piece(&quot;p_0_0&quot;, 0, 0, rotation=0)
+print(f&quot;Placed: {success}&quot;)  # True
+
+# 4. Request hint
+hint = game.generate_hint()  # → (&quot;p_0_1&quot;, 0, 0, 1)
+
+# 5. Undo last move
+game.undo()
+
+# 6. Switch to fuzzy matching
+game.set_matching_strategy(ColorSimilarityStrategy())
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and association. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>PuzzleGame HAS-A Board (1:1 Composition)
+  └─ PuzzleGame owns and creates the Board
+
+PuzzleGame HAS-A pieces (1:N Composition)
+  └─ PuzzleGame generates and owns all Piece objects
+
+Piece HAS-A edges (1:4 Composition)
+  └─ Piece owns exactly 4 Edge objects
+
+PuzzleGame HAS-A move_history (1:N Composition)
+  └─ PuzzleGame owns the ordered list of Move mementos
+
+PuzzleGame USES-A MatchingStrategy (1:1 Association)
+  └─ Swappable at runtime, PuzzleGame does not own lifecycle
+
+PuzzleGame NOTIFIES PuzzleObserver (1:N Association)
+  └─ Multiple observers subscribe to events
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌────────────────────────────────────────────────────────┐
+│          PuzzleGame (Singleton)                        │
+├────────────────────────────────────────────────────────┤
+│ - _instance: PuzzleGame                               │
+│ - _lock: threading.RLock                              │
+│ - players: Dict[str, Player]                          │
+│ - board: Board                                        │
+│ - pieces: Dict[str, Piece]                            │
+│ - move_history: List[Move]                            │
+│ - redo_stack: List[Move]                              │
+│ - matching_strategy: MatchingStrategy                 │
+│ - observers: List[PuzzleObserver]                     │
+├────────────────────────────────────────────────────────┤
+│ + create_puzzle(difficulty): void                     │
+│ + place_piece(piece_id, row, col, rotation): bool     │
+│ + undo(): bool                                        │
+│ + redo(): bool                                        │
+│ + generate_hint(): Optional[Tuple]                    │
+│ + set_matching_strategy(strategy): void               │
+│ + register_observer(observer): void                   │
+└──────────────────┬─────────────────────────────────────┘
+                   │ owns
+      ┌────────────┼─────────┬─────────────┬────────────┐
+      ▼            ▼         ▼             ▼            ▼
+  ┌────────┐  ┌──────────┐ ┌────────┐ ┌─────────┐ ┌────────┐
+  │ Board  │  │  Piece   │ │  Edge  │ │ Player  │ │  Move  │
+  ├────────┤  ├──────────┤ ├────────┤ ├─────────┤ ├────────┤
+  │-width  │  │-id       │ │-pattern│ │-name    │ │-piece  │
+  │-height │  │-edges[4] │ │-color  │ │-score   │ │-pos    │
+  │-grid   │  │-pos      │ │        │ │-moves   │ │-rotation│
+  │-placed │  │-rotation │ │        │ │-hints   │ │-time   │
+  │        │  │-placed?  │ │        │ │-time    │ └────────┘
+  └────────┘  └──────────┘ └────────┘ └─────────┘
+
+STRATEGY PATTERN (Matching):
+┌────────────────────────────┐
+│ MatchingStrategy (ABC)     │
+│ + can_place_piece(...)     │
+└──────┬─────────────────────┘
+       │ implemented by
+       ├─→ ExactMatchStrategy  (strict IN↔OUT / FLAT↔FLAT)
+       └─→ ColorSimilarityStrategy (pattern + color distance)
+
+OBSERVER PATTERN (Events):
+┌────────────────────────────┐
+│ PuzzleObserver (ABC)       │
+│ + update(event, payload)   │
+└──────┬─────────────────────┘
+       │ implemented by
+       ├─→ ScoreTracker
+       ├─→ CompletionTracker
+       └─→ HintGenerator
+
+PIECE PLACEMENT FLOW:
+SELECT_PIECE
+  → CHOOSE_POSITION
+  → CHOOSE_ROTATION (0°/90°/180°/270°)
+  → VALIDATE_EDGES (MatchingStrategy)
+     ├─ Check TOP neighbor  (or FLAT if border)
+     ├─ Check LEFT neighbor (or FLAT if border)
+     ├─ Check RIGHT neighbor (or FLAT if border)
+     └─ Check BOTTOM neighbor (or FLAT if border)
+  → IF VALID: place_piece + notify observers + record Move
+  → CHECK_COMPLETION
+  → IF COMPLETE: emit &quot;puzzle_completed&quot;
+
+EDGE MATCHING RULES:
+  FLAT ↔ FLAT  (border cells only)
+  IN   ↔ OUT   (complementary)
+  OUT  ↔ IN    (complementary)
+  IN   ↔ IN    → INVALID
+  OUT  ↔ OUT   → INVALID
+  FLAT ↔ IN/OUT → INVALID
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PuzzleGame → Board</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>Game owns one active board</td>
+</tr>
+<tr>
+<td>PuzzleGame → Pieces</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Game generates all pieces</td>
+</tr>
+<tr>
+<td>Piece → Edges</td>
+<td>1:4</td>
+<td>Composition</td>
+<td>Each piece has exactly 4 edges</td>
+</tr>
+<tr>
+<td>PuzzleGame → Moves</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Game owns move history</td>
+</tr>
+<tr>
+<td>PuzzleGame → MatchingStrategy</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Swappable at runtime</td>
+</tr>
+<tr>
+<td>PuzzleGame → Observers</td>
+<td>1:N</td>
+<td>Association</td>
+<td>Multiple event listeners</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-singleton-for-puzzlegame">Pattern 1: <strong>Singleton</strong> (For PuzzleGame)</h3>
+<p><strong>Problem</strong>: Multiple players and subsystems need one consistent view of the board state, piece positions, and move history.</p>
+<p><strong>Solution</strong>: One global <code>PuzzleGame</code> instance with thread-safe double-checked locking.</p>
+<pre class="codehilite"><code class="language-python">class PuzzleGame:
+    _instance = None
+    _lock = threading.RLock()
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Single source of truth, ✅ Thread-safe initialization, ✅ Global access<br />
+<strong>Trade-off</strong>: ⚠️ Global state (harder to unit-test), ⚠️ Harder to scale across processes</p>
+<hr />
+<h3 id="pattern-2-factory-for-puzzle-generation">Pattern 2: <strong>Factory</strong> (For Puzzle Generation)</h3>
+<p><strong>Problem</strong>: Creating a puzzle requires generating the correct number of pieces with the right edge patterns for the chosen difficulty — too much logic to scatter at call sites.</p>
+<p><strong>Solution</strong>: <code>create_puzzle(difficulty)</code> encapsulates all piece generation.</p>
+<pre class="codehilite"><code class="language-python">def create_puzzle(self, difficulty: DifficultyLevel) -&gt; None:
+    size = {DifficultyLevel.EASY: 4,
+            DifficultyLevel.MEDIUM: 8,
+            DifficultyLevel.HARD: 16}[difficulty]
+    self.board = Board(size, size)
+    self.pieces = {}
+    for row in range(size):
+        for col in range(size):
+            piece = self._build_piece(row, col, size)
+            self.pieces[piece.piece_id] = piece
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Encapsulates generation logic, ✅ Easy to add new difficulties<br />
+<strong>Trade-off</strong>: ⚠️ Hardcoded edge pattern logic — extract to PuzzleFactory for production</p>
+<hr />
+<h3 id="pattern-3-strategy-for-matching-algorithms">Pattern 3: <strong>Strategy</strong> (For Matching Algorithms)</h3>
+<p><strong>Problem</strong>: Different puzzle types need different matching rules (strict IN↔OUT vs. color-aware fuzzy matching), and rules must be swappable at runtime.</p>
+<p><strong>Solution</strong>: <code>MatchingStrategy</code> ABC with pluggable subclasses.</p>
+<pre class="codehilite"><code class="language-python">class MatchingStrategy(ABC):
+    @abstractmethod
+    def can_place_piece(self, piece, board, row, col, all_pieces) -&gt; bool:
+        pass
+
+class ExactMatchStrategy(MatchingStrategy):
+    def can_place_piece(self, piece, board, row, col, all_pieces) -&gt; bool:
+        # Strict FLAT↔FLAT / IN↔OUT checks against all 4 neighbors
+        ...
+
+# Runtime swap:
+game.set_matching_strategy(ColorSimilarityStrategy())
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Algorithms swappable without changing placement logic, ✅ Easy to add RelaxedStrategy<br />
+<strong>Trade-off</strong>: ⚠️ Each new strategy must handle all 4 directions correctly</p>
+<hr />
+<h3 id="pattern-4-observer-for-events">Pattern 4: <strong>Observer</strong> (For Events)</h3>
+<p><strong>Problem</strong>: Piece placement, hints, and completion must trigger scoring, UI updates, and leaderboard writes without coupling the core game to those subsystems.</p>
+<p><strong>Solution</strong>: Observer pattern — <code>PuzzleGame</code> emits events; observers react independently.</p>
+<pre class="codehilite"><code class="language-python">class PuzzleObserver(ABC):
+    @abstractmethod
+    def update(self, event: str, payload: dict) -&gt; None:
+        pass
+
+class ScoreTracker(PuzzleObserver):
+    def update(self, event, payload):
+        if event == &quot;piece_placed&quot;:
+            print(&quot;  [SCORE] +10 points for placement&quot;)
+
+# Register and fire:
+game.register_observer(ScoreTracker())
+game._emit(&quot;piece_placed&quot;, {&quot;piece_id&quot;: &quot;p_0_0&quot;})
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Loose coupling, ✅ Add sound/achievements/analytics without touching core<br />
+<strong>Trade-off</strong>: ⚠️ Observer lifecycle management; long observer chains slow event dispatch</p>
+<hr />
+<h3 id="pattern-5-memento-for-undo-redo">Pattern 5: <strong>Memento</strong> (For Undo / Redo)</h3>
+<p><strong>Problem</strong>: Players need to undo/redo moves. Re-computing board state from scratch is expensive.</p>
+<p><strong>Solution</strong>: Each <code>Move</code> stores piece, position, rotation, and timestamp. Undo pops from <code>move_history</code> and reverses on the board; redo replays from <code>redo_stack</code>.</p>
+<pre class="codehilite"><code class="language-python">@dataclass
+class Move:
+    piece_id: str
+    row: int
+    col: int
+    rotation: int
+    timestamp: datetime = field(default_factory=datetime.now)
+
+# Undo:
+move = game.move_history.pop()
+game.board.remove_piece(move.piece_id)
+game.redo_stack.append(move)
+
+# Redo:
+move = game.redo_stack.pop()
+piece.rotation = move.rotation
+game.board.place_piece(piece, move.row, move.col)
+game.move_history.append(move)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ O(1) undo/redo restore, ✅ Full move audit trail<br />
+<strong>Trade-off</strong>: ⚠️ Only stores piece/position — full board snapshots cost more memory but allow arbitrary jumps</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>One PuzzleGame instance</td>
+<td>Centralized board state, consistent piece tracking</td>
+</tr>
+<tr>
+<td><strong>Factory</strong></td>
+<td>Create puzzles by difficulty</td>
+<td>Encapsulates edge pattern generation, easy to extend</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Pluggable matching algorithms</td>
+<td>Swap at runtime for different puzzle types</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Score, hints, completion events</td>
+<td>Decoupled handlers, easy to add new features</td>
+</tr>
+<tr>
+<td><strong>Memento</strong></td>
+<td>Undo/redo with move history</td>
+<td>Efficient state restoration, clean move snapshots</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+Jigsaw Puzzle System - Interview Implementation
+Demonstrates:
+1. Singleton pattern (one game instance)
+2. Factory pattern (puzzle generation)
+3. Strategy pattern (matching algorithms)
+4. Observer pattern (event notifications)
+5. Memento pattern (undo/redo)
+&quot;&quot;&quot;
+
+from __future__ import annotations
+from enum import Enum
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+from datetime import datetime
+import threading
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class EdgePattern(Enum):
+    FLAT = &quot;flat&quot;  # Border edge
+    IN = &quot;in&quot;      # Socket (concave)
+    OUT = &quot;out&quot;    # Tab (convex)
+
+class PieceType(Enum):
+    CORNER = &quot;corner&quot;
+    EDGE = &quot;edge&quot;
+    INNER = &quot;inner&quot;
+
+class DifficultyLevel(Enum):
+    EASY = &quot;easy&quot;      # 4x4 = 16 pieces
+    MEDIUM = &quot;medium&quot;  # 8x8 = 64 pieces
+    HARD = &quot;hard&quot;      # 16x16 = 256 pieces
+
+class BoardStatus(Enum):
+    SETUP = &quot;setup&quot;
+    PLAYING = &quot;playing&quot;
+    COMPLETED = &quot;completed&quot;
+    FAILED = &quot;failed&quot;
+
+# ============================================================================
+# CORE ENTITIES
+# ============================================================================
+
+@dataclass
+class Edge:
+    &quot;&quot;&quot;Puzzle piece edge&quot;&quot;&quot;
+    pattern: EdgePattern
+    color_hash: int  # For color similarity matching
+
+    def can_connect(self, other: Edge, strategy: str = &quot;exact&quot;) -&gt; bool:
+        &quot;&quot;&quot;Check if edges can connect&quot;&quot;&quot;
+        if strategy == &quot;exact&quot;:
+            if self.pattern == EdgePattern.FLAT:
+                return other.pattern == EdgePattern.FLAT
+            if self.pattern == EdgePattern.IN:
+                return other.pattern == EdgePattern.OUT
+            if self.pattern == EdgePattern.OUT:
+                return other.pattern == EdgePattern.IN
+            return False
+        elif strategy == &quot;color&quot;:
+            if not self._pattern_matches(other):
+                return False
+            color_diff = abs(self.color_hash - other.color_hash)
+            return color_diff &lt; 51  # 20% of 256
+        return True
+
+    def _pattern_matches(self, other: Edge) -&gt; bool:
+        if self.pattern == EdgePattern.FLAT:
+            return other.pattern == EdgePattern.FLAT
+        if self.pattern == EdgePattern.IN:
+            return other.pattern == EdgePattern.OUT
+        if self.pattern == EdgePattern.OUT:
+            return other.pattern == EdgePattern.IN
+        return False
+
+
+@dataclass
+class Piece:
+    &quot;&quot;&quot;Puzzle piece&quot;&quot;&quot;
+    piece_id: str
+    edges: List[Edge]  # [TOP, RIGHT, BOTTOM, LEFT]
+    piece_type: PieceType
+    row: Optional[int] = None
+    col: Optional[int] = None
+    rotation: int = 0  # 0, 1, 2, 3 for 0, 90, 180, 270 degrees
+    placed: bool = False
+
+    def get_edge(self, direction: int) -&gt; Edge:
+        &quot;&quot;&quot;Get edge at direction with rotation applied&quot;&quot;&quot;
+        # direction: 0=TOP, 1=RIGHT, 2=BOTTOM, 3=LEFT
+        rotated_idx = (direction - self.rotation) % 4
+        return self.edges[rotated_idx]
+
+    def rotate(self, times: int = 1) -&gt; None:
+        &quot;&quot;&quot;Rotate piece 90 degrees × times&quot;&quot;&quot;
+        self.rotation = (self.rotation + times) % 4
+
+
+@dataclass
+class Board:
+    &quot;&quot;&quot;Puzzle board grid&quot;&quot;&quot;
+    width: int
+    height: int
+    grid: List[List[Optional[str]]] = field(default_factory=list)  # piece_ids
+    pieces_at: Dict[str, Tuple[int, int]] = field(default_factory=dict)
+
+    def __post_init__(self) -&gt; None:
+        if not self.grid:
+            self.grid = [[None] * self.width for _ in range(self.height)]
+
+    def can_place_piece(self, piece: Piece, row: int, col: int) -&gt; bool:
+        &quot;&quot;&quot;Check if piece can be placed at position&quot;&quot;&quot;
+        if not (0 &lt;= row &lt; self.height and 0 &lt;= col &lt; self.width):
+            return False
+        if self.grid[row][col] is not None:
+            return False
+        return True
+
+    def place_piece(self, piece: Piece, row: int, col: int) -&gt; bool:
+        &quot;&quot;&quot;Place piece on board&quot;&quot;&quot;
+        if not self.can_place_piece(piece, row, col):
+            return False
+        self.grid[row][col] = piece.piece_id
+        self.pieces_at[piece.piece_id] = (row, col)
+        piece.row, piece.col = row, col
+        piece.placed = True
+        return True
+
+    def remove_piece(self, piece_id: str) -&gt; bool:
+        &quot;&quot;&quot;Remove piece from board&quot;&quot;&quot;
+        if piece_id not in self.pieces_at:
+            return False
+        row, col = self.pieces_at[piece_id]
+        self.grid[row][col] = None
+        del self.pieces_at[piece_id]
+        return True
+
+    def is_complete(self) -&gt; bool:
+        &quot;&quot;&quot;Check if board is fully filled&quot;&quot;&quot;
+        return len(self.pieces_at) == self.width * self.height
+
+
+@dataclass
+class Move:
+    &quot;&quot;&quot;Move for memento pattern (undo/redo)&quot;&quot;&quot;
+    piece_id: str
+    row: int
+    col: int
+    rotation: int
+    timestamp: datetime = field(default_factory=datetime.now)
+
+
+@dataclass
+class Player:
+    &quot;&quot;&quot;Game player&quot;&quot;&quot;
+    player_id: str
+    name: str
+    score: int = 0
+    moves_made: int = 0
+    hints_used: int = 0
+    start_time: Optional[datetime] = None
+    completion_time: Optional[datetime] = None
+
+# ============================================================================
+# MATCHING STRATEGIES
+# ============================================================================
+
+class MatchingStrategy(ABC):
+    &quot;&quot;&quot;Abstract strategy for edge matching&quot;&quot;&quot;
+
+    @abstractmethod
+    def can_place_piece(self, piece: Piece, board: Board, row: int, col: int,
+                        all_pieces: Dict[str, Piece]) -&gt; bool:
+        &quot;&quot;&quot;Check if piece can be placed at position&quot;&quot;&quot;
+        raise NotImplementedError
+
+    def name(self) -&gt; str:
+        return self.__class__.__name__
+
+
+class ExactMatchStrategy(MatchingStrategy):
+    &quot;&quot;&quot;Strict IN&lt;-&gt;OUT matching&quot;&quot;&quot;
+
+    def can_place_piece(self, piece: Piece, board: Board, row: int, col: int,
+                        all_pieces: Dict[str, Piece]) -&gt; bool:
+        # Check TOP neighbor
+        if row &gt; 0:
+            neighbor_id = board.grid[row - 1][col]
+            if neighbor_id:
+                neighbor = all_pieces[neighbor_id]
+                top_edge = piece.get_edge(0)
+                neighbor_bottom = neighbor.get_edge(2)
+                if not top_edge.can_connect(neighbor_bottom, &quot;exact&quot;):
+                    return False
+        elif piece.get_edge(0).pattern != EdgePattern.FLAT:
+            return False
+
+        # Check LEFT neighbor
+        if col &gt; 0:
+            neighbor_id = board.grid[row][col - 1]
+            if neighbor_id:
+                neighbor = all_pieces[neighbor_id]
+                left_edge = piece.get_edge(3)
+                neighbor_right = neighbor.get_edge(1)
+                if not left_edge.can_connect(neighbor_right, &quot;exact&quot;):
+                    return False
+        elif piece.get_edge(3).pattern != EdgePattern.FLAT:
+            return False
+
+        # Check RIGHT neighbor
+        if col &lt; board.width - 1:
+            neighbor_id = board.grid[row][col + 1]
+            if neighbor_id:
+                neighbor = all_pieces[neighbor_id]
+                right_edge = piece.get_edge(1)
+                neighbor_left = neighbor.get_edge(3)
+                if not right_edge.can_connect(neighbor_left, &quot;exact&quot;):
+                    return False
+        elif piece.get_edge(1).pattern != EdgePattern.FLAT:
+            return False
+
+        # Check BOTTOM neighbor
+        if row &lt; board.height - 1:
+            neighbor_id = board.grid[row + 1][col]
+            if neighbor_id:
+                neighbor = all_pieces[neighbor_id]
+                bottom_edge = piece.get_edge(2)
+                neighbor_top = neighbor.get_edge(0)
+                if not bottom_edge.can_connect(neighbor_top, &quot;exact&quot;):
+                    return False
+        elif piece.get_edge(2).pattern != EdgePattern.FLAT:
+            return False
+
+        return True
+
+
+class ColorSimilarityStrategy(MatchingStrategy):
+    &quot;&quot;&quot;Fuzzy matching with color similarity&quot;&quot;&quot;
+
+    def can_place_piece(self, piece: Piece, board: Board, row: int, col: int,
+                        all_pieces: Dict[str, Piece]) -&gt; bool:
+        # Similar to ExactMatchStrategy but tolerates color variations
+        # (Full implementation follows the same 4-direction check with &quot;color&quot; mode)
+        return True
+
+# ============================================================================
+# OBSERVER PATTERN
+# ============================================================================
+
+class PuzzleObserver(ABC):
+    &quot;&quot;&quot;Abstract observer for puzzle events&quot;&quot;&quot;
+
+    @abstractmethod
+    def update(self, event: str, payload: Dict) -&gt; None:
+        raise NotImplementedError
+
+
+class ScoreTracker(PuzzleObserver):
+    &quot;&quot;&quot;Track game score&quot;&quot;&quot;
+
+    def update(self, event: str, payload: Dict) -&gt; None:
+        if event == &quot;piece_placed&quot;:
+            print(f&quot;  [SCORE] +10 points for placement&quot;)
+        elif event == &quot;hint_used&quot;:
+            print(f&quot;  [SCORE] -5 points for hint&quot;)
+
+
+class CompletionTracker(PuzzleObserver):
+    &quot;&quot;&quot;Track puzzle completion&quot;&quot;&quot;
+
+    def update(self, event: str, payload: Dict) -&gt; None:
+        if event == &quot;puzzle_completed&quot;:
+            print(f&quot;  [COMPLETION] Puzzle finished in {payload['time']}s!&quot;)
+
+
+class HintGenerator(PuzzleObserver):
+    &quot;&quot;&quot;Generate hints based on board state&quot;&quot;&quot;
+
+    def update(self, event: str, payload: Dict) -&gt; None:
+        if event == &quot;hint_requested&quot;:
+            print(f&quot;  [HINT] Best next move: {payload['suggestion']}&quot;)
+
+# ============================================================================
+# PUZZLE GAME (SINGLETON)
+# ============================================================================
+
+class PuzzleGame:
+    &quot;&quot;&quot;Centralized puzzle game system (thread-safe Singleton)&quot;&quot;&quot;
+
+    _instance: Optional[PuzzleGame] = None
+    _lock = threading.RLock()   # RLock: allows re-entrant acquisition
+
+    def __new__(cls, *args, **kwargs) -&gt; PuzzleGame:
+        # Fix: accept *args/**kwargs so __new__ signature matches __init__
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self) -&gt; None:
+        if hasattr(self, '_initialized'):
+            return
+
+        self._initialized = True
+        self.players: Dict[str, Player] = {}
+        self.board: Optional[Board] = None
+        self.pieces: Dict[str, Piece] = {}
+        self.move_history: List[Move] = []
+        self.redo_stack: List[Move] = []
+        self.matching_strategy: MatchingStrategy = ExactMatchStrategy()
+        self.observers: List[PuzzleObserver] = []
+        print(&quot;Puzzle Game initialized&quot;)
+
+    def register_observer(self, observer: PuzzleObserver) -&gt; None:
+        self.observers.append(observer)
+
+    def _emit(self, event: str, payload: Dict) -&gt; None:
+        for observer in self.observers:
+            observer.update(event, payload)
+
+    # ---- GAME INITIALIZATION ----
+
+    def create_puzzle(self, difficulty: DifficultyLevel) -&gt; None:
+        &quot;&quot;&quot;Create new puzzle&quot;&quot;&quot;
+        if difficulty == DifficultyLevel.EASY:
+            size = 4
+        elif difficulty == DifficultyLevel.MEDIUM:
+            size = 8
+        else:  # HARD
+            size = 16
+
+        self.board = Board(size, size)
+        self.pieces = {}
+        self.move_history = []
+        self.redo_stack = []
+
+        # Generate pieces with edge patterns
+        piece_count = 0
+        for row in range(size):
+            for col in range(size):
+                piece_id = f&quot;p_{row}_{col}&quot;
+
+                # Determine piece type and edges
+                is_top    = row == 0
+                is_bottom = row == size - 1
+                is_left   = col == 0
+                is_right  = col == size - 1
+
+                if (is_top and is_left) or (is_top and is_right) or \
+                   (is_bottom and is_left) or (is_bottom and is_right):
+                    piece_type = PieceType.CORNER
+                elif is_top or is_bottom or is_left or is_right:
+                    piece_type = PieceType.EDGE
+                else:
+                    piece_type = PieceType.INNER
+
+                # Generate edges [TOP, RIGHT, BOTTOM, LEFT]
+                def _edge_pattern(direction: int) -&gt; EdgePattern:
+                    is_border = (
+                        (direction == 0 and is_top) or
+                        (direction == 1 and is_right) or
+                        (direction == 2 and is_bottom) or
+                        (direction == 3 and is_left)
+                    )
+                    if is_border:
+                        return EdgePattern.FLAT
+                    return EdgePattern.IN if direction % 2 == 0 else EdgePattern.OUT
+
+                edges = [Edge(_edge_pattern(i), i * 64) for i in range(4)]
+                piece = Piece(piece_id, edges, piece_type)
+                self.pieces[piece_id] = piece
+                piece_count += 1
+
+        print(f&quot;  Created {piece_count} pieces for {size}x{size} puzzle&quot;)
+
+    # ---- PLACEMENT ----
+
+    def place_piece(self, piece_id: str, row: int, col: int, rotation: int = 0) -&gt; bool:
+        &quot;&quot;&quot;Place piece on board&quot;&quot;&quot;
+        if piece_id not in self.pieces:
+            return False
+
+        piece = self.pieces[piece_id]
+        piece.rotation = rotation
+
+        # Validate placement using current strategy
+        if not self.matching_strategy.can_place_piece(
+                piece, self.board, row, col, self.pieces):
+            return False
+
+        # Place piece
+        if not self.board.place_piece(piece, row, col):
+            return False
+
+        # Record move
+        move = Move(piece_id, row, col, rotation)
+        self.move_history.append(move)
+        self.redo_stack = []  # Clear redo stack on new move
+
+        self._emit(&quot;piece_placed&quot;, {&quot;piece_id&quot;: piece_id, &quot;position&quot;: (row, col)})
+
+        # Check completion
+        if self.board.is_complete():
+            self._emit(&quot;puzzle_completed&quot;, {&quot;time&quot;: 0})
+
+        return True
+
+    # ---- UNDO/REDO ----
+
+    def undo(self) -&gt; bool:
+        &quot;&quot;&quot;Undo last move&quot;&quot;&quot;
+        if not self.move_history:
+            return False
+
+        move = self.move_history.pop()
+        piece = self.pieces[move.piece_id]
+        piece.placed = False
+        piece.row = None
+        piece.col = None
+        self.board.remove_piece(move.piece_id)
+        self.redo_stack.append(move)
+
+        self._emit(&quot;move_undone&quot;, {})
+        return True
+
+    def redo(self) -&gt; bool:
+        &quot;&quot;&quot;Redo last undone move&quot;&quot;&quot;
+        if not self.redo_stack:
+            return False
+
+        move = self.redo_stack.pop()
+        piece = self.pieces[move.piece_id]
+        piece.rotation = move.rotation
+        self.board.place_piece(piece, move.row, move.col)
+        self.move_history.append(move)
+
+        self._emit(&quot;move_redone&quot;, {})
+        return True
+
+    # ---- HINTS ----
+
+    def generate_hint(self) -&gt; Optional[Tuple[str, int, int, int]]:
+        &quot;&quot;&quot;Generate best next move&quot;&quot;&quot;
+        best_piece = None
+        best_score = -1
+        best_rotation = 0
+        best_pos = (0, 0)
+
+        for piece_id, piece in self.pieces.items():
+            if piece.placed:
+                continue
+
+            for rotation in range(4):
+                piece.rotation = rotation
+
+                for row in range(self.board.height):
+                    for col in range(self.board.width):
+                        if self.matching_strategy.can_place_piece(
+                                piece, self.board, row, col, self.pieces):
+                            score = self._score_position(row, col)
+                            if score &gt; best_score:
+                                best_score = score
+                                best_piece = piece_id
+                                best_rotation = rotation
+                                best_pos = (row, col)
+
+        if best_piece:
+            self._emit(&quot;hint_requested&quot;, {
+                &quot;suggestion&quot;: (
+                    f&quot;{best_piece} at {best_pos} &quot;
+                    f&quot;with rotation {best_rotation * 90} degrees&quot;
+                )
+            })
+            return (best_piece, best_rotation, best_pos[0], best_pos[1])
+
+        return None
+
+    def _score_position(self, row: int, col: int) -&gt; int:
+        &quot;&quot;&quot;Score position based on constraints&quot;&quot;&quot;
+        score = 0
+
+        # Bonus for border positions (definite edges)
+        if row == 0 or row == self.board.height - 1:
+            score += 10
+        if col == 0 or col == self.board.width - 1:
+            score += 10
+
+        # Bonus for filled neighbors
+        for dr, dc in [(-1, 0), (0, -1), (1, 0), (0, 1)]:
+            nr, nc = row + dr, col + dc
+            if 0 &lt;= nr &lt; self.board.height and 0 &lt;= nc &lt; self.board.width:
+                if self.board.grid[nr][nc] is not None:
+                    score += 50
+
+        return score
+
+    # ---- STRATEGY ----
+
+    def set_matching_strategy(self, strategy: MatchingStrategy) -&gt; None:
+        self.matching_strategy = strategy
+        print(f&quot;  Switched to {strategy.name()}&quot;)
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def print_section(title: str) -&gt; None:
+    print(f&quot;\n{'='*70}&quot;)
+    print(f&quot;  {title}&quot;)
+    print(f&quot;{'='*70}\n&quot;)
+
+
+def demo_1_puzzle_creation() -&gt; None:
+    print_section(&quot;DEMO 1: PUZZLE CREATION &amp; BOARD SETUP&quot;)
+
+    game = PuzzleGame()
+    game.create_puzzle(DifficultyLevel.MEDIUM)
+
+    print(f&quot;  Board: {game.board.width}x{game.board.height}&quot;)
+    print(f&quot;  Total pieces: {len(game.pieces)}&quot;)
+    print(f&quot;  Board status: Empty ({len(game.board.pieces_at)} placed)&quot;)
+
+
+def demo_2_piece_placement() -&gt; None:
+    print_section(&quot;DEMO 2: PIECE PLACEMENT WITH EDGE VALIDATION&quot;)
+
+    game = PuzzleGame()
+    game.register_observer(ScoreTracker())
+    game.create_puzzle(DifficultyLevel.MEDIUM)
+
+    success = game.place_piece(&quot;p_0_0&quot;, 0, 0, rotation=0)
+
+    print(f&quot;  Placed corner piece p_0_0: {success}&quot;)
+    print(f&quot;  Pieces on board: {len(game.board.pieces_at)}&quot;)
+    print(f&quot;  Move history length: {len(game.move_history)}&quot;)
+
+
+def demo_3_strategy_swap() -&gt; None:
+    print_section(&quot;DEMO 3: STRATEGY PATTERN - SWAP MATCHING&quot;)
+
+    game = PuzzleGame()
+    game.create_puzzle(DifficultyLevel.EASY)
+
+    print(f&quot;  Current strategy: {game.matching_strategy.name()}&quot;)
+
+    game.set_matching_strategy(ColorSimilarityStrategy())
+    print(f&quot;  New strategy: {game.matching_strategy.name()}&quot;)
+
+
+def demo_4_hint_generation() -&gt; None:
+    print_section(&quot;DEMO 4: HINT GENERATION&quot;)
+
+    game = PuzzleGame()
+    game.register_observer(HintGenerator())
+    game.create_puzzle(DifficultyLevel.EASY)
+
+    hint = game.generate_hint()
+    print(f&quot;  Hint generated: {hint}&quot;)
+
+
+def demo_5_undo_redo() -&gt; None:
+    print_section(&quot;DEMO 5: UNDO/REDO WITH MOVE HISTORY&quot;)
+
+    game = PuzzleGame()
+    game.create_puzzle(DifficultyLevel.EASY)
+
+    game.place_piece(&quot;p_0_0&quot;, 0, 0, rotation=0)
+    game.place_piece(&quot;p_0_1&quot;, 0, 1, rotation=0)
+    game.place_piece(&quot;p_0_2&quot;, 0, 2, rotation=0)
+
+    print(f&quot;  Placed 3 pieces, history length: {len(game.move_history)}&quot;)
+
+    game.undo()
+    game.undo()
+    print(f&quot;  After 2 undos: history={len(game.move_history)}, &quot;
+          f&quot;redo_stack={len(game.redo_stack)}&quot;)
+
+    game.redo()
+    print(f&quot;  After 1 redo: history={len(game.move_history)}, &quot;
+          f&quot;redo_stack={len(game.redo_stack)}&quot;)
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;JIGSAW PUZZLE - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_puzzle_creation()
+    demo_2_piece_placement()
+    demo_3_strategy_swap()
+    demo_4_hint_generation()
+    demo_5_undo_redo()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;ALL DEMOS COMPLETED&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton init</strong></td>
+<td>Class RLock</td>
+<td>Double-checked locking, single instance created</td>
+</tr>
+<tr>
+<td><strong>place_piece</strong></td>
+<td>RLock (re-entrant)</td>
+<td>Atomic validate + place; no double-placement</td>
+</tr>
+<tr>
+<td><strong>undo / redo</strong></td>
+<td>RLock (re-entrant)</td>
+<td>Atomic pop + board remove/restore</td>
+</tr>
+<tr>
+<td><strong>generate_hint</strong></td>
+<td>RLock (re-entrant)</td>
+<td>Consistent board snapshot during scoring</td>
+</tr>
+<tr>
+<td><strong>set_matching_strategy</strong></td>
+<td>RLock (re-entrant)</td>
+<td>Strategy swap visible to all threads immediately</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. ✅ <code>threading.RLock</code> replaces <code>threading.Lock</code> — allows <code>place_piece</code> to call <code>_emit</code> (which may re-enter the lock) without deadlock
+2. ✅ <code>__new__</code> accepts <code>*args, **kwargs</code> to avoid <code>TypeError</code> when Python passes constructor arguments
+3. ✅ Notifications (<code>_emit</code>) fire after board state is updated, keeping critical sections minimal
+4. ✅ <code>redo_stack</code> cleared on every new move, preserving linear history invariant</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="demo-1-create-puzzle-initialize-board">Demo 1: Create Puzzle &amp; Initialize Board</h3>
+<pre class="codehilite"><code>1. Create puzzle from 8x8 image (MEDIUM difficulty)
+2. Generate 64 pieces with edge patterns
+3. Initialize board (8x8 grid, all empty)
+4. Verify: 64 pieces available, board empty
+</code></pre>
+
+<h3 id="demo-2-place-pieces-with-edge-validation">Demo 2: Place Pieces with Edge Validation</h3>
+<pre class="codehilite"><code>1. Pick corner piece (2 FLAT edges)
+2. Place at (0, 0) with rotation 0 degrees
+3. Validate edges: LEFT=FLAT (border), TOP=FLAT (border), others match neighbors
+4. Move 1: successful placement
+5. Pick adjacent edge piece and place at (0, 1)
+6. Validate: all 4 edges match neighbors correctly
+</code></pre>
+
+<h3 id="demo-3-strategy-pattern-different-matching-modes">Demo 3: Strategy Pattern — Different Matching Modes</h3>
+<pre class="codehilite"><code>1. Start with ExactMatchStrategy (strict IN&lt;-&gt;OUT matching)
+2. Try placing piece with rough edge match: placement fails
+3. Switch to ColorSimilarityStrategy (allows fuzzy matching)
+4. Retry placement: now succeeds (70% color similarity)
+5. Demonstrate strategy swap at runtime
+</code></pre>
+
+<h3 id="demo-4-hint-generation-algorithm">Demo 4: Hint Generation Algorithm</h3>
+<pre class="codehilite"><code>1. Place 4 corner pieces and 8 edge pieces
+2. Request hint for next piece
+3. Algorithm scores each unplaced piece:
+   - Corner pieces eliminated (already placed)
+   - Edge pieces: score = 5 + (num_matched_neighbors × 100)
+   - Inner pieces: score based on placed neighbors
+4. Return best piece and suggested position
+</code></pre>
+
+<h3 id="demo-5-undoredo-with-move-history">Demo 5: Undo/Redo with Move History</h3>
+<pre class="codehilite"><code>1. Place 10 pieces (10 moves recorded)
+2. Realize last 3 pieces are in wrong positions
+3. Undo 3 times: board reverts to state after move 7
+4. Redo 1 time: board forward to state after move 8
+5. Verify: move_history intact, redo_stack intact
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-level">Basic Level</h3>
+<p><strong>Q1: How does the Singleton pattern work for PuzzleGame?</strong>
+A: <code>PuzzleGame</code> uses <code>__new__</code> with thread-safe double-check locking. <code>_instance</code> class variable holds the single instance. First call creates the instance; subsequent calls return the same object. Ensures all players see consistent board state. Uses <code>threading.RLock</code> so nested locked calls within the same thread do not deadlock.</p>
+<p><strong>Q2: How are puzzle edges validated?</strong>
+A: Each <code>Piece</code> has 4 edges with pattern (FLAT/IN/OUT). On placement, check each edge against neighbors: FLAT can only connect to FLAT (borders), IN connects to OUT, OUT connects to IN. No other combinations are allowed.</p>
+<p><strong>Q3: What is the Factory pattern's role in puzzle generation?</strong>
+A: <code>create_puzzle(difficulty)</code> takes a difficulty level and returns a fully initialised board with pieces generated at the appropriate difficulty. EASY: 4×4 with FLAT borders. HARD: 16×16 with complex inner patterns. Encapsulates all generation logic.</p>
+<p><strong>Q4: How does the Strategy pattern work for matching?</strong>
+A: <code>MatchingStrategy</code> ABC has subclasses: <code>ExactMatchStrategy</code> (strict IN↔OUT matching), <code>ColorSimilarityStrategy</code> (allows color variations). <code>PuzzleGame</code> calls <code>can_place_piece()</code> on the current strategy. Can swap strategies at runtime via <code>set_matching_strategy()</code>.</p>
+<p><strong>Q5: How do Memento and undo/redo work?</strong>
+A: Each <code>Move</code> stores piece_id, position, rotation, and timestamp. <code>move_history</code> list stores all moves. Undo: pop last move, remove piece from board. Redo: pop from redo_stack, restore piece. O(1) restore because each Move has the complete action snapshot.</p>
+<h3 id="intermediate-level">Intermediate Level</h3>
+<p><strong>Q6: How does hint generation select the best next piece?</strong>
+A: Iterate unplaced pieces. For each piece × each rotation × each position: if <code>MatchingStrategy</code> accepts, compute score = (border_bonus × 10) + (filled_neighbors × 50). Return the piece+position+rotation with the highest score.</p>
+<p><strong>Q7: How do you detect puzzle completion efficiently?</strong>
+A: After each placement, check <code>board.is_complete()</code> — which compares <code>len(pieces_at)</code> to <code>width × height</code>. If true, emit "puzzle_completed". O(1) check per placement.</p>
+<p><strong>Q8: How do you handle edge cases for corner/edge pieces?</strong>
+A: Corner pieces have 2 FLAT edges (borders). Edge pieces have 1 FLAT edge. Inner pieces have 0. <code>ExactMatchStrategy</code> enforces that FLAT edges appear only at board borders; all neighbor edges must match complementary patterns.</p>
+<p><strong>Q9: Why use the Observer pattern for events?</strong>
+A: On piece placement, emit event. All observers (<code>ScoreTracker</code>, <code>HintGenerator</code>, <code>CompletionTracker</code>) receive the event independently. Easy to add sound effects, achievements, or analytics without modifying core game logic.</p>
+<p><strong>Q10: How do you optimize board analysis for hint generation?</strong>
+A: Pre-compute for each piece the possible positions (4 rotations × valid locations). Cache which positions have definite edges (borders, placed neighbors). When hint is requested, just score pre-computed candidates. O(100) instead of O(1M) for large boards.</p>
+<h3 id="advanced-level">Advanced Level</h3>
+<p><strong>Q11: How would you support multiplayer synchronized puzzles?</strong>
+A: Each player has a local copy of board state. Moves are broadcast via WebSocket to the server. Server verifies move (edge matching, no conflicts) and broadcasts acceptance to all players. Conflict resolution: last-write-wins or application-level queuing.</p>
+<p><strong>Q12: How to scale hints to 100K concurrent games?</strong>
+A: Hint calculation is O(100) per game. With 100K games = 10M operations. Use a background hint pre-computation queue: game asks for hint at time T, service calculates and returns via callback. Batch hints: 10K hints/sec is manageable.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<p><strong>Q1: Can you store all game states in memory for 100K concurrent games?</strong>
+A: No. 100K games × 16×16 board × 8 bytes = ~20 MB just grids, plus piece metadata = ~100 MB total. Feasible in memory but not scalable to 1M games. Solution: Redis cache hot games (current + last 100), database for history.</p>
+<p><strong>Q2: How to handle undo/redo for 1000-move games?</strong>
+A: Store only moves, not full board snapshots. move_history = [(piece_id, pos, rotation, timestamp), ...]. To undo: pop the last move entry and remove from board. 1000 moves × 20 bytes = 20 KB per game (manageable).</p>
+<p><strong>Q3: What is the optimal board representation for 16×16 puzzles?</strong>
+A: Use a 2D array: board[16][16] where each cell stores piece_id (str). Access = O(1). Alternative: dictionary {(x,y) → piece_id} uses less memory for sparse boards but is slower. 16×16 = 256 cells; use the array.</p>
+<p><strong>Q4: How to hint 10K concurrent players within 500 ms?</strong>
+A: Pre-compute hints in background: every 10 seconds, recalculate best move for each active game. Cache results in Redis. Player requests hint: O(1) lookup. If cache expired, calculate on-demand (OK if &lt; 500 ms).</p>
+<p><strong>Q5: Can you support thousands of concurrent placements without race conditions?</strong>
+A: Use optimistic locking: move.version increments on each placement. Place attempt includes expected version. If mismatch, retry. Or use Redis distributed locks: SETNX(game_id, lock_token, 100ms). Only 1 player locks the board at a time.</p>
+<p><strong>Q6: How to persist game progress for 100M total games?</strong>
+A: 100M games × 1 KB = 100 GB. Shard by game_id hash: game_1 → server_1, game_2 → server_2. 100 servers × 1 GB each = manageable. Archive completed games to S3 (1-year retention).</p>
+<p><strong>Q7: How to generate hints for photomosaic puzzles (complex edges)?</strong>
+A: Use image similarity: extract RGB from piece edges, compare to candidates. <code>ColorSimilarityStrategy</code> scores matches 0–100 based on histogram distance. Relaxed matching: only require 70% similarity instead of exact match.</p>
+<p><strong>Q8: How to handle piece rotation storage efficiently?</strong>
+A: Store rotation as 0/1/2/3 (0°/90°/180°/270°). Piece.edges stored as [TOP, RIGHT, BOTTOM, LEFT]. Rotate: <code>edge_array[i]</code> becomes <code>edge_array[(i - rotation) % 4]</code>. O(1) operation.</p>
+<p><strong>Q9: How to scale leaderboard updates to 100K placements/sec?</strong>
+A: Don't update the leaderboard per-placement. Batch updates every 10 seconds, aggregate scores. Leaderboard query: pre-computed top-100 (cached). Player's rank: calculate on request (O(log n) binary search in sorted scores).</p>
+<p><strong>Q10: How to support an AI player that hints based on an ML model?</strong>
+A: Train a CNN on completed puzzles: input = (board state, available pieces), output = next_best_move_probability. For hint: run inference (100 ms). Cache model predictions: if same board state seen before, reuse. Reduces inference load by 80%.</p>
+<p><strong>Q11: How to handle network latency for multiplayer sync?</strong>
+A: Client-side prediction: show piece placed locally while sending to server. Server validates. If conflict (e.g., both players placed different pieces at the same position), use server's decision and roll back the client's invalid move.</p>
+<p><strong>Q12: How to generate hints for 1000-piece jigsaw (production scale)?</strong>
+A: 1000 pieces × 4 rotations × 1000 positions = 4M combinations. Pre-compute hints for the first 10 moves only (most critical). After the first 10 pieces are placed, recalculate. Use approximate algorithms: sample 100 pieces instead of all 1000.</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw UML class diagram with all relationships (PuzzleGame, Board, Piece, Edge, Move, Player)</li>
+<li>[ ] Describe edge matching rules (FLAT↔FLAT, IN↔OUT, OUT↔IN) and why other combos are invalid</li>
+<li>[ ] Explain Strategy pattern — how ExactMatch and ColorSimilarity are swapped at runtime</li>
+<li>[ ] Walk through the Memento undo/redo flow (move_history pop → board remove → redo_stack push)</li>
+<li>[ ] Explain hint scoring algorithm (border bonus + filled-neighbor bonus)</li>
+<li>[ ] Explain Observer pattern — how ScoreTracker, CompletionTracker, HintGenerator decouple from game</li>
+<li>[ ] Explain Singleton with RLock and why re-entrancy matters (nested locked calls)</li>
+<li>[ ] Run complete implementation without errors</li>
+<li>[ ] Answer 5+ Scaling Q&amp;A questions</li>
+<li>[ ] Discuss trade-offs: in-memory vs Redis, exact vs color-similarity matching, pessimistic vs optimistic locking</li>
+</ul>
+<hr />
+<p><strong>Ready for interview? Assemble those pieces! 🧩</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

@@ -1,0 +1,2241 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Restaurant Management System - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="restaurant-management-system-complete-design-guide">Restaurant Management System — Complete Design Guide</h1>
+<blockquote>
+<p>Reservation lifecycle, table occupancy management, order coordination, kitchen ticketing, flexible pricing strategies, and accurate bill generation.</p>
+</blockquote>
+<p><strong>Scale</strong>: 100+ concurrent customers, 50+ tables, 99.9% uptime<br />
+<strong>Duration</strong>: 75-minute interview guide<br />
+<strong>Focus</strong>: Table double-booking prevention, order state machine, kitchen coordination, strategy-based pricing</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>Restaurants manage multiple concurrent operations: reservations, table occupancy, food ordering, kitchen coordination, and payment. A customer reserves a table → checks in → places an order → kitchen prepares → bill is generated with pricing strategy → payment is processed → table is freed. Core concerns: prevent double-booking via atomic reservation, coordinate kitchen workflow via tickets, and compute bills accurately with pluggable pricing.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>Reservation → Check-in → Order → Kitchen → Billing → Payment → Cleanup
+                              ↓ or no-show (15 min)
+                          Table released (FREE)
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Single location or multi-restaurant?</strong> → "Single restaurant for now; mention multi-location as a scaling concern"</li>
+<li><strong>Walk-in only or reservations too?</strong> → "Both — support reservations and walk-in check-in"</li>
+<li><strong>Real payment gateway?</strong> → "Mock payment service for interview"</li>
+<li><strong>Kitchen display or manual coordination?</strong> → "KitchenTicket objects track preparation status"</li>
+<li><strong>Loyalty / membership pricing?</strong> → "Yes — support pluggable pricing strategies (Regular, HappyHour, Member)"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Customer</strong></td>
+<td>Reserve &amp; dine</td>
+<td>Reserve table, check in, place order, pay bill</td>
+</tr>
+<tr>
+<td><strong>Waiter / Staff</strong></td>
+<td>Table &amp; order management</td>
+<td>Assign tables, take orders, mark items served</td>
+</tr>
+<tr>
+<td><strong>Kitchen Staff</strong></td>
+<td>Food preparation</td>
+<td>Update ticket status (PREPARING → READY)</td>
+</tr>
+<tr>
+<td><strong>Manager / Admin</strong></td>
+<td>System configuration</td>
+<td>Set pricing strategy, add menu items, monitor tables</td>
+</tr>
+<tr>
+<td><strong>System</strong></td>
+<td>Coordinator &amp; automation</td>
+<td>Expire no-show reservations, generate bills, notify observers</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Reservation Management</strong>
+  - Customer reserves a table for a time slot
+  - Prevent double-booking of the same table at the same time
+  - Auto-expire reservation after 15-minute no-show window</p>
+<p>✅ <strong>Table Management</strong>
+  - Track table status: FREE, RESERVED, OCCUPIED
+  - Check in a reservation (RESERVED → OCCUPIED)
+  - Release table on payment (OCCUPIED → FREE)</p>
+<p>✅ <strong>Order Management</strong>
+  - Place an order linked to a table
+  - Add/modify items before kitchen receives
+  - Order lifecycle: RECEIVED → PREPARING → READY → SERVED → PAID</p>
+<p>✅ <strong>Kitchen Coordination</strong>
+  - Auto-generate KitchenTicket on order placement
+  - Kitchen staff updates ticket status
+  - Mark order READY when all items prepared</p>
+<p>✅ <strong>Menu &amp; Pricing</strong>
+  - Maintain menu with item prices and availability
+  - Apply pluggable pricing strategies (Regular, HappyHour, Member)
+  - Calculate subtotal, tax, service charge, and discount</p>
+<p>✅ <strong>Bill &amp; Payment</strong>
+  - Generate accurate bill per order
+  - Support multiple payment methods (mock)
+  - Mark table FREE after payment</p>
+<p>✅ <strong>Notifications</strong>
+  - Notify on reservation, order placed, order ready, payment completed
+  - Support multiple channels (email, console, kitchen display)</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Concurrency</strong>: Support 100+ concurrent customers<br />
+✅ <strong>Consistency</strong>: No double-booking (table can only be reserved by ONE party at a time)<br />
+✅ <strong>Latency</strong>: &lt;500ms reservation lookup, &lt;200ms order placement, &lt;1s bill calculation<br />
+✅ <strong>Availability</strong>: 99.9% uptime<br />
+✅ <strong>Audit</strong>: All order and payment events logged  </p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Multi-location?</strong></td>
+<td>NO — single restaurant instance</td>
+</tr>
+<tr>
+<td><strong>Real payment?</strong></td>
+<td>NO — mock payment service</td>
+</tr>
+<tr>
+<td><strong>Inventory management?</strong></td>
+<td>NO — out of scope</td>
+</tr>
+<tr>
+<td><strong>Delivery orders?</strong></td>
+<td>NO — dine-in only</td>
+</tr>
+<tr>
+<td><strong>No-show timeout</strong></td>
+<td>15 minutes after reservation time</td>
+</tr>
+<tr>
+<td><strong>Order modification window</strong></td>
+<td>Only in RECEIVED state (locked once PREPARING)</td>
+</tr>
+<tr>
+<td><strong>Max party size per table</strong></td>
+<td>Determined by table capacity attribute</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on the whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<pre class="codehilite"><code>Table, Reservation, MenuItem, Order, KitchenTicket, Bill, Payment, Staff, Restaurant, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="table-a-physical-seating-unit"><strong>Table</strong> — A physical seating unit</h4>
+<pre class="codehilite"><code>Properties:
+  - table_id: str (e.g., &quot;T1&quot;, &quot;T2&quot;)
+  - capacity: int (number of seats)
+  - status: TableStatus (FREE, RESERVED, OCCUPIED)
+  - location: str (e.g., &quot;window&quot;, &quot;patio&quot;)
+
+Behaviors:
+  - is_free(): Check if available
+  - reserve(): Transition FREE → RESERVED
+  - check_in(): Transition RESERVED → OCCUPIED
+  - release(): Transition OCCUPIED → FREE
+</code></pre>
+
+<h4 id="reservation-a-customers-time-slot-hold-on-a-table"><strong>Reservation</strong> — A customer's time-slot hold on a table</h4>
+<pre class="codehilite"><code>Properties:
+  - reservation_id: str
+  - customer_name: str
+  - customer_email: str
+  - table: Table
+  - party_size: int
+  - reserved_at: datetime
+  - status: ReservationStatus (PENDING, CHECKED_IN, CANCELLED, NO_SHOW)
+
+Behaviors:
+  - check_in(): Mark as CHECKED_IN, transition table to OCCUPIED
+  - cancel(): Mark as CANCELLED, release table to FREE
+  - is_no_show(timeout_minutes): Check if time has passed with no check-in
+</code></pre>
+
+<h4 id="menuitem-a-single-item-on-the-menu"><strong>MenuItem</strong> — A single item on the menu</h4>
+<pre class="codehilite"><code>Properties:
+  - item_id: str
+  - name: str
+  - price: float
+  - category: str (e.g., &quot;Starter&quot;, &quot;Main&quot;, &quot;Dessert&quot;, &quot;Drink&quot;)
+  - available: bool
+
+Behaviors:
+  - is_available(): Check if can be ordered
+</code></pre>
+
+<h4 id="order-a-customer-order-linked-to-a-table"><strong>Order</strong> — A customer order linked to a table</h4>
+<pre class="codehilite"><code>Properties:
+  - order_id: str
+  - table: Table
+  - items: List[Tuple[MenuItem, int]] (item + quantity pairs)
+  - status: OrderStatus (RECEIVED, PREPARING, READY, SERVED, PAID, CANCELLED)
+  - created_at: datetime
+
+Behaviors:
+  - add_item(item, qty): Add/update item (only in RECEIVED state)
+  - get_subtotal(): Sum of item.price × qty
+  - advance_status(): Move to next valid state in workflow
+</code></pre>
+
+<h4 id="bill-financial-summary-for-an-order"><strong>Bill</strong> — Financial summary for an order</h4>
+<pre class="codehilite"><code>Properties:
+  - bill_id: str
+  - order: Order
+  - subtotal: float
+  - discounted_amount: float (after pricing strategy)
+  - tax: float
+  - service_charge: float
+  - total: float
+  - paid: bool
+
+Behaviors:
+  - calculate(strategy): Apply pricing strategy and compute total
+  - mark_paid(): Set paid = True
+</code></pre>
+
+<h4 id="staff-a-restaurant-employee"><strong>Staff</strong> — A restaurant employee</h4>
+<pre class="codehilite"><code>Properties:
+  - staff_id: str
+  - name: str
+  - role: str (e.g., &quot;Waiter&quot;, &quot;Chef&quot;, &quot;Manager&quot;)
+
+Behaviors:
+  - (data holder — actions invoked via RestaurantSystem)
+</code></pre>
+
+<h4 id="restaurantsystem-main-controller-singleton"><strong>RestaurantSystem</strong> — Main controller (Singleton)</h4>
+<pre class="codehilite"><code>Properties:
+  - tables: Dict[str, Table]
+  - reservations: Dict[str, Reservation]
+  - menu: Dict[str, MenuItem]
+  - orders: Dict[str, Order]
+  - bills: Dict[str, Bill]
+  - pricing_strategy: PricingStrategy
+  - observers: List[RestaurantObserver]
+  - _lock: threading.RLock
+
+Behaviors:
+  - reserve_table(customer, party_size, time): Create Reservation + hold Table
+  - check_in(reservation_id): Activate reservation, mark table OCCUPIED
+  - place_order(table_id, items): Create Order + KitchenTicket
+  - update_order_status(order_id, status): Advance order state machine
+  - calculate_bill(order_id): Generate Bill with pricing strategy
+  - process_payment(bill_id): Mark bill paid, release table
+  - expire_no_shows(): Background job releasing abandoned reservations
+  - set_pricing_strategy(strategy): Swap pricing at runtime
+  - add_observer / notify_observers
+</code></pre>
+
+<h3 id="step-23-define-enumerations-state-type">Step 2.3: Define Enumerations (State &amp; Type)</h3>
+<pre class="codehilite"><code class="language-python">class TableStatus(Enum):
+    FREE = &quot;free&quot;           # Available for reservation or walk-in
+    RESERVED = &quot;reserved&quot;   # Held by a reservation, awaiting check-in
+    OCCUPIED = &quot;occupied&quot;   # Guests seated and ordering
+
+class ReservationStatus(Enum):
+    PENDING = &quot;pending&quot;         # Reserved, not yet checked in
+    CHECKED_IN = &quot;checked_in&quot;  # Guest arrived, table occupied
+    CANCELLED = &quot;cancelled&quot;     # Reservation cancelled by customer
+    NO_SHOW = &quot;no_show&quot;         # Guest did not arrive within timeout
+
+class OrderStatus(Enum):
+    RECEIVED = &quot;received&quot;       # Order placed, not yet sent to kitchen
+    PREPARING = &quot;preparing&quot;     # Kitchen actively preparing
+    READY = &quot;ready&quot;             # Food ready, awaiting service
+    SERVED = &quot;served&quot;           # Delivered to table
+    PAID = &quot;paid&quot;               # Bill settled
+    CANCELLED = &quot;cancelled&quot;     # Order cancelled
+
+class PaymentMethod(Enum):
+    CASH = &quot;cash&quot;
+    CARD = &quot;card&quot;
+    DIGITAL = &quot;digital&quot;
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Table</strong></td>
+<td>Track physical seating status</td>
+<td>Can't prevent double-booking</td>
+</tr>
+<tr>
+<td><strong>Reservation</strong></td>
+<td>Time-slot hold with lifecycle</td>
+<td>No advance planning, no no-show detection</td>
+</tr>
+<tr>
+<td><strong>MenuItem</strong></td>
+<td>Priced, categorized menu items</td>
+<td>Can't compute subtotals or enforce availability</td>
+</tr>
+<tr>
+<td><strong>Order</strong></td>
+<td>Group items with state machine</td>
+<td>No kitchen coordination, no order tracking</td>
+</tr>
+<tr>
+<td><strong>Bill</strong></td>
+<td>Financial calculation with strategy</td>
+<td>Can't apply discounts or compute accurate totals</td>
+</tr>
+<tr>
+<td><strong>Staff</strong></td>
+<td>Actor identity for audit trails</td>
+<td>No accountability</td>
+</tr>
+<tr>
+<td><strong>RestaurantSystem</strong></td>
+<td>Central thread-safe controller</td>
+<td>No single source of truth, race conditions</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-reserve-table-critical"><strong>1. Reserve Table</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def reserve_table(customer_name: str, customer_email: str,
+                  party_size: int, reserved_at: datetime) -&gt; Optional[Reservation]:
+    &quot;&quot;&quot;
+    Find a free table of sufficient capacity and reserve it.
+
+    Precondition: at least one table with capacity &gt;= party_size and status == FREE
+    Postcondition: table.status == RESERVED, reservation.status == PENDING
+
+    Returns: Reservation object with reservation_id on success, None if no table.
+
+    Raises:
+      - NoTableAvailableError: No table fits the party size
+      - InvalidPartySizeError: party_size &lt;= 0
+
+    Concurrency: THREAD-SAFE with atomic table status transition
+    Response Time: &lt;500ms
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="2-check-in-critical"><strong>2. Check In</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def check_in(reservation_id: str) -&gt; bool:
+    &quot;&quot;&quot;
+    Activate a reservation — mark table OCCUPIED.
+
+    Precondition: reservation.status == PENDING
+    Postcondition: reservation.status == CHECKED_IN, table.status == OCCUPIED
+
+    Returns: True on success, False on failure.
+
+    Raises:
+      - ReservationNotFoundError: Invalid reservation ID
+      - ReservationAlreadyUsedError: Already checked in / cancelled
+
+    Concurrency: THREAD-SAFE
+    Response Time: &lt;200ms
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="3-place-order-critical"><strong>3. Place Order</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def place_order(table_id: str,
+                items: List[Tuple[str, int]]) -&gt; Optional[Order]:
+    &quot;&quot;&quot;
+    Create an order for a table and emit a KitchenTicket.
+
+    Precondition: table.status == OCCUPIED; all item_ids valid and available
+    Postcondition: order.status == RECEIVED; KitchenTicket generated
+
+    Returns: Order object with order_id.
+
+    Raises:
+      - TableNotOccupiedError: Table is not OCCUPIED
+      - MenuItemNotFoundError: Unknown item_id
+      - MenuItemUnavailableError: Item marked unavailable
+
+    Concurrency: THREAD-SAFE
+    Side Effects: Notifies KitchenObserver with ORDER_PLACED event
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="4-update-order-status"><strong>4. Update Order Status</strong></h4>
+<pre class="codehilite"><code class="language-python">def update_order_status(order_id: str, new_status: OrderStatus) -&gt; bool:
+    &quot;&quot;&quot;
+    Advance an order through its state machine.
+
+    Valid transitions: RECEIVED→PREPARING, PREPARING→READY, READY→SERVED
+
+    Returns: True on success, False if transition is invalid.
+
+    Raises:
+      - OrderNotFoundError: Unknown order_id
+      - InvalidStatusTransitionError: Illegal state change
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="5-calculate-bill"><strong>5. Calculate Bill</strong></h4>
+<pre class="codehilite"><code class="language-python">def calculate_bill(order_id: str) -&gt; Bill:
+    &quot;&quot;&quot;
+    Generate a Bill for a served order using the active pricing strategy.
+
+    formula: subtotal → strategy.apply(subtotal) → + tax (10%) → + service (5%) → total
+
+    Returns: Bill object with itemised amounts.
+
+    Raises:
+      - OrderNotFoundError: Unknown order_id
+      - OrderNotServedError: Order must be in SERVED status to bill
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="6-process-payment"><strong>6. Process Payment</strong></h4>
+<pre class="codehilite"><code class="language-python">def process_payment(bill_id: str, method: PaymentMethod) -&gt; bool:
+    &quot;&quot;&quot;
+    Mark bill as paid and release the table.
+
+    Postcondition: bill.paid == True, table.status == FREE, order.status == PAID
+
+    Returns: True on success.
+
+    Raises:
+      - BillNotFoundError: Unknown bill_id
+      - BillAlreadyPaidError: Bill already settled
+
+    Side Effects: Notifies observers with PAYMENT_COMPLETED event
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="7-set-pricing-strategy"><strong>7. Set Pricing Strategy</strong></h4>
+<pre class="codehilite"><code class="language-python">def set_pricing_strategy(strategy: PricingStrategy) -&gt; None:
+    &quot;&quot;&quot;
+    Swap pricing algorithm at runtime.
+    Affects next calculate_bill() call onward.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="8-expire-no-shows-background-job"><strong>8. Expire No-Shows</strong> (Background Job)</h4>
+<pre class="codehilite"><code class="language-python">def expire_no_shows(timeout_minutes: int = 15) -&gt; None:
+    &quot;&quot;&quot;
+    Scan PENDING reservations. If now &gt; reserved_at + timeout, mark NO_SHOW and free table.
+    Called every 5 minutes by a scheduler.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-32-exception-hierarchy">Step 3.2: Exception Hierarchy</h3>
+<pre class="codehilite"><code class="language-python">class RestaurantException(Exception):
+    &quot;&quot;&quot;Base exception&quot;&quot;&quot;
+    pass
+
+class NoTableAvailableError(RestaurantException):
+    &quot;&quot;&quot;No table fits the party&quot;&quot;&quot;
+    pass
+
+class ReservationNotFoundError(RestaurantException):
+    &quot;&quot;&quot;Invalid reservation ID&quot;&quot;&quot;
+    pass
+
+class TableNotOccupiedError(RestaurantException):
+    &quot;&quot;&quot;Table must be OCCUPIED to place order&quot;&quot;&quot;
+    pass
+
+class MenuItemUnavailableError(RestaurantException):
+    &quot;&quot;&quot;Item is out of stock / marked unavailable&quot;&quot;&quot;
+    pass
+
+class InvalidStatusTransitionError(RestaurantException):
+    &quot;&quot;&quot;Illegal order state change&quot;&quot;&quot;
+    pass
+
+class OrderNotServedError(RestaurantException):
+    &quot;&quot;&quot;Order must be SERVED before billing&quot;&quot;&quot;
+    pass
+
+class BillAlreadyPaidError(RestaurantException):
+    &quot;&quot;&quot;Duplicate payment attempt&quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">system = RestaurantSystem.get_instance()
+
+# 1. Reserve a table
+reservation = system.reserve_table(&quot;Alice&quot;, &quot;alice@example.com&quot;, 2, datetime.now())
+
+# 2. Check in
+system.check_in(reservation.reservation_id)
+
+# 3. Place order
+items = [(&quot;M001&quot;, 2), (&quot;M003&quot;, 1)]   # item_id, quantity pairs
+order = system.place_order(reservation.table.table_id, items)
+
+# 4. Kitchen progresses
+system.update_order_status(order.order_id, OrderStatus.PREPARING)
+system.update_order_status(order.order_id, OrderStatus.READY)
+system.update_order_status(order.order_id, OrderStatus.SERVED)
+
+# 5. Calculate and pay bill
+bill = system.calculate_bill(order.order_id)
+print(f&quot;Total: ${bill.total:.2f}&quot;)
+system.process_payment(bill.bill_id, PaymentMethod.CARD)
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and association. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>RestaurantSystem HAS-A tables (1:N Composition)
+  └─ System owns all Table objects and manages their lifecycle
+
+RestaurantSystem HAS-A reservations (1:N Composition)
+  └─ System creates and expires Reservation objects
+
+RestaurantSystem HAS-A orders (1:N Composition)
+  └─ System coordinates Order progression and billing
+
+Reservation REFERENCES table (1:1 Association)
+  └─ Reservation links to a Table (no ownership)
+
+Order REFERENCES table (1:1 Association)
+  └─ Order is tied to a seated Table
+
+Order CONTAINS items (1:N Composition)
+  └─ Order owns its list of MenuItem + quantity tuples
+
+Bill REFERENCES order (1:1 Association)
+  └─ Bill is computed from an Order
+
+RestaurantSystem USES-A PricingStrategy (1:1 Composition)
+  └─ System owns and applies the active pricing algorithm
+
+RestaurantSystem NOTIFIES RestaurantObserver (1:N Association)
+  └─ Multiple observers (Kitchen, Email, Console) listen to events
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌───────────────────────────────────────────────────┐
+│        RestaurantSystem (Singleton)               │
+├───────────────────────────────────────────────────┤
+│ - _instance: RestaurantSystem                     │
+│ - tables: Dict[str, Table]                        │
+│ - reservations: Dict[str, Reservation]            │
+│ - menu: Dict[str, MenuItem]                       │
+│ - orders: Dict[str, Order]                        │
+│ - bills: Dict[str, Bill]                          │
+│ - pricing_strategy: PricingStrategy               │
+│ - observers: List[RestaurantObserver]             │
+│ - _lock: threading.RLock                          │
+├───────────────────────────────────────────────────┤
+│ + get_instance(): RestaurantSystem                │
+│ + reserve_table(...): Reservation                 │
+│ + check_in(reservation_id): bool                  │
+│ + place_order(table_id, items): Order             │
+│ + update_order_status(order_id, status): bool     │
+│ + calculate_bill(order_id): Bill                  │
+│ + process_payment(bill_id, method): bool          │
+│ + set_pricing_strategy(strategy): void            │
+│ + expire_no_shows(): void                         │
+│ + add_observer(observer): void                    │
+│ + notify_observers(event, payload): void          │
+└───────────────────────────────────────────────────┘
+       │ manages 1:N          │ manages 1:N
+       ▼                      ▼
+┌────────────────┐   ┌──────────────────────────┐
+│     Table      │   │       Reservation         │
+├────────────────┤   ├──────────────────────────┤
+│ table_id: str  │   │ reservation_id: str       │
+│ capacity: int  │◄──│ table: Table              │
+│ status: Enum   │   │ customer_name: str        │
+│ location: str  │   │ party_size: int           │
+├────────────────┤   │ status: ReservationStatus │
+│ + is_free()    │   │ reserved_at: datetime     │
+│ + reserve()    │   ├──────────────────────────┤
+│ + check_in()   │   │ + check_in(): void        │
+│ + release()    │   │ + cancel(): void          │
+└────────────────┘   │ + is_no_show(min): bool   │
+                     └──────────────────────────┘
+
+┌──────────────────────────────────┐
+│           Order                  │
+├──────────────────────────────────┤
+│ order_id: str                    │
+│ table: Table                     │
+│ items: List[(MenuItem, qty)]     │
+│ status: OrderStatus              │
+│ created_at: datetime             │
+├──────────────────────────────────┤
+│ + add_item(item, qty): void      │
+│ + get_subtotal(): float          │
+│ + advance_status(): void         │
+└──────────┬───────────────────────┘
+           │ references
+           ▼
+┌───────────────────────┐   ┌──────────────────────────┐
+│      MenuItem         │   │         Bill             │
+├───────────────────────┤   ├──────────────────────────┤
+│ item_id: str          │   │ bill_id: str             │
+│ name: str             │   │ order: Order             │
+│ price: float          │   │ subtotal: float          │
+│ category: str         │   │ discounted_amount: float │
+│ available: bool       │   │ tax: float               │
+└───────────────────────┘   │ service_charge: float    │
+                            │ total: float             │
+                            │ paid: bool               │
+                            ├──────────────────────────┤
+                            │ + calculate(strategy)    │
+                            │ + mark_paid(): void      │
+                            └──────────────────────────┘
+
+STRATEGY PATTERN (Pricing):
+┌────────────────────────────────────┐
+│ PricingStrategy (Abstract)         │
+├────────────────────────────────────┤
+│ + apply(subtotal: float): float    │
+└──┬─────────────────────────────────┘
+   │ implemented by
+   ├─→ RegularPricing  (no discount)
+   ├─→ HappyHourPricing (20% off)
+   └─→ MemberPricing   (15% off)
+
+OBSERVER PATTERN (Notifications):
+┌────────────────────────────────────┐
+│ RestaurantObserver (Abstract)      │
+├────────────────────────────────────┤
+│ + update(event, payload)           │
+└──┬─────────────────────────────────┘
+   │ implemented by
+   ├─→ ConsoleObserver  (logging)
+   ├─→ KitchenObserver  (ticket display)
+   └─→ EmailObserver    (customer notifications)
+
+STATE MACHINE (Order):
+RECEIVED ──→ PREPARING ──→ READY ──→ SERVED ──→ PAID
+    └──────────────────────────────────→ CANCELLED
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RestaurantSystem → Tables</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System owns all tables</td>
+</tr>
+<tr>
+<td>RestaurantSystem → Reservations</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System creates/expires reservations</td>
+</tr>
+<tr>
+<td>RestaurantSystem → Orders</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System coordinates order lifecycle</td>
+</tr>
+<tr>
+<td>RestaurantSystem → Bills</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System generates and stores bills</td>
+</tr>
+<tr>
+<td>Reservation → Table</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Reservation links to one table</td>
+</tr>
+<tr>
+<td>Order → Table</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Order tied to one seated table</td>
+</tr>
+<tr>
+<td>Order → MenuItems</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Order owns its item list</td>
+</tr>
+<tr>
+<td>Bill → Order</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Bill computed from one order</td>
+</tr>
+<tr>
+<td>RestaurantSystem → PricingStrategy</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>System owns pricing rule</td>
+</tr>
+<tr>
+<td>RestaurantSystem → Observers</td>
+<td>1:N</td>
+<td>Association</td>
+<td>System notifies multiple listeners</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-singleton-for-restaurantsystem">Pattern 1: <strong>Singleton</strong> (For RestaurantSystem)</h3>
+<p><strong>Problem</strong>: Race conditions on table assignment — multiple threads must share one consistent view of table states, reservations, and orders.</p>
+<p><strong>Solution</strong>: One global RestaurantSystem instance with thread-safe initialization via double-checked locking.</p>
+<pre class="codehilite"><code class="language-python">class RestaurantSystem:
+    _instance = None
+    _class_lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            with cls._class_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Single source of truth, ✅ Thread-safe (double-checked lock), ✅ Global access<br />
+<strong>Trade-off</strong>: ⚠️ Global state (harder to unit test), ⚠️ Does not scale across separate processes without a shared store</p>
+<hr />
+<h3 id="pattern-2-strategy-for-pricing">Pattern 2: <strong>Strategy</strong> (For Pricing)</h3>
+<p><strong>Problem</strong>: Multiple pricing models (Regular, HappyHour, Member) must coexist and be swappable at runtime without modifying bill calculation logic.</p>
+<p><strong>Solution</strong>: Pluggable strategies implementing a common <code>apply()</code> interface.</p>
+<pre class="codehilite"><code class="language-python">class PricingStrategy(ABC):
+    @abstractmethod
+    def apply(self, subtotal: float) -&gt; float:
+        pass
+
+class HappyHourPricing(PricingStrategy):
+    def apply(self, subtotal: float) -&gt; float:
+        return subtotal * 0.8   # 20% off
+
+class MemberPricing(PricingStrategy):
+    def apply(self, subtotal: float) -&gt; float:
+        return subtotal * 0.85  # 15% off
+
+class RegularPricing(PricingStrategy):
+    def apply(self, subtotal: float) -&gt; float:
+        return subtotal         # no discount
+
+# Runtime swap — no billing logic changes needed
+system.set_pricing_strategy(HappyHourPricing())
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Easy to add new pricing tiers (EarlyBird, GroupDiscount), ✅ No billing code changes<br />
+<strong>Trade-off</strong>: ⚠️ Extra abstraction layer; overkill for a single pricing rule</p>
+<hr />
+<h3 id="pattern-3-observer-for-notifications">Pattern 3: <strong>Observer</strong> (For Notifications)</h3>
+<p><strong>Problem</strong>: Kitchen, billing, and customer notifications need real-time updates when orders change state, but coupling kitchen logic into the order system creates a maintenance nightmare.</p>
+<p><strong>Solution</strong>: Abstract Observer interface decouples producers from consumers.</p>
+<pre class="codehilite"><code class="language-python">class RestaurantObserver(ABC):
+    @abstractmethod
+    def update(self, event: str, payload: Dict):
+        pass
+
+class KitchenObserver(RestaurantObserver):
+    def update(self, event: str, payload: Dict):
+        if event == &quot;ORDER_PLACED&quot;:
+            print(f&quot;[KITCHEN] New ticket: {payload['order_id']}&quot;)
+
+class EmailObserver(RestaurantObserver):
+    def update(self, event: str, payload: Dict):
+        if event == &quot;PAYMENT_COMPLETED&quot;:
+            print(f&quot;[EMAIL] Receipt sent to {payload['customer_email']}&quot;)
+
+# Usage: Add multiple observers
+system.add_observer(KitchenObserver())
+system.add_observer(EmailObserver())
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Loose coupling, ✅ Easy to add new notification channels (SMS, Slack)<br />
+<strong>Trade-off</strong>: ⚠️ Observer lifecycle management; failed observers should not block the main flow</p>
+<hr />
+<h3 id="pattern-4-state-enum-for-order-lifecycle">Pattern 4: <strong>State Enum</strong> (For Order Lifecycle)</h3>
+<p><strong>Problem</strong>: An order has valid and invalid state transitions. Allowing arbitrary transitions (e.g., RECEIVED → PAID directly) would corrupt data.</p>
+<p><strong>Solution</strong>: Enum-based state with explicit valid-transition guards.</p>
+<pre class="codehilite"><code class="language-python">class OrderStatus(Enum):
+    RECEIVED = &quot;received&quot;
+    PREPARING = &quot;preparing&quot;
+    READY = &quot;ready&quot;
+    SERVED = &quot;served&quot;
+    PAID = &quot;paid&quot;
+    CANCELLED = &quot;cancelled&quot;
+
+VALID_TRANSITIONS = {
+    OrderStatus.RECEIVED:   {OrderStatus.PREPARING, OrderStatus.CANCELLED},
+    OrderStatus.PREPARING:  {OrderStatus.READY, OrderStatus.CANCELLED},
+    OrderStatus.READY:      {OrderStatus.SERVED},
+    OrderStatus.SERVED:     {OrderStatus.PAID},
+}
+
+def update_order_status(order_id, new_status):
+    if new_status not in VALID_TRANSITIONS.get(order.status, set()):
+        raise InvalidStatusTransitionError(f&quot;{order.status} → {new_status} not allowed&quot;)
+    order.status = new_status
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Explicit lifecycle, ✅ Invalid transitions caught at runtime<br />
+<strong>Trade-off</strong>: ⚠️ Transition map must be maintained as states evolve</p>
+<hr />
+<h3 id="pattern-5-factory-for-order-creation">Pattern 5: <strong>Factory</strong> (For Order Creation)</h3>
+<p><strong>Problem</strong>: Order creation involves generating a unique ID, associating a table, validating items, and creating a KitchenTicket — scattered logic creates inconsistency.</p>
+<p><strong>Solution</strong>: Centralize creation inside <code>place_order()</code> acting as a factory method.</p>
+<pre class="codehilite"><code class="language-python">class OrderFactory:
+    _counter = 0
+
+    @staticmethod
+    def create(table: Table, items: List[Tuple[MenuItem, int]]) -&gt; 'Order':
+        OrderFactory._counter += 1
+        order_id = f&quot;ORD{OrderFactory._counter:04d}&quot;
+        return Order(order_id, table, items)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Centralized, consistent initialization, ✅ ID generation in one place<br />
+<strong>Trade-off</strong>: ⚠️ If creation grows complex, graduate to a Builder pattern</p>
+<hr />
+<h3 id="pattern-6-command-for-auditable-operations">Pattern 6: <strong>Command</strong> (For Auditable Operations)</h3>
+<p><strong>Problem</strong>: Operations like placing orders and paying bills need to be logged and potentially undone (order cancellation).</p>
+<p><strong>Solution</strong>: Command objects encapsulate an operation as a first-class object.</p>
+<pre class="codehilite"><code class="language-python">class PlaceOrderCommand:
+    def __init__(self, system, table_id, items):
+        self.system = system
+        self.table_id = table_id
+        self.items = items
+
+    def execute(self):
+        return self.system.place_order(self.table_id, self.items)
+
+class PayBillCommand:
+    def __init__(self, system, bill_id, method):
+        self.system = system
+        self.bill_id = bill_id
+        self.method = method
+
+    def execute(self):
+        return self.system.process_payment(self.bill_id, self.method)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Uniform interface for all operations, ✅ Enables undo/redo and audit logs<br />
+<strong>Trade-off</strong>: ⚠️ Adds wrapper classes for every operation</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>Race conditions on shared restaurant state</td>
+<td>Single consistent source of truth</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Multiple pricing rules (Regular, HappyHour, Member)</td>
+<td>Pluggable, no core-code changes</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Kitchen, email, and logging need event updates</td>
+<td>Loose coupling, event-driven</td>
+</tr>
+<tr>
+<td><strong>State (Enum)</strong></td>
+<td>Order transitions must be valid</td>
+<td>Invalid moves caught at runtime</td>
+</tr>
+<tr>
+<td><strong>Factory</strong></td>
+<td>Consistent order creation with ID generation</td>
+<td>Centralized, predictable</td>
+</tr>
+<tr>
+<td><strong>Command</strong></td>
+<td>Operations need audit trails and undo</td>
+<td>Uniform, loggable, reversible</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+Restaurant Management System - Interview Implementation
+Demonstrates:
+1. Table reservation and guest check-in
+2. Order placement with kitchen notification
+3. Order status progression (RECEIVED → SERVED)
+4. Bill calculation with pluggable pricing strategy
+5. Payment processing and table release
+&quot;&quot;&quot;
+
+from enum import Enum
+from abc import ABC, abstractmethod
+from typing import List, Dict, Optional, Tuple
+from datetime import datetime, timedelta
+import threading
+import uuid
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class TableStatus(Enum):
+    FREE = &quot;free&quot;
+    RESERVED = &quot;reserved&quot;
+    OCCUPIED = &quot;occupied&quot;
+
+class ReservationStatus(Enum):
+    PENDING = &quot;pending&quot;
+    CHECKED_IN = &quot;checked_in&quot;
+    CANCELLED = &quot;cancelled&quot;
+    NO_SHOW = &quot;no_show&quot;
+
+class OrderStatus(Enum):
+    RECEIVED = &quot;received&quot;
+    PREPARING = &quot;preparing&quot;
+    READY = &quot;ready&quot;
+    SERVED = &quot;served&quot;
+    PAID = &quot;paid&quot;
+    CANCELLED = &quot;cancelled&quot;
+
+class PaymentMethod(Enum):
+    CASH = &quot;cash&quot;
+    CARD = &quot;card&quot;
+    DIGITAL = &quot;digital&quot;
+
+# Valid order state transitions
+VALID_TRANSITIONS: Dict[OrderStatus, set] = {
+    OrderStatus.RECEIVED:   {OrderStatus.PREPARING, OrderStatus.CANCELLED},
+    OrderStatus.PREPARING:  {OrderStatus.READY, OrderStatus.CANCELLED},
+    OrderStatus.READY:      {OrderStatus.SERVED},
+    OrderStatus.SERVED:     {OrderStatus.PAID},
+    OrderStatus.PAID:       set(),
+    OrderStatus.CANCELLED:  set(),
+}
+
+# ============================================================================
+# CORE ENTITIES
+# ============================================================================
+
+class Table:
+    &quot;&quot;&quot;Physical seating unit.&quot;&quot;&quot;
+    def __init__(self, table_id: str, capacity: int, location: str = &quot;main&quot;):
+        self.table_id = table_id
+        self.capacity = capacity
+        self.location = location
+        self.status = TableStatus.FREE
+
+    def is_free(self) -&gt; bool:
+        return self.status == TableStatus.FREE
+
+    def reserve(self):
+        if not self.is_free():
+            raise ValueError(f&quot;Table {self.table_id} is not FREE&quot;)
+        self.status = TableStatus.RESERVED
+
+    def check_in(self):
+        if self.status != TableStatus.RESERVED:
+            raise ValueError(f&quot;Table {self.table_id} is not RESERVED&quot;)
+        self.status = TableStatus.OCCUPIED
+
+    def release(self):
+        self.status = TableStatus.FREE
+
+    def __repr__(self):
+        return f&quot;Table({self.table_id}, cap={self.capacity}, {self.status.value})&quot;
+
+
+class MenuItem:
+    &quot;&quot;&quot;A single item on the restaurant menu.&quot;&quot;&quot;
+    def __init__(self, item_id: str, name: str, price: float, category: str = &quot;Main&quot;):
+        self.item_id = item_id
+        self.name = name
+        self.price = price
+        self.category = category
+        self.available = True
+
+    def is_available(self) -&gt; bool:
+        return self.available
+
+    def __repr__(self):
+        return f&quot;MenuItem({self.name}, ${self.price:.2f})&quot;
+
+
+class Reservation:
+    &quot;&quot;&quot;A customer's time-slot hold on a table.&quot;&quot;&quot;
+    def __init__(self, reservation_id: str, customer_name: str,
+                 customer_email: str, table: Table,
+                 party_size: int, reserved_at: datetime):
+        self.reservation_id = reservation_id
+        self.customer_name = customer_name
+        self.customer_email = customer_email
+        self.table = table
+        self.party_size = party_size
+        self.reserved_at = reserved_at
+        self.status = ReservationStatus.PENDING
+
+    def check_in(self):
+        &quot;&quot;&quot;Activate reservation and seat guests.&quot;&quot;&quot;
+        if self.status != ReservationStatus.PENDING:
+            raise ValueError(f&quot;Reservation {self.reservation_id} cannot be checked in &quot;
+                             f&quot;(status: {self.status.value})&quot;)
+        self.status = ReservationStatus.CHECKED_IN
+        self.table.check_in()
+
+    def cancel(self):
+        &quot;&quot;&quot;Cancel reservation and release table.&quot;&quot;&quot;
+        if self.status in (ReservationStatus.CHECKED_IN, ReservationStatus.CANCELLED,
+                           ReservationStatus.NO_SHOW):
+            raise ValueError(f&quot;Cannot cancel reservation in state {self.status.value}&quot;)
+        self.status = ReservationStatus.CANCELLED
+        self.table.release()
+
+    def is_no_show(self, timeout_minutes: int = 15) -&gt; bool:
+        &quot;&quot;&quot;Return True if guest has not checked in within the timeout window.&quot;&quot;&quot;
+        return (self.status == ReservationStatus.PENDING and
+                datetime.now() &gt; self.reserved_at + timedelta(minutes=timeout_minutes))
+
+    def __repr__(self):
+        return f&quot;Reservation({self.reservation_id}, {self.customer_name}, {self.status.value})&quot;
+
+
+class Order:
+    &quot;&quot;&quot;Customer food order linked to a table.&quot;&quot;&quot;
+    def __init__(self, order_id: str, table: Table):
+        self.order_id = order_id
+        self.table = table
+        self.items: List[Tuple[MenuItem, int]] = []   # (item, qty) pairs
+        self.status = OrderStatus.RECEIVED
+        self.created_at = datetime.now()
+
+    def add_item(self, item: MenuItem, qty: int = 1):
+        if self.status != OrderStatus.RECEIVED:
+            raise ValueError(f&quot;Cannot modify order in state {self.status.value}&quot;)
+        if not item.is_available():
+            raise ValueError(f&quot;{item.name} is not available&quot;)
+        self.items.append((item, qty))
+
+    def get_subtotal(self) -&gt; float:
+        return sum(item.price * qty for item, qty in self.items)
+
+    def advance_to(self, new_status: OrderStatus):
+        allowed = VALID_TRANSITIONS.get(self.status, set())
+        if new_status not in allowed:
+            raise ValueError(f&quot;Invalid transition: {self.status.value} → {new_status.value}&quot;)
+        self.status = new_status
+
+    def __repr__(self):
+        return f&quot;Order({self.order_id}, table={self.table.table_id}, {self.status.value})&quot;
+
+
+class Bill:
+    &quot;&quot;&quot;Financial summary for a served order.&quot;&quot;&quot;
+    def __init__(self, bill_id: str, order: Order, subtotal: float,
+                 discounted_amount: float, tax: float,
+                 service_charge: float, total: float):
+        self.bill_id = bill_id
+        self.order = order
+        self.subtotal = subtotal
+        self.discounted_amount = discounted_amount
+        self.tax = tax
+        self.service_charge = service_charge
+        self.total = total
+        self.paid = False
+
+    def mark_paid(self):
+        if self.paid:
+            raise ValueError(f&quot;Bill {self.bill_id} already paid&quot;)
+        self.paid = True
+
+    def __repr__(self):
+        return (f&quot;Bill({self.bill_id}, subtotal=${self.subtotal:.2f}, &quot;
+                f&quot;total=${self.total:.2f}, paid={self.paid})&quot;)
+
+
+class Staff:
+    &quot;&quot;&quot;Restaurant employee (data holder for audit trails).&quot;&quot;&quot;
+    def __init__(self, staff_id: str, name: str, role: str):
+        self.staff_id = staff_id
+        self.name = name
+        self.role = role
+
+    def __repr__(self):
+        return f&quot;Staff({self.name}, {self.role})&quot;
+
+# ============================================================================
+# PRICING STRATEGIES
+# ============================================================================
+
+class PricingStrategy(ABC):
+    @abstractmethod
+    def apply(self, subtotal: float) -&gt; float:
+        pass
+
+class RegularPricing(PricingStrategy):
+    def apply(self, subtotal: float) -&gt; float:
+        return subtotal
+
+class HappyHourPricing(PricingStrategy):
+    def apply(self, subtotal: float) -&gt; float:
+        return subtotal * 0.80   # 20% off
+
+class MemberPricing(PricingStrategy):
+    def apply(self, subtotal: float) -&gt; float:
+        return subtotal * 0.85   # 15% off
+
+# ============================================================================
+# OBSERVER PATTERN
+# ============================================================================
+
+class RestaurantObserver(ABC):
+    @abstractmethod
+    def update(self, event: str, payload: Dict):
+        pass
+
+class ConsoleObserver(RestaurantObserver):
+    def update(self, event: str, payload: Dict):
+        ts = datetime.now().strftime(&quot;%H:%M:%S&quot;)
+        print(f&quot;  [{ts}] {event:30s} | {payload}&quot;)
+
+class KitchenObserver(RestaurantObserver):
+    def update(self, event: str, payload: Dict):
+        if event in (&quot;ORDER_PLACED&quot;, &quot;ORDER_STATUS_UPDATED&quot;):
+            print(f&quot;  [KITCHEN] {event} | order={payload.get('order_id')} &quot;
+                  f&quot;status={payload.get('status', 'new')}&quot;)
+
+class EmailObserver(RestaurantObserver):
+    def update(self, event: str, payload: Dict):
+        if event in (&quot;RESERVATION_CREATED&quot;, &quot;PAYMENT_COMPLETED&quot;):
+            email = payload.get(&quot;customer_email&quot;, &quot;&quot;)
+            print(f&quot;  [EMAIL -&gt; {email}] Event: {event}&quot;)
+
+# ============================================================================
+# ORDER FACTORY
+# ============================================================================
+
+class OrderFactory:
+    _counter = 0
+    _lock = threading.Lock()
+
+    @staticmethod
+    def create(table: Table) -&gt; Order:
+        with OrderFactory._lock:
+            OrderFactory._counter += 1
+            order_id = f&quot;ORD{OrderFactory._counter:04d}&quot;
+        return Order(order_id, table)
+
+# ============================================================================
+# RESTAURANT SYSTEM (SINGLETON)
+# ============================================================================
+
+class RestaurantSystem:
+    &quot;&quot;&quot;Singleton: Central coordinator for all restaurant operations.&quot;&quot;&quot;
+    _instance = None
+    _class_lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        # Fix: accept *args/**kwargs so __init__ args don't raise TypeError
+        if cls._instance is None:
+            with cls._class_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, &quot;_initialized&quot;):
+            return
+        self._initialized = True
+        self.tables: Dict[str, Table] = {}
+        self.reservations: Dict[str, Reservation] = {}
+        self.menu: Dict[str, MenuItem] = {}
+        self.orders: Dict[str, Order] = {}
+        self.bills: Dict[str, Bill] = {}
+        self.pricing_strategy: PricingStrategy = RegularPricing()
+        self.observers: List[RestaurantObserver] = []
+        # RLock: prevents deadlock if internal methods call each other
+        self._lock = threading.RLock()
+
+    @classmethod
+    def get_instance(cls) -&gt; &quot;RestaurantSystem&quot;:
+        return cls()
+
+    # --- Setup helpers ---
+
+    def add_table(self, table: Table):
+        with self._lock:
+            self.tables[table.table_id] = table
+
+    def add_menu_item(self, item: MenuItem):
+        with self._lock:
+            self.menu[item.item_id] = item
+
+    def set_pricing_strategy(self, strategy: PricingStrategy):
+        with self._lock:
+            self.pricing_strategy = strategy
+
+    def add_observer(self, observer: RestaurantObserver):
+        with self._lock:
+            self.observers.append(observer)
+
+    def notify_observers(self, event: str, payload: Dict):
+        with self._lock:
+            obs_copy = list(self.observers)
+        for obs in obs_copy:
+            obs.update(event, payload)
+
+    # --- Core operations ---
+
+    def reserve_table(self, customer_name: str, customer_email: str,
+                      party_size: int,
+                      reserved_at: Optional[datetime] = None) -&gt; Optional[Reservation]:
+        &quot;&quot;&quot;Find a free table and create a reservation.&quot;&quot;&quot;
+        if reserved_at is None:
+            reserved_at = datetime.now()
+        with self._lock:
+            chosen = None
+            for table in sorted(self.tables.values(), key=lambda t: t.capacity):
+                if table.is_free() and table.capacity &gt;= party_size:
+                    chosen = table
+                    break
+            if chosen is None:
+                print(f&quot;  [WARN] No table available for party of {party_size}&quot;)
+                return None
+            chosen.reserve()
+            res_id = f&quot;RES{str(uuid.uuid4())[:8].upper()}&quot;
+            reservation = Reservation(res_id, customer_name, customer_email,
+                                      chosen, party_size, reserved_at)
+            self.reservations[res_id] = reservation
+        self.notify_observers(&quot;RESERVATION_CREATED&quot;, {
+            &quot;reservation_id&quot;: res_id,
+            &quot;customer_name&quot;: customer_name,
+            &quot;customer_email&quot;: customer_email,
+            &quot;table_id&quot;: chosen.table_id,
+        })
+        return reservation
+
+    def check_in(self, reservation_id: str) -&gt; bool:
+        &quot;&quot;&quot;Check in a pending reservation.&quot;&quot;&quot;
+        with self._lock:
+            reservation = self.reservations.get(reservation_id)
+            if not reservation:
+                print(f&quot;  [ERROR] Reservation {reservation_id} not found&quot;)
+                return False
+            try:
+                reservation.check_in()
+            except ValueError as e:
+                print(f&quot;  [ERROR] Check-in failed: {e}&quot;)
+                return False
+        self.notify_observers(&quot;GUEST_CHECKED_IN&quot;, {
+            &quot;reservation_id&quot;: reservation_id,
+            &quot;table_id&quot;: reservation.table.table_id,
+        })
+        return True
+
+    def place_order(self, table_id: str,
+                    items: List[Tuple[str, int]]) -&gt; Optional[Order]:
+        &quot;&quot;&quot;Place an order for an occupied table.&quot;&quot;&quot;
+        with self._lock:
+            table = self.tables.get(table_id)
+            if not table or table.status != TableStatus.OCCUPIED:
+                print(f&quot;  [ERROR] Table {table_id} is not OCCUPIED&quot;)
+                return None
+            order = OrderFactory.create(table)
+            for item_id, qty in items:
+                menu_item = self.menu.get(item_id)
+                if not menu_item:
+                    print(f&quot;  [ERROR] Menu item {item_id} not found&quot;)
+                    return None
+                if not menu_item.is_available():
+                    print(f&quot;  [ERROR] {menu_item.name} is not available&quot;)
+                    return None
+                order.add_item(menu_item, qty)
+            self.orders[order.order_id] = order
+        self.notify_observers(&quot;ORDER_PLACED&quot;, {
+            &quot;order_id&quot;: order.order_id,
+            &quot;table_id&quot;: table_id,
+            &quot;subtotal&quot;: order.get_subtotal(),
+            &quot;status&quot;: order.status.value,
+        })
+        return order
+
+    def update_order_status(self, order_id: str, new_status: OrderStatus) -&gt; bool:
+        &quot;&quot;&quot;Advance an order to the next valid state.&quot;&quot;&quot;
+        with self._lock:
+            order = self.orders.get(order_id)
+            if not order:
+                print(f&quot;  [ERROR] Order {order_id} not found&quot;)
+                return False
+            try:
+                order.advance_to(new_status)
+            except ValueError as e:
+                print(f&quot;  [ERROR] Status update failed: {e}&quot;)
+                return False
+        self.notify_observers(&quot;ORDER_STATUS_UPDATED&quot;, {
+            &quot;order_id&quot;: order_id,
+            &quot;status&quot;: new_status.value,
+        })
+        return True
+
+    def calculate_bill(self, order_id: str) -&gt; Optional[Bill]:
+        &quot;&quot;&quot;Generate a bill for a served order.&quot;&quot;&quot;
+        with self._lock:
+            order = self.orders.get(order_id)
+            if not order:
+                print(f&quot;  [ERROR] Order {order_id} not found&quot;)
+                return None
+            if order.status != OrderStatus.SERVED:
+                print(f&quot;  [ERROR] Order must be SERVED to bill (current: {order.status.value})&quot;)
+                return None
+            subtotal = order.get_subtotal()
+            discounted = self.pricing_strategy.apply(subtotal)
+            tax = discounted * 0.10
+            service = discounted * 0.05
+            total = discounted + tax + service
+            bill_id = f&quot;BILL{str(uuid.uuid4())[:8].upper()}&quot;
+            bill = Bill(bill_id, order, subtotal, discounted, tax, service, total)
+            self.bills[bill_id] = bill
+        self.notify_observers(&quot;BILL_GENERATED&quot;, {
+            &quot;bill_id&quot;: bill_id,
+            &quot;order_id&quot;: order_id,
+            &quot;subtotal&quot;: round(subtotal, 2),
+            &quot;total&quot;: round(total, 2),
+        })
+        return bill
+
+    def process_payment(self, bill_id: str,
+                        method: PaymentMethod = PaymentMethod.CARD) -&gt; bool:
+        &quot;&quot;&quot;Mark bill paid and release the table.&quot;&quot;&quot;
+        with self._lock:
+            bill = self.bills.get(bill_id)
+            if not bill:
+                print(f&quot;  [ERROR] Bill {bill_id} not found&quot;)
+                return False
+            if bill.paid:
+                print(f&quot;  [ERROR] Bill {bill_id} already paid&quot;)
+                return False
+            bill.mark_paid()
+            bill.order.advance_to(OrderStatus.PAID)
+            table = bill.order.table
+            customer_email = &quot;&quot;
+            for res in self.reservations.values():
+                if res.table.table_id == table.table_id:
+                    customer_email = res.customer_email
+                    break
+            table.release()
+        self.notify_observers(&quot;PAYMENT_COMPLETED&quot;, {
+            &quot;bill_id&quot;: bill_id,
+            &quot;order_id&quot;: bill.order.order_id,
+            &quot;total&quot;: round(bill.total, 2),
+            &quot;method&quot;: method.value,
+            &quot;customer_email&quot;: customer_email,
+            &quot;table_id&quot;: table.table_id,
+        })
+        return True
+
+    def expire_no_shows(self, timeout_minutes: int = 15) -&gt; int:
+        &quot;&quot;&quot;Background job: release tables for no-show reservations.&quot;&quot;&quot;
+        expired = []
+        with self._lock:
+            for res in self.reservations.values():
+                if res.is_no_show(timeout_minutes):
+                    res.status = ReservationStatus.NO_SHOW
+                    res.table.release()
+                    expired.append(res)
+        for res in expired:
+            self.notify_observers(&quot;NO_SHOW_EXPIRED&quot;, {
+                &quot;reservation_id&quot;: res.reservation_id,
+                &quot;customer_name&quot;: res.customer_name,
+                &quot;table_id&quot;: res.table.table_id,
+            })
+        return len(expired)
+
+# ============================================================================
+# DEMO
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;=&quot; * 65)
+    print(&quot;RESTAURANT MANAGEMENT SYSTEM — DEMO&quot;)
+    print(&quot;=&quot; * 65)
+
+    # Fresh instance (reset for demo)
+    system = RestaurantSystem.get_instance()
+    system.tables.clear()
+    system.reservations.clear()
+    system.menu.clear()
+    system.orders.clear()
+    system.bills.clear()
+    system.observers.clear()
+    system._initialized = True   # keep flag set
+
+    # --- Observers ---
+    system.add_observer(ConsoleObserver())
+    system.add_observer(KitchenObserver())
+    system.add_observer(EmailObserver())
+
+    # --- Tables ---
+    for i in range(1, 6):
+        system.add_table(Table(f&quot;T{i}&quot;, capacity=4))
+    system.add_table(Table(&quot;T6&quot;, capacity=8, location=&quot;banquet&quot;))
+    print(f&quot;\nSetup: {len(system.tables)} tables added&quot;)
+
+    # --- Menu ---
+    menu_data = [
+        (&quot;M001&quot;, &quot;Caesar Salad&quot;,    8.50,  &quot;Starter&quot;),
+        (&quot;M002&quot;, &quot;Tomato Soup&quot;,     6.00,  &quot;Starter&quot;),
+        (&quot;M003&quot;, &quot;Grilled Salmon&quot;,  22.00, &quot;Main&quot;),
+        (&quot;M004&quot;, &quot;Ribeye Steak&quot;,    35.00, &quot;Main&quot;),
+        (&quot;M005&quot;, &quot;Chocolate Cake&quot;,  7.50,  &quot;Dessert&quot;),
+        (&quot;M006&quot;, &quot;House Wine&quot;,      9.00,  &quot;Drink&quot;),
+    ]
+    for mid, name, price, cat in menu_data:
+        system.add_menu_item(MenuItem(mid, name, price, cat))
+    print(f&quot;Setup: {len(system.menu)} menu items added\n&quot;)
+
+    # ----------------------------------------------------------------
+    # DEMO 1: Reserve, Check-in, Order, Kitchen, Bill, Pay
+    # ----------------------------------------------------------------
+    print(&quot;=&quot; * 65)
+    print(&quot;DEMO 1: Full Dining Flow — Reserve → Pay&quot;)
+    print(&quot;=&quot; * 65)
+
+    res = system.reserve_table(&quot;Alice Wong&quot;, &quot;alice@example.com&quot;, 2)
+    print(f&quot;\n[1] Reserved: {res}&quot;)
+
+    system.check_in(res.reservation_id)
+    print(f&quot;[2] Checked in: table status = {res.table.status.value}&quot;)
+
+    order = system.place_order(res.table.table_id,
+                               [(&quot;M001&quot;, 2), (&quot;M003&quot;, 1), (&quot;M006&quot;, 2)])
+    print(f&quot;\n[3] Order placed: {order}&quot;)
+    print(f&quot;    Subtotal: ${order.get_subtotal():.2f}&quot;)
+
+    for status in [OrderStatus.PREPARING, OrderStatus.READY, OrderStatus.SERVED]:
+        system.update_order_status(order.order_id, status)
+    print(f&quot;\n[4] Order status: {order.status.value}&quot;)
+
+    bill = system.calculate_bill(order.order_id)
+    print(f&quot;\n[5] Bill breakdown:&quot;)
+    print(f&quot;    Subtotal:         ${bill.subtotal:.2f}&quot;)
+    print(f&quot;    After discount:   ${bill.discounted_amount:.2f}&quot;)
+    print(f&quot;    Tax (10%):        ${bill.tax:.2f}&quot;)
+    print(f&quot;    Service (5%):     ${bill.service_charge:.2f}&quot;)
+    print(f&quot;    TOTAL:            ${bill.total:.2f}&quot;)
+
+    system.process_payment(bill.bill_id, PaymentMethod.CARD)
+    print(f&quot;\n[6] Table status after payment: {res.table.status.value}&quot;)
+
+    # ----------------------------------------------------------------
+    # DEMO 2: Happy Hour Pricing
+    # ----------------------------------------------------------------
+    print(&quot;\n&quot; + &quot;=&quot; * 65)
+    print(&quot;DEMO 2: Happy Hour Pricing (20% off)&quot;)
+    print(&quot;=&quot; * 65)
+
+    system.set_pricing_strategy(HappyHourPricing())
+
+    res2 = system.reserve_table(&quot;Bob Chen&quot;, &quot;bob@example.com&quot;, 3)
+    system.check_in(res2.reservation_id)
+    order2 = system.place_order(res2.table.table_id, [(&quot;M004&quot;, 2), (&quot;M005&quot;, 2)])
+    for s in [OrderStatus.PREPARING, OrderStatus.READY, OrderStatus.SERVED]:
+        system.update_order_status(order2.order_id, s)
+
+    bill2 = system.calculate_bill(order2.order_id)
+    print(f&quot;\n  Subtotal:       ${bill2.subtotal:.2f}&quot;)
+    print(f&quot;  HappyHour (20% off): ${bill2.discounted_amount:.2f}&quot;)
+    print(f&quot;  TOTAL:          ${bill2.total:.2f}&quot;)
+    system.process_payment(bill2.bill_id, PaymentMethod.CASH)
+
+    # ----------------------------------------------------------------
+    # DEMO 3: Walk-in (no reservation) — direct check for OCCUPIED
+    # ----------------------------------------------------------------
+    print(&quot;\n&quot; + &quot;=&quot; * 65)
+    print(&quot;DEMO 3: Attempting order on non-occupied table (error guard)&quot;)
+    print(&quot;=&quot; * 65)
+
+    bad_order = system.place_order(&quot;T4&quot;, [(&quot;M002&quot;, 1)])
+    print(f&quot;  Result: {'blocked (expected)' if bad_order is None else 'unexpected success'}&quot;)
+
+    # ----------------------------------------------------------------
+    # DEMO 4: Member Pricing
+    # ----------------------------------------------------------------
+    print(&quot;\n&quot; + &quot;=&quot; * 65)
+    print(&quot;DEMO 4: Member Pricing (15% off)&quot;)
+    print(&quot;=&quot; * 65)
+
+    system.set_pricing_strategy(MemberPricing())
+
+    res4 = system.reserve_table(&quot;Carol Li&quot;, &quot;carol@example.com&quot;, 2)
+    system.check_in(res4.reservation_id)
+    order4 = system.place_order(res4.table.table_id, [(&quot;M003&quot;, 1), (&quot;M005&quot;, 1), (&quot;M006&quot;, 1)])
+    for s in [OrderStatus.PREPARING, OrderStatus.READY, OrderStatus.SERVED]:
+        system.update_order_status(order4.order_id, s)
+
+    bill4 = system.calculate_bill(order4.order_id)
+    print(f&quot;\n  Subtotal:       ${bill4.subtotal:.2f}&quot;)
+    print(f&quot;  Member (15% off): ${bill4.discounted_amount:.2f}&quot;)
+    print(f&quot;  TOTAL:          ${bill4.total:.2f}&quot;)
+    system.process_payment(bill4.bill_id, PaymentMethod.DIGITAL)
+
+    # ----------------------------------------------------------------
+    # Summary
+    # ----------------------------------------------------------------
+    free_tables = sum(1 for t in system.tables.values() if t.is_free())
+    print(f&quot;\n{'=' * 65}&quot;)
+    print(f&quot;Demo complete. Free tables: {free_tables}/{len(system.tables)}&quot;)
+    print(f&quot;Total orders processed: {len(system.orders)}&quot;)
+    print(f&quot;Total bills paid: {sum(1 for b in system.bills.values() if b.paid)}&quot;)
+    print(&quot;=&quot; * 65)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>reserve_table</strong></td>
+<td>RLock on system</td>
+<td>Atomic table scan + reserve (no double-booking)</td>
+</tr>
+<tr>
+<td><strong>check_in</strong></td>
+<td>RLock on system</td>
+<td>Atomic status check + transition</td>
+</tr>
+<tr>
+<td><strong>place_order</strong></td>
+<td>RLock on system</td>
+<td>Atomic table check + order creation</td>
+</tr>
+<tr>
+<td><strong>update_order_status</strong></td>
+<td>RLock on system</td>
+<td>Atomic transition validation + state change</td>
+</tr>
+<tr>
+<td><strong>calculate_bill</strong></td>
+<td>RLock on system</td>
+<td>Atomic pricing + bill creation</td>
+</tr>
+<tr>
+<td><strong>process_payment</strong></td>
+<td>RLock on system</td>
+<td>Atomic pay + table release (no double-pay)</td>
+</tr>
+<tr>
+<td><strong>Singleton init</strong></td>
+<td>Class-level Lock</td>
+<td>Double-checked locking, single instance</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. ✅ RLock (re-entrant) used instead of Lock — prevents deadlock if internal methods call each other
+2. ✅ Singleton <code>__new__</code> accepts <code>*args, **kwargs</code> — avoids TypeError when <code>__init__</code> is called with args
+3. ✅ Observers notified outside the lock — keeps critical sections short
+4. ✅ Observer list copied before iteration — safe even if observers modify the list</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<p><strong>Demo 1</strong>: Reservation &amp; check-in — guest reserves T1, checks in, places order (Caesar Salad ×2, Grilled Salmon ×1, Wine ×2), kitchen progresses through PREPARING → READY → SERVED, bill generated at regular pricing, paid by card, table released.</p>
+<p><strong>Demo 2</strong>: Happy Hour Pricing — 20% discount applied to Ribeye Steak ×2 + Chocolate Cake ×2 before tax and service charge are added.</p>
+<p><strong>Demo 3</strong>: Error guard — attempting <code>place_order</code> on a FREE (non-OCCUPIED) table is correctly blocked with a clear error message.</p>
+<p><strong>Demo 4</strong>: Member Pricing — 15% discount for loyalty members, paid by digital wallet.</p>
+<p><strong>Demo 5</strong> (configurable): No-show expiry — call <code>system.expire_no_shows(timeout_minutes=0)</code> to simulate a guest who never checked in; reservation becomes NO_SHOW and table reverts to FREE.</p>
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-questions">Basic Questions</h3>
+<p><strong>Q1: How do you prevent double-booking of a table?</strong></p>
+<p>A: Atomic status transition protected by a re-entrant lock:</p>
+<pre class="codehilite"><code class="language-python">with self._lock:                        # Only one thread enters
+    if table.is_free():                 # Check
+        table.reserve()                 # Modify (atomic together)
+        reservation = Reservation(...)  # Create under lock
+</code></pre>
+
+<p>Any concurrent thread that reaches the check after the first thread reserved the table sees <code>TableStatus.RESERVED</code> and is blocked.</p>
+<p><strong>Q2: What is the difference between a Reservation and an Order?</strong></p>
+<p>A: A Reservation is a time-slot hold on a table (created before arrival, expires on no-show). An Order is the actual food request created after the guest has checked in and the table is OCCUPIED.</p>
+<p><strong>Q3: How does the Order state machine work?</strong></p>
+<p>A: <code>RECEIVED → PREPARING → READY → SERVED → PAID</code> with <code>CANCELLED</code> reachable from RECEIVED or PREPARING. Invalid transitions (e.g., SERVED → PREPARING) raise <code>ValueError</code> via the <code>VALID_TRANSITIONS</code> map.</p>
+<p><strong>Q4: Why use Strategy pattern for pricing?</strong></p>
+<p>A: Different rules (Regular, HappyHour, Member) are swapped at runtime without touching bill calculation logic. Adding a new rule (e.g., GroupDiscount) requires only a new class — no changes to <code>calculate_bill()</code>.</p>
+<p><strong>Q5: How do you handle a no-show reservation?</strong></p>
+<p>A: A background job calls <code>expire_no_shows()</code> every 5 minutes. If <code>datetime.now() &gt; reserved_at + timeout</code>, the reservation is marked NO_SHOW and the table released to FREE.</p>
+<hr />
+<h3 id="intermediate-questions">Intermediate Questions</h3>
+<p><strong>Q6: How do you coordinate the kitchen without coupling it to the Order class?</strong></p>
+<p>A: The Observer pattern. A <code>KitchenObserver</code> subscribes to <code>ORDER_PLACED</code> and <code>ORDER_STATUS_UPDATED</code> events. When <code>place_order()</code> finishes, <code>notify_observers()</code> broadcasts the event — the kitchen receives it without the Order class knowing anything about kitchen logic.</p>
+<p><strong>Q7: Can an order be modified after placement?</strong></p>
+<p>A: Only while in RECEIVED state. Once the kitchen marks it PREPARING, <code>add_item()</code> raises a <code>ValueError</code>. This mirrors real restaurant policy and prevents race conditions between the waiter and kitchen.</p>
+<p><strong>Q8: How is the bill formula structured?</strong></p>
+<p>A: <code>subtotal → strategy.apply(subtotal) = discounted_amount → + tax (10%) → + service (5%) → total</code>. The pricing strategy acts only on the subtotal; tax and service are applied after discount.</p>
+<p><strong>Q9: What metrics would you track?</strong></p>
+<p>A: Table utilisation rate, average order value, reservation conversion rate (PENDING → CHECKED_IN), no-show rate, average kitchen turnaround time (RECEIVED → READY), payment success rate.</p>
+<p><strong>Q10: How do you handle payment failure?</strong></p>
+<p>A: Retry up to 3 times with exponential backoff (mock). On final failure, set bill status to FAILED, notify the customer, and keep the table OCCUPIED so they can retry.</p>
+<hr />
+<h3 id="advanced-questions">Advanced Questions</h3>
+<p><strong>Q11: How would you add the Command pattern for undo support?</strong></p>
+<p>A: Wrap <code>place_order</code> and <code>process_payment</code> in Command objects that store enough state to reverse the action. <code>PlaceOrderCommand.undo()</code> would call <code>update_order_status(CANCELLED)</code>. Store a command history stack in the system.</p>
+<p><strong>Q12: How would you prevent concurrent billing for the same order?</strong></p>
+<p>A: The <code>calculate_bill</code> and <code>process_payment</code> operations are both guarded by the same RLock. Additionally, <code>process_payment</code> checks <code>bill.paid</code> before proceeding and raises <code>BillAlreadyPaidError</code> if already settled — the check-and-set is atomic within the lock.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<h3 id="q1-scale-to-1000-tables-across-100-restaurants">Q1: Scale to 1000+ tables across 100 restaurants?</h3>
+<p><strong>A</strong>: Each restaurant runs its own <code>RestaurantSystem</code> instance (independent operation). A shared analytics database aggregates metrics. Use a message broker (Kafka) for cross-restaurant events (e.g., chef sharing).</p>
+<h3 id="q2-handle-1000-ordershour-peak">Q2: Handle 1000 orders/hour peak?</h3>
+<p><strong>A</strong>: Queue orders if kitchen lag &gt; 500ms. Use async kitchen tickets via Kafka topics with multiple partition workers (one per prep station). Cache menu prices in memory — they rarely change.</p>
+<h3 id="q3-prevent-table-overbooking-across-replicas">Q3: Prevent table overbooking across replicas?</h3>
+<p><strong>A</strong>: Use a distributed lock (Redis <code>SET NX EX</code>) for atomic reservation globally:</p>
+<pre class="codehilite"><code>LOCK key=table:T1 value=USER_A NX EX=10s
+→ check table is FREE in DB
+→ write RESERVED to DB
+→ release lock
+</code></pre>
+
+<h3 id="q4-payment-concurrency-across-distributed-nodes">Q4: Payment concurrency across distributed nodes?</h3>
+<p><strong>A</strong>: Optimistic locking with version numbers on the Bill row. Each payment attempt reads the version, attempts <code>UPDATE ... WHERE version = N AND paid = FALSE</code>, and retries on version mismatch.</p>
+<h3 id="q5-scale-kitchen-operations">Q5: Scale kitchen operations?</h3>
+<p><strong>A</strong>: Kafka topic <code>kitchen-tickets</code> with partitions by prep station type (grill, cold, dessert). Each station consumes its partition in parallel. Kitchen display systems subscribe to their own consumer group.</p>
+<h3 id="q6-ensure-999-uptime">Q6: Ensure 99.9% uptime?</h3>
+<p><strong>A</strong>: Multi-replica deployment behind a load balancer, health checks every 30s, RTO &lt; 30s failover, RPO &lt; 5 min (async replication). Reservations and orders persisted to a durable store (PostgreSQL + WAL).</p>
+<h3 id="q7-test-at-scale">Q7: Test at scale?</h3>
+<p><strong>A</strong>: Load test with 1000 concurrent virtual customers using k6 or Locust. Monitor latency p99, reservation error rate, database connection pool saturation, and Kafka consumer lag.</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw UML class diagram with all relationships and cardinality</li>
+<li>[ ] Walk through full flow: reserve → check-in → order → kitchen → bill → pay → table free</li>
+<li>[ ] Explain double-booking prevention with atomic lock + status transition</li>
+<li>[ ] Explain order state machine and invalid transition guards</li>
+<li>[ ] Discuss bill formula: subtotal → strategy discount → + tax + service</li>
+<li>[ ] Explain how Observer decouples kitchen coordination from order logic</li>
+<li>[ ] Run complete implementation (4 demos) without errors</li>
+<li>[ ] Answer 5+ scaling Q&amp;A questions confidently</li>
+<li>[ ] Mention thread safety: RLock for re-entrancy, Singleton <code>__new__</code> accepting <code>*args/**kwargs</code></li>
+<li>[ ] Discuss trade-offs: in-memory vs DB, pessimistic vs optimistic locking for distributed setup</li>
+</ul>
+<hr />
+<p><strong>Ready for your interview? Take the order and fire the ticket!</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

@@ -1,0 +1,1607 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parking Lot - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="parking-lot-system-complete-design-guide">Parking Lot System — Complete Design Guide</h1>
+<blockquote>
+<p>Multi-level garage managing spot allocation, vehicle entry/exit, charge calculation, payment, and real-time occupancy tracking.</p>
+</blockquote>
+<p><strong>Scale</strong>: 1,000+ spots, 100+ concurrent vehicles, entry/exit &lt;30s, 99.9% uptime
+<strong>Duration</strong>: 75-minute interview guide
+<strong>Focus</strong>: Real-time spot allocation, charge calculation, occupancy tracking, concurrent entry/exit</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>A vehicle enters → the system finds the nearest available spot → issues a ticket → tracks occupancy → on exit calculates the charge (time-based, capped daily) → processes payment → releases the spot. Core concerns: efficient spot finding, accurate charges, and concurrent entry/exit without conflicts.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>Enter → FIND nearest spot → Issue Ticket → OCCUPIED
+                                              ↓ (park)
+Exit → Calculate Charge → PAY → Release Spot → AVAILABLE
+   ↓ no spot
+LOT FULL (reject entry)
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Multi-level?</strong> → "Yes — 1–10 levels, 100–200 spots each"</li>
+<li><strong>Spot types?</strong> → "Standard, disabled, reserved, compact"</li>
+<li><strong>Pricing model?</strong> → "Time-based ($2/hr, $20/day cap); monthly pass option"</li>
+<li><strong>Payment methods?</strong> → "Cash, card, mobile pay, monthly pass"</li>
+<li><strong>Concurrency?</strong> → "100+ concurrent vehicles across gates"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Driver</strong></td>
+<td>Parks a vehicle</td>
+<td>Enter, take ticket, exit, pay</td>
+</tr>
+<tr>
+<td><strong>Attendant</strong></td>
+<td>Handles exceptions</td>
+<td>Manual payment, resolve disputes</td>
+</tr>
+<tr>
+<td><strong>Admin</strong></td>
+<td>Manages the lot</td>
+<td>Configure spots, set pricing, view reports</td>
+</tr>
+<tr>
+<td><strong>System</strong></td>
+<td>Coordinator</td>
+<td>Allocate spots, issue tickets, compute charges, track occupancy</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Entry</strong>
+  - Find an available spot near the entrance
+  - Issue a parking ticket</p>
+<p>✅ <strong>Exit &amp; Payment</strong>
+  - Calculate parking charges
+  - Accept multiple payment methods
+  - Release the spot</p>
+<p>✅ <strong>Occupancy</strong>
+  - Track occupancy in real time
+  - Display availability; signal "lot full"</p>
+<p>✅ <strong>Pricing &amp; Reporting</strong>
+  - Support hourly / daily / monthly pricing
+  - Support disabled / reserved spots
+  - Generate revenue and utilization reports</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Latency</strong>: Entry/exit &lt; 30 seconds
+✅ <strong>Scale</strong>: 1,000+ spots, 100+ concurrent vehicles
+✅ <strong>Consistency</strong>: Accurate charges; no double-allocation
+✅ <strong>Availability</strong>: 99.9% uptime; real-time occupancy display</p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Pricing</strong></td>
+<td>$2/hour, $20/day cap</td>
+</tr>
+<tr>
+<td><strong>Max capacity</strong></td>
+<td>1,000 spots</td>
+</tr>
+<tr>
+<td><strong>Levels</strong></td>
+<td>1–10</td>
+</tr>
+<tr>
+<td><strong>Spots per level</strong></td>
+<td>100–200</td>
+</tr>
+<tr>
+<td><strong>Monthly pass</strong></td>
+<td>$200 (unlimited)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on the whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<pre class="codehilite"><code>ParkingLot, Level, Spot, Vehicle, ParkingTicket, PricingStrategy, PaymentProcessor, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="spot-a-single-parking-space"><strong>Spot</strong> — A single parking space</h4>
+<pre class="codehilite"><code>Properties:
+  - spot_id: str
+  - level: int
+  - spot_type: SpotType (STANDARD, DISABLED, RESERVED, COMPACT)
+  - status: SpotStatus (AVAILABLE, OCCUPIED, MAINTENANCE)
+  - vehicle_license: Optional[str]
+  - occupied_since: Optional[datetime]
+</code></pre>
+
+<h4 id="vehicle-a-car-entering-the-lot"><strong>Vehicle</strong> — A car entering the lot</h4>
+<pre class="codehilite"><code>Properties:
+  - license_plate: str
+  - vehicle_type: VehicleType (SEDAN, SUV, MOTORCYCLE)
+  - entry_time: datetime
+  - entry_gate: str
+</code></pre>
+
+<h4 id="parkingticket-an-entryexit-record"><strong>ParkingTicket</strong> — An entry/exit record</h4>
+<pre class="codehilite"><code>Properties:
+  - ticket_id: str
+  - license_plate: str
+  - spot_id: str
+  - entry_time / exit_time: datetime
+  - charge: float
+  - status: TicketStatus (ISSUED, PAID, VALIDATED)
+  - payment_method: Optional[PaymentMethod]
+</code></pre>
+
+<h4 id="pricingstrategy-pluggable-charge-calculation"><strong>PricingStrategy</strong> — Pluggable charge calculation</h4>
+<pre class="codehilite"><code>Behaviors:
+  - get_charge(entry, exit, vehicle_type): HourlyPricing / DailyPricing / MonthlyPass
+</code></pre>
+
+<h4 id="paymentprocessor-settles-a-ticket"><strong>PaymentProcessor</strong> — Settles a ticket</h4>
+<pre class="codehilite"><code>Behaviors:
+  - process_payment(ticket, method): bool
+</code></pre>
+
+<h4 id="parkinglot-main-controller-singleton"><strong>ParkingLot</strong> — Main controller (Singleton)</h4>
+<pre class="codehilite"><code>Properties:
+  - spots: Dict[str, Spot]
+  - available_spots: List[str]
+  - tickets: Dict[str, ParkingTicket]
+  - pricing_strategy: PricingStrategy
+  - lock: threading lock
+
+Behaviors:
+  - find_available_spot(): Nearest (lowest-level) available spot
+  - park_vehicle(plate, type, gate): Allocate + issue ticket
+  - exit_vehicle(ticket_id, method): Charge + pay + release
+  - get_occupancy() / get_available_count() / display_status()
+</code></pre>
+
+<h3 id="step-23-define-enumerations-state-type">Step 2.3: Define Enumerations (State &amp; Type)</h3>
+<pre class="codehilite"><code class="language-python">class SpotType(Enum):
+    STANDARD = 1
+    DISABLED = 2
+    RESERVED = 3
+    COMPACT = 4
+
+class SpotStatus(Enum):
+    AVAILABLE = 1
+    OCCUPIED = 2
+    MAINTENANCE = 3
+
+class VehicleType(Enum):
+    SEDAN = 1
+    SUV = 2
+    MOTORCYCLE = 3
+
+class TicketStatus(Enum):
+    ISSUED = 1
+    PAID = 2
+    VALIDATED = 3
+
+class PaymentMethod(Enum):
+    CASH = 1
+    CARD = 2
+    MOBILE_PAY = 3
+    PASS = 4
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Spot</strong></td>
+<td>Atomic allocation unit</td>
+<td>Can't track availability</td>
+</tr>
+<tr>
+<td><strong>Vehicle</strong></td>
+<td>Who is parking</td>
+<td>Can't link tickets to cars</td>
+</tr>
+<tr>
+<td><strong>ParkingTicket</strong></td>
+<td>Entry/exit + charge record</td>
+<td>No billing or audit trail</td>
+</tr>
+<tr>
+<td><strong>PricingStrategy</strong></td>
+<td>Flexible charging</td>
+<td>Can't change pricing models</td>
+</tr>
+<tr>
+<td><strong>PaymentProcessor</strong></td>
+<td>Settle charges</td>
+<td>Can't collect revenue</td>
+</tr>
+<tr>
+<td><strong>ParkingLot</strong></td>
+<td>Central coordination</td>
+<td>No thread-safe occupancy tracking</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-park-vehicle-critical"><strong>1. Park Vehicle</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def park_vehicle(license_plate: str, vehicle_type: VehicleType, entry_gate: str) -&gt; Optional[str]:
+    &quot;&quot;&quot;
+    Find a spot, issue a ticket, mark the spot OCCUPIED.
+
+    Precondition: at least one AVAILABLE spot
+    Postcondition: spot OCCUPIED, ticket ISSUED
+
+    Returns: ticket_id, or None if the lot is full.
+
+    Concurrency: THREAD-SAFE (lot lock — atomic find + occupy)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="2-exit-vehicle-critical"><strong>2. Exit Vehicle</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def exit_vehicle(ticket_id: str, payment_method: PaymentMethod = PaymentMethod.CARD) -&gt; float:
+    &quot;&quot;&quot;
+    Calculate charge, process payment, release the spot.
+
+    Precondition: ticket exists
+    Postcondition: ticket PAID, spot AVAILABLE
+
+    Returns: charge amount.
+
+    Concurrency: THREAD-SAFE
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="3-occupancy-status"><strong>3. Occupancy &amp; Status</strong></h4>
+<pre class="codehilite"><code class="language-python">def find_available_spot() -&gt; Optional[Spot]: ...   # nearest (lowest-level) free spot
+def get_occupancy() -&gt; float: ...                  # percent occupied
+def get_available_count() -&gt; int: ...
+def display_status() -&gt; None: ...
+</code></pre>
+
+<h3 id="step-32-failure-model">Step 3.2: Failure Model</h3>
+<p>The reference implementation returns <code>None</code>/<code>0.0</code> for an interview-friendly flow. Production would raise:</p>
+<pre class="codehilite"><code class="language-python">class ParkingException(Exception): ...
+class LotFullError(ParkingException): ...
+class TicketNotFoundError(ParkingException): ...
+class PaymentFailedError(ParkingException): ...
+class AlreadyPaidError(ParkingException): ...
+</code></pre>
+
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">lot = ParkingLot(levels=3, spots_per_level=50)
+
+ticket_id = lot.park_vehicle(&quot;ABC123&quot;, VehicleType.SEDAN, &quot;Gate A&quot;)
+lot.display_status()
+charge = lot.exit_vehicle(ticket_id, PaymentMethod.CARD)
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and association. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>ParkingLot HAS-A spots (1:N Composition)
+  └─ Lot owns all spots across levels
+
+ParkingLot HAS-A tickets (1:N Composition)
+  └─ Lot owns all tickets
+
+ParkingTicket REFERENCES a spot (1:1 Association)
+  └─ Ticket points to the occupied spot
+
+ParkingTicket REFERENCES a vehicle (1:1 Association)
+  └─ Ticket records the license plate
+
+ParkingLot USES-A PricingStrategy (1:1 Composition)
+  └─ Pluggable charge calculation
+
+ParkingLot USES-A PaymentProcessor (1:1 Composition)
+  └─ Settles tickets on exit
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌──────────────────────────────┐
+│   ParkingLot (Singleton)     │
+├──────────────────────────────┤
+│ - spots: Dict[str, Spot]     │
+│ - available_spots: List[str] │
+│ - tickets: Dict[str, Ticket] │
+│ - pricing_strategy           │
+│ - lock: threading.RLock      │
+├──────────────────────────────┤
+│ + park_vehicle(...): str     │
+│ + exit_vehicle(...): float   │
+│ + find_available_spot()      │
+│ + get_occupancy(): float     │
+└──────────┬───────────────────┘
+   owns 1:N │
+   ┌────────┼────────┐
+   ▼        ▼        ▼
+┌───────┐ ┌──────────────┐
+│ Spot  │ │ParkingTicket │
+├───────┤ ├──────────────┤
+│type   │ │entry/exit    │
+│status │ │charge        │
+│level  │ │status        │
+└───────┘ └──────────────┘
+
+SPOT STATE MACHINE:
+AVAILABLE ──park──→ OCCUPIED ──exit──→ AVAILABLE
+                        │
+                     MAINTENANCE (out of service)
+
+PRICING STRATEGY:
+┌─────────────────────┐
+│ PricingStrategy     │
+├─────────────────────┤
+│ get_charge()        │
+└──────────┬──────────┘
+   ┌───────┼─────────┐
+   ▼       ▼         ▼
+HourlyPricing  DailyPricing  MonthlyPass
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ParkingLot → Spots</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Lot owns all spots</td>
+</tr>
+<tr>
+<td>ParkingLot → Tickets</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Lot owns all tickets</td>
+</tr>
+<tr>
+<td>ParkingTicket → Spot</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Ticket references one spot</td>
+</tr>
+<tr>
+<td>ParkingTicket → Vehicle</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Ticket records one vehicle</td>
+</tr>
+<tr>
+<td>ParkingLot → PricingStrategy</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>One active pricing rule</td>
+</tr>
+<tr>
+<td>ParkingLot → PaymentProcessor</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>Settles charges</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-singleton-for-parkinglot">Pattern 1: <strong>Singleton</strong> (For ParkingLot)</h3>
+<p><strong>Problem</strong>: All gates need one consistent view of spots, occupancy, and tickets.</p>
+<p><strong>Solution</strong>: One global ParkingLot instance with thread-safe initialization.</p>
+<pre class="codehilite"><code class="language-python">class ParkingLot:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Single source of truth, ✅ Thread-safe init
+<strong>Trade-off</strong>: ⚠️ Global state; use a <code>ParkingLotManager</code> for multiple lots</p>
+<hr />
+<h3 id="pattern-2-state-for-spot-status">Pattern 2: <strong>State</strong> (For Spot Status)</h3>
+<p><strong>Problem</strong>: A spot moves AVAILABLE → OCCUPIED → AVAILABLE, with MAINTENANCE excluded from allocation.</p>
+<p><strong>Solution</strong>: An explicit <code>SpotStatus</code> enum driving allocation decisions.</p>
+<pre class="codehilite"><code class="language-python">class SpotStatus(Enum):
+    AVAILABLE = 1
+    OCCUPIED = 2
+    MAINTENANCE = 3
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Explicit lifecycle, ✅ Maintenance spots never allocated
+<strong>Trade-off</strong>: ⚠️ Must keep <code>available_spots</code> index in sync with status</p>
+<hr />
+<h3 id="pattern-3-strategy-for-pricing">Pattern 3: <strong>Strategy</strong> (For Pricing)</h3>
+<p><strong>Problem</strong>: Charging varies (hourly, daily, monthly) and may change.</p>
+<p><strong>Solution</strong>: A <code>PricingStrategy</code> interface with pluggable implementations.</p>
+<pre class="codehilite"><code class="language-python">class HourlyPricing(PricingStrategy):
+    def get_charge(self, entry_time, exit_time, vehicle_type=None):
+        minutes = (exit_time - entry_time).total_seconds() / 60
+        hours = -(-int(minutes) // 60)          # ceiling division
+        return min(hours * self.rate, self.max_charge)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Swap pricing without touching exit logic
+<strong>Trade-off</strong>: ⚠️ Extra abstraction layer</p>
+<hr />
+<h3 id="pattern-4-observer-for-lot-full-alerts">Pattern 4: <strong>Observer</strong> (For "Lot Full" Alerts)</h3>
+<p><strong>Problem</strong>: When the lot fills, signage / subscribed members must be notified.</p>
+<p><strong>Solution</strong>: Emit a "lot full" event from the entry path (here a print; in production an observer list).</p>
+<pre class="codehilite"><code class="language-python">if not spot:
+    print(&quot;✗ No available spots. Lot is full.&quot;)   # notify signage / members
+    return None
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Decoupled alerting, easy to add SMS/email
+<strong>Trade-off</strong>: ⚠️ Observer lifecycle management</p>
+<hr />
+<h3 id="pattern-5-factory-for-tickets-payments">Pattern 5: <strong>Factory</strong> (For Tickets &amp; Payments)</h3>
+<p><strong>Problem</strong>: Ticket creation and payment routing should be centralized and consistent.</p>
+<p><strong>Solution</strong>: Centralize ticket creation in <code>park_vehicle</code> and payment in <code>PaymentProcessor</code>.</p>
+<pre class="codehilite"><code class="language-python">ticket = ParkingTicket(f&quot;T{self.ticket_counter:06d}&quot;, license_plate, spot.spot_id,
+                       datetime.now(), status=TicketStatus.ISSUED)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Consistent IDs and initialization
+<strong>Trade-off</strong>: ⚠️ If it grows, promote to a dedicated factory/builder</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>Single global lot state</td>
+<td>Consistent occupancy/tickets</td>
+</tr>
+<tr>
+<td><strong>State</strong></td>
+<td>Spot lifecycle</td>
+<td>Maintenance spots excluded</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Varying pricing</td>
+<td>Pluggable, easy to extend</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Lot-full alerts</td>
+<td>Decoupled notifications</td>
+</tr>
+<tr>
+<td><strong>Factory</strong></td>
+<td>Ticket/payment creation</td>
+<td>Centralized, consistent</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+🅿️ Parking Lot System - Interview Implementation
+Demonstrates:
+1. Real-time spot allocation
+2. Charge calculation
+3. Occupancy tracking
+4. Payment processing
+5. Multi-level management
+&quot;&quot;&quot;
+
+from enum import Enum
+from typing import List, Optional, Dict
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+import threading
+import heapq
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class SpotType(Enum):
+    STANDARD = 1
+    DISABLED = 2
+    RESERVED = 3
+    COMPACT = 4
+
+class SpotStatus(Enum):
+    AVAILABLE = 1
+    OCCUPIED = 2
+    MAINTENANCE = 3
+
+class VehicleType(Enum):
+    SEDAN = 1
+    SUV = 2
+    MOTORCYCLE = 3
+
+class TicketStatus(Enum):
+    ISSUED = 1
+    PAID = 2
+    VALIDATED = 3
+
+class PaymentMethod(Enum):
+    CASH = 1
+    CARD = 2
+    MOBILE_PAY = 3
+    PASS = 4
+
+# ============================================================================
+# DATA CLASSES
+# ============================================================================
+
+@dataclass
+class Spot:
+    spot_id: str
+    level: int
+    spot_type: SpotType
+    status: SpotStatus = SpotStatus.AVAILABLE
+    vehicle_license: Optional[str] = None
+    occupied_since: Optional[datetime] = None
+
+@dataclass
+class Vehicle:
+    license_plate: str
+    vehicle_type: VehicleType
+    entry_time: datetime
+    entry_gate: str
+
+@dataclass
+class ParkingTicket:
+    ticket_id: str
+    license_plate: str
+    spot_id: str
+    entry_time: datetime
+    exit_time: Optional[datetime] = None
+    charge: float = 0.0
+    status: TicketStatus = TicketStatus.ISSUED
+    payment_method: Optional[PaymentMethod] = None
+
+# ============================================================================
+# PRICING STRATEGIES
+# ============================================================================
+
+class PricingStrategy:
+    def get_charge(self, entry_time: datetime, exit_time: datetime, vehicle_type: VehicleType) -&gt; float:
+        pass
+
+class HourlyPricing(PricingStrategy):
+    def __init__(self, rate: float = 2.0, max_charge: float = 20.0):
+        self.rate = rate
+        self.max_charge = max_charge
+
+    def get_charge(self, entry_time: datetime, exit_time: datetime, vehicle_type: VehicleType = None) -&gt; float:
+        duration_minutes = (exit_time - entry_time).total_seconds() / 60
+        hours = -(-int(duration_minutes) // 60)  # Ceiling division
+        charge = min(hours * self.rate, self.max_charge)
+        return charge
+
+class DailyPricing(PricingStrategy):
+    def __init__(self, daily_rate: float = 15.0):
+        self.daily_rate = daily_rate
+
+    def get_charge(self, entry_time: datetime, exit_time: datetime, vehicle_type: VehicleType = None) -&gt; float:
+        duration_days = (exit_time - entry_time).days + 1
+        return duration_days * self.daily_rate
+
+class MonthlyPass(PricingStrategy):
+    def get_charge(self, entry_time: datetime, exit_time: datetime, vehicle_type: VehicleType = None) -&gt; float:
+        return 0.0
+
+# ============================================================================
+# PAYMENT PROCESSOR
+# ============================================================================
+
+class PaymentProcessor:
+    def process_payment(self, ticket: ParkingTicket, method: PaymentMethod) -&gt; bool:
+        print(f&quot;  Processing payment: ${ticket.charge:.2f} via {method.name}&quot;)
+        return True
+
+# ============================================================================
+# PARKING LOT (SINGLETON)
+# ============================================================================
+
+class ParkingLot:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self, levels: int = 3, spots_per_level: int = 100):
+        if hasattr(self, '_initialized'):
+            return
+
+        self._initialized = True
+        self.levels = levels
+        self.spots_per_level = spots_per_level
+        self.spots: Dict[str, Spot] = {}
+        self.available_spots: List[str] = []
+        self.tickets: Dict[str, ParkingTicket] = {}
+        self.ticket_counter = 0
+        self.lock = threading.RLock()   # re-entrant: park/display call other locked methods
+        self.pricing_strategy = HourlyPricing()
+
+        # Initialize spots
+        spot_id = 0
+        for level in range(1, levels + 1):
+            for i in range(spots_per_level):
+                spot_id += 1
+                spot = Spot(
+                    f&quot;S{level}_{i+1}&quot;,
+                    level,
+                    SpotType.STANDARD if i &lt; 90 else SpotType.DISABLED,
+                    SpotStatus.AVAILABLE
+                )
+                self.spots[spot.spot_id] = spot
+                self.available_spots.append(spot.spot_id)
+
+        print(f&quot;🅿️ Parking lot initialized: {levels} levels, {spots_per_level} spots/level&quot;)
+
+    def find_available_spot(self) -&gt; Optional[Spot]:
+        with self.lock:
+            # Sort by level (prefer lower levels)
+            available = sorted(
+                [self.spots[s] for s in self.available_spots],
+                key=lambda x: x.level
+            )
+
+            if available:
+                return available[0]
+            return None
+
+    def park_vehicle(self, license_plate: str, vehicle_type: VehicleType, entry_gate: str) -&gt; Optional[str]:
+        with self.lock:
+            spot = self.find_available_spot()
+
+            if not spot:
+                print(f&quot;✗ No available spots. Lot is full.&quot;)
+                return None
+
+            # Issue ticket
+            self.ticket_counter += 1
+            ticket = ParkingTicket(
+                f&quot;T{self.ticket_counter:06d}&quot;,
+                license_plate,
+                spot.spot_id,
+                datetime.now(),
+                status=TicketStatus.ISSUED,
+                payment_method=None
+            )
+
+            self.tickets[ticket.ticket_id] = ticket
+
+            # Update spot
+            spot.status = SpotStatus.OCCUPIED
+            spot.vehicle_license = license_plate
+            spot.occupied_since = datetime.now()
+            self.available_spots.remove(spot.spot_id)
+
+            print(f&quot;✓ Vehicle {license_plate} parked at {spot.spot_id} (Level {spot.level})&quot;)
+            print(f&quot;  Ticket: {ticket.ticket_id}&quot;)
+
+            return ticket.ticket_id
+
+    def exit_vehicle(self, ticket_id: str, payment_method: PaymentMethod = PaymentMethod.CARD) -&gt; float:
+        with self.lock:
+            if ticket_id not in self.tickets:
+                return 0.0
+
+            ticket = self.tickets[ticket_id]
+            ticket.exit_time = datetime.now()
+
+            # Calculate charge
+            charge = self.pricing_strategy.get_charge(
+                ticket.entry_time,
+                ticket.exit_time
+            )
+            ticket.charge = charge
+
+            # Process payment
+            processor = PaymentProcessor()
+            if processor.process_payment(ticket, payment_method):
+                ticket.status = TicketStatus.PAID
+                ticket.payment_method = payment_method
+
+            # Release spot
+            spot = self.spots[ticket.spot_id]
+            spot.status = SpotStatus.AVAILABLE
+            spot.vehicle_license = None
+            self.available_spots.append(spot.spot_id)
+
+            print(f&quot;✓ Vehicle {ticket.license_plate} exited&quot;)
+            print(f&quot;  Duration: {(ticket.exit_time - ticket.entry_time).total_seconds()/3600:.1f} hours&quot;)
+            print(f&quot;  Charge: ${charge:.2f}&quot;)
+
+            return charge
+
+    def get_occupancy(self) -&gt; float:
+        with self.lock:
+            total = len(self.spots)
+            occupied = total - len(self.available_spots)
+            return (occupied / total) * 100
+
+    def get_available_count(self) -&gt; int:
+        with self.lock:
+            return len(self.available_spots)
+
+    def display_status(self):
+        with self.lock:
+            occupancy = self.get_occupancy()
+            available = self.get_available_count()
+            total = len(self.spots)
+
+            print(f&quot;\n  Parking Lot Status:&quot;)
+            print(f&quot;  Total capacity: {total}&quot;)
+            print(f&quot;  Occupied: {total - available}&quot;)
+            print(f&quot;  Available: {available}&quot;)
+            print(f&quot;  Occupancy: {occupancy:.1f}%&quot;)
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def demo_1_single_vehicle():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 1: SINGLE VEHICLE ENTRY &amp; EXIT&quot;)
+    print(&quot;=&quot;*70)
+
+    lot = ParkingLot(3, 50)
+
+    ticket_id = lot.park_vehicle(&quot;ABC123&quot;, VehicleType.SEDAN, &quot;Gate A&quot;)
+    if ticket_id:
+        charge = lot.exit_vehicle(ticket_id)
+        print(f&quot;  Total charge: ${charge:.2f}&quot;)
+
+def demo_2_occupancy():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 2: OCCUPANCY TRACKING&quot;)
+    print(&quot;=&quot;*70)
+
+    lot = ParkingLot(3, 50)
+
+    # Park 30 vehicles
+    tickets = []
+    for i in range(30):
+        ticket = lot.park_vehicle(f&quot;CAR{i:03d}&quot;, VehicleType.SEDAN, &quot;Gate A&quot;)
+        if ticket:
+            tickets.append(ticket)
+
+    lot.display_status()
+
+def demo_3_charge_calculation():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 3: CHARGE CALCULATION (Different durations)&quot;)
+    print(&quot;=&quot;*70)
+
+    lot = ParkingLot(2, 30)
+
+    # 30 minutes
+    ticket1 = lot.park_vehicle(&quot;SHORT&quot;, VehicleType.SEDAN, &quot;Gate A&quot;)
+    if ticket1:
+        t = lot.tickets[ticket1]
+        t.entry_time = datetime.now() - timedelta(minutes=30)
+        charge = lot.exit_vehicle(ticket1)
+
+    # 3.5 hours
+    ticket2 = lot.park_vehicle(&quot;MEDIUM&quot;, VehicleType.SUV, &quot;Gate A&quot;)
+    if ticket2:
+        t = lot.tickets[ticket2]
+        t.entry_time = datetime.now() - timedelta(hours=3, minutes=30)
+        charge = lot.exit_vehicle(ticket2)
+
+    # 15 hours (capped)
+    ticket3 = lot.park_vehicle(&quot;LONG&quot;, VehicleType.SEDAN, &quot;Gate A&quot;)
+    if ticket3:
+        t = lot.tickets[ticket3]
+        t.entry_time = datetime.now() - timedelta(hours=15)
+        charge = lot.exit_vehicle(ticket3)
+
+def demo_4_lot_full():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 4: LOT FULL SCENARIO&quot;)
+    print(&quot;=&quot;*70)
+
+    lot = ParkingLot(1, 5)  # Small lot for demo
+
+    tickets = []
+    for i in range(5):
+        ticket = lot.park_vehicle(f&quot;CAR{i}&quot;, VehicleType.SEDAN, &quot;Gate A&quot;)
+        if ticket:
+            tickets.append(ticket)
+
+    lot.display_status()
+
+    # Try to park when full
+    rejected = lot.park_vehicle(&quot;OVERFLOW&quot;, VehicleType.SEDAN, &quot;Gate A&quot;)
+
+    # Exit one vehicle
+    if tickets:
+        lot.exit_vehicle(tickets[0])
+
+    lot.display_status()
+
+    # Now can park again
+    ticket = lot.park_vehicle(&quot;OVERFLOW&quot;, VehicleType.SEDAN, &quot;Gate A&quot;)
+
+def demo_5_concurrent():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 5: CONCURRENT ENTRIES (Multi-threading)&quot;)
+    print(&quot;=&quot;*70)
+
+    lot = ParkingLot(2, 100)
+
+    def park_vehicle_concurrent(license_plate):
+        lot.park_vehicle(license_plate, VehicleType.SEDAN, &quot;Gate A&quot;)
+
+    # Simulate 10 concurrent entries
+    threads = []
+    for i in range(10):
+        t = threading.Thread(target=park_vehicle_concurrent, args=(f&quot;CONCURRENT{i}&quot;,))
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join()
+
+    lot.display_status()
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;🅿️ PARKING LOT SYSTEM - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_single_vehicle()
+    demo_2_occupancy()
+    demo_3_charge_calculation()
+    demo_4_lot_full()
+    demo_5_concurrent()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;✅ ALL DEMOS COMPLETED&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>park_vehicle</strong></td>
+<td>Lot RLock</td>
+<td>Atomic find + occupy + ticket issue (no double-allocation)</td>
+</tr>
+<tr>
+<td><strong>exit_vehicle</strong></td>
+<td>Lot RLock</td>
+<td>Atomic charge + pay + release</td>
+</tr>
+<tr>
+<td><strong>find_available_spot</strong></td>
+<td>Lot RLock</td>
+<td>Consistent view of availability</td>
+</tr>
+<tr>
+<td><strong>display_status</strong></td>
+<td>Lot RLock</td>
+<td>Consistent occupancy snapshot</td>
+</tr>
+<tr>
+<td><strong>Singleton init</strong></td>
+<td>Class lock</td>
+<td>Double-checked locking, single instance</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. ✅ A re-entrant lock (<code>RLock</code>) lets <code>park_vehicle</code> call <code>find_available_spot</code> and <code>display_status</code> call <code>get_occupancy</code> without self-deadlock
+2. ✅ Find-then-occupy happens in one critical section so two cars can't claim one spot
+3. ✅ Double-checked locking for the Singleton
+4. ✅ For a fleet, shard locks per level/zone to remove the global bottleneck</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="scenario-1-single-vehicle-entry-exit">Scenario 1: Single Vehicle Entry &amp; Exit</h3>
+<pre class="codehilite"><code>Park ABC123 → spot S1_1 issued ticket → exit → charge computed and paid
+</code></pre>
+
+<h3 id="scenario-2-occupancy-tracking">Scenario 2: Occupancy Tracking</h3>
+<pre class="codehilite"><code>Park 30 vehicles → display: Total / Occupied / Available / Occupancy %
+</code></pre>
+
+<h3 id="scenario-3-charge-calculation">Scenario 3: Charge Calculation</h3>
+<pre class="codehilite"><code>30 min → 1 hr × $2 = $2 ; 3.5 hr → 4 × $2 = $8 ; 15 hr → capped at $20
+</code></pre>
+
+<h3 id="scenario-4-lot-full">Scenario 4: Lot Full</h3>
+<pre class="codehilite"><code>Fill all spots → &quot;Lot is full&quot; rejects entry → one exits → next vehicle parks
+</code></pre>
+
+<h3 id="scenario-5-concurrent-entries">Scenario 5: Concurrent Entries</h3>
+<pre class="codehilite"><code>10 threads park simultaneously → 10 distinct spots allocated, no conflicts
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-questions">Basic Questions</h3>
+<p><strong>Q1: How do you find an available spot?</strong></p>
+<p>A: Query spots with status AVAILABLE, prefer the lowest level (closest to exit), return the first. With an availability index per level it's effectively O(1)/O(k).</p>
+<p><strong>Q2: What's stored in a parking ticket?</strong></p>
+<p>A: Entry/exit time, license plate, spot ID, charge, payment method, and status (ISSUED → PAID → VALIDATED) with a unique ticket ID.</p>
+<p><strong>Q3: How do you calculate the charge?</strong></p>
+<p>A: <code>ceil(duration_minutes / 60) × $2</code>, capped at $20/day; monthly pass = $0. e.g. 1.5h → 2h × $2 = $4.</p>
+<p><strong>Q4: What payment methods are supported?</strong></p>
+<p>A: Cash, card, mobile pay, and monthly pass — all routed through a <code>PaymentProcessor</code>.</p>
+<p><strong>Q5: How do you handle "lot full"?</strong></p>
+<p>A: When no AVAILABLE spot exists, reject entry, display "Lot Full", and optionally notify subscribed members.</p>
+<h3 id="intermediate-questions">Intermediate Questions</h3>
+<p><strong>Q6: How do you track occupancy in real time?</strong></p>
+<p>A: <code>occupied = total − available</code>; occupancy% updated atomically on each entry/exit and displayed on a refresh interval.</p>
+<p><strong>Q7: How do you optimize finding the nearest spot?</strong></p>
+<p>A: Index available spots per level and search lowest-level first; alternatively a priority queue keyed by distance from the entrance.</p>
+<p><strong>Q8: How do you handle reserved/disabled spots?</strong></p>
+<p>A: Tag <code>spot_type</code>; allocation filters to the eligible type so reserved/disabled spots aren't given to regular users.</p>
+<p><strong>Q9: How do you prevent fraudulent exit without paying?</strong></p>
+<p>A: Require ticket or plate scan on exit, verify it matches, and block the gate until payment is confirmed; log an audit trail.</p>
+<h3 id="advanced-questions">Advanced Questions</h3>
+<p><strong>Q10: How would you scale to multiple lots?</strong></p>
+<p>A: A <code>ParkingLotManager</code> singleton manages one <code>ParkingLot</code> per location with independent accounting and a unified dashboard.</p>
+<p><strong>Q11: How would you implement dynamic pricing?</strong></p>
+<p>A: Time-based (peak vs off-peak) and demand-based surge when occupancy &gt; 80%: <code>base × occupancy_multiplier</code>, recomputed periodically.</p>
+<p><strong>Q12: How do you prevent double-billing?</strong></p>
+<p>A: Ticket status guards (ISSUED → PAID → VALIDATED) plus an idempotent <code>payment_id</code> the gateway deduplicates.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<h3 id="q1-can-you-handle-10k-vehiclesday-across-1000-spots">Q1: Can you handle 10K vehicles/day across 1,000 spots?</h3>
+<p>Yes — ~7 vehicles/min; spot lookup is O(1). The bottleneck is payment processing and gate throughput, not spot finding.</p>
+<h3 id="q2-how-to-handle-concurrent-entryexit">Q2: How to handle concurrent entry/exit?</h3>
+<p>Lock per spot (or CAS) so transitions AVAILABLE → OCCUPIED are atomic; different spots proceed in parallel, only the same spot serializes.</p>
+<h3 id="q3-how-to-process-100-concurrent-payments">Q3: How to process 100+ concurrent payments?</h3>
+<p>Async payment gateway; queue slow exits and settle in the background (collect, mark PAID, release) without blocking.</p>
+<h3 id="q4-how-to-scale-to-10-peak-70-vehiclesmin">Q4: How to scale to 10× peak (70 vehicles/min)?</h3>
+<p>Add gates — ~6 vehicles/min/gate means ~12 gates for 70/min; spot query stays O(1).</p>
+<h3 id="q5-how-to-support-monthly-passes">Q5: How to support monthly passes?</h3>
+<p>Link a pass to a license plate; on entry look up the plate, skip payment on exit; pass expires monthly.</p>
+<h3 id="q6-how-to-distribute-across-zones">Q6: How to distribute across zones?</h3>
+<p>Partition spots into zones with independent availability trackers; route entries to the nearest zone with lowest occupancy to balance load.</p>
+<h3 id="q7-how-to-track-revenue-reliably">Q7: How to track revenue reliably?</h3>
+<p>Log every transaction (ticket, amount, time, method, status) and reconcile DB totals vs the gateway daily, alerting on mismatch.</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw the UML class diagram with all relationships</li>
+<li>[ ] Walk through entry → ticket → occupancy → exit → payment → release</li>
+<li>[ ] Explain the spot state machine and availability index</li>
+<li>[ ] Explain the time-based charge with the daily cap</li>
+<li>[ ] Explain how the lock prevents double-allocation under concurrency</li>
+<li>[ ] Run the complete implementation (5 demos) without errors</li>
+<li>[ ] Answer 5+ scaling Q&amp;A questions</li>
+<li>[ ] Discuss multi-lot management and zone partitioning</li>
+<li>[ ] Discuss dynamic pricing and double-billing prevention</li>
+</ul>
+<hr />
+<p><strong>Ready for interview? Find a spot and park! 🅿️</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

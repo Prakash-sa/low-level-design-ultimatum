@@ -5,10 +5,10 @@ A comprehensive repository of object-oriented design concepts, patterns, and sys
 ## 📚 What's Included
 
 ### Introduction to OOP
-- [Abstraction](Introduction/Abstraction.md) — Exposing simple interfaces while hiding complexity
-- [Encapsulation](Introduction/Encapsulation.md) — Controlling access to data and implementation details
-- [Inheritance](Introduction/Inheritance.md) — Modeling IS-A relationships between classes
-- [Polymorphism](Introduction/Polymorphism.md) — Compile-time and runtime polymorphism
+- [Abstraction](Introduction/OOP%20Principles.md#1-abstraction) — Exposing simple interfaces while hiding complexity
+- [Encapsulation](Introduction/OOP%20Principles.md#2-encapsulation) — Controlling access to data and implementation details
+- [Inheritance](Introduction/OOP%20Principles.md#3-inheritance) — Modeling IS-A relationships between classes
+- [Polymorphism](Introduction/OOP%20Principles.md#4-polymorphism) — Compile-time and runtime polymorphism
 - [Class vs Instance Variables](Introduction/Class%20Variable%20vs%20Instance%20Variable.md) — Understanding shared vs. unique attributes
 - [OOP Principles (All-in-One)](Introduction/OOP%20Principles.md) — Comprehensive overview
 

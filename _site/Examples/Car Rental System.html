@@ -1,0 +1,1853 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Car Rental System - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="car-rental-system-complete-design-guide">Car Rental System — Complete Design Guide</h1>
+<blockquote>
+<p>Multi-location vehicle inventory, reservation lifecycle management, dynamic pricing strategies, pickup/return processing, and cancellation penalty enforcement.</p>
+</blockquote>
+<p><strong>Scale</strong>: 1,000+ concurrent users, 10K+ vehicles, 99.9% uptime<br />
+<strong>Duration</strong>: 75-minute interview guide<br />
+<strong>Focus</strong>: Availability management, pricing flexibility, reservation lifecycle, multi-location operations</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>A customer searches vehicles by location and dates → selects a vehicle → makes a reservation (vehicle locked to that booking) → picks up the vehicle → returns it with charges calculated → or cancels (penalty applied based on timing). Core concerns: double-booking prevention, flexible pricing, and clear reservation lifecycle.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>Search Vehicles → Select → RESERVE (lock vehicle) → PICKUP → RETURN (calculate charges)
+                                  ↓ or cancel
+                           CANCELLED (penalty if &lt; 48h)
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Single location or multi-location?</strong> → "Multi-location; each branch has its own inventory"</li>
+<li><strong>Do we support one-way rentals (pickup at A, return at B)?</strong> → "Yes, with a transfer fee"</li>
+<li><strong>Real payment processing?</strong> → "Mock payment service for the interview"</li>
+<li><strong>Can reservations be modified?</strong> → "Yes, until 24 hours before pickup"</li>
+<li><strong>Are there cancellation fees?</strong> → "Yes, 50% penalty if cancelled within 48 hours of pickup"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Customer</strong></td>
+<td>Searches and rents vehicles</td>
+<td>Search, reserve, modify, cancel, pickup, return</td>
+</tr>
+<tr>
+<td><strong>Rental Admin</strong></td>
+<td>Manages fleet and locations</td>
+<td>Add vehicles, create locations, view reports</td>
+</tr>
+<tr>
+<td><strong>System</strong></td>
+<td>Coordinator &amp; enforcer</td>
+<td>Enforce availability, calculate pricing, track status</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Search &amp; Browse</strong>
+  - Search vehicles by location, type, and date range
+  - View real-time availability with pricing quotes</p>
+<p>✅ <strong>Reserve &amp; Modify</strong>
+  - Create a reservation (locks vehicle to customer)
+  - Modify return date if &gt; 24 hours before pickup
+  - Calculate updated pricing on modification</p>
+<p>✅ <strong>Pickup &amp; Return</strong>
+  - Verify reservation status before vehicle handover
+  - Update vehicle status to PICKED_UP on handover
+  - Inspect vehicle and record mileage on return
+  - Calculate final charges and process payment</p>
+<p>✅ <strong>Cancel &amp; Refund</strong>
+  - Cancel reservation before pickup
+  - Apply penalty based on time until pickup
+  - Release vehicle back to available</p>
+<p>✅ <strong>Dynamic Pricing</strong>
+  - Support daily, weekly, and monthly pricing strategies
+  - Calculate total price based on duration and selected strategy</p>
+<p>✅ <strong>Customer &amp; Admin</strong>
+  - Customer profile and rental history
+  - Admin reports: revenue, utilization, popular models</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Concurrency</strong>: Support 10K+ simultaneous searches and reservations<br />
+✅ <strong>Consistency</strong>: No double-booking (atomic vehicle status transitions)<br />
+✅ <strong>Availability</strong>: Real-time inventory updates across locations<br />
+✅ <strong>Latency</strong>: O(1) vehicle availability lookup per location<br />
+✅ <strong>Uptime</strong>: 99.9% for critical reservation operations<br />
+✅ <strong>Throughput</strong>: Handle holiday-peak booking spikes</p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Reservation modification window</strong></td>
+<td>Must be &gt; 24 hours before pickup</td>
+</tr>
+<tr>
+<td><strong>Cancellation penalty (&lt; 48h)</strong></td>
+<td>50% of total price</td>
+</tr>
+<tr>
+<td><strong>Cancellation penalty (48h–7d)</strong></td>
+<td>25% of total price</td>
+</tr>
+<tr>
+<td><strong>Cancellation penalty (&gt; 7d)</strong></td>
+<td>Full refund (minus admin fee)</td>
+</tr>
+<tr>
+<td><strong>Vehicle inspection</strong></td>
+<td>Required before pickup and on return</td>
+</tr>
+<tr>
+<td><strong>Overlapping reservations</strong></td>
+<td>NOT allowed for same vehicle</td>
+</tr>
+<tr>
+<td><strong>Real payment network</strong></td>
+<td>NO — mock billing for demo</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on the whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<pre class="codehilite"><code>Vehicle, Reservation, Customer, Location, PricingStrategy, Payment, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="vehicle-a-rentable-car"><strong>Vehicle</strong> — A rentable car</h4>
+<pre class="codehilite"><code>Properties:
+  - vehicle_id: str
+  - vehicle_type: VehicleType (ECONOMY, SEDAN, SUV, LUXURY)
+  - location: str (location_id it belongs to)
+  - daily_rate: float
+  - status: VehicleStatus (AVAILABLE, RESERVED, PICKED_UP, IN_MAINTENANCE)
+  - current_mileage: int
+  - lock: threading.RLock
+
+Behaviors:
+  - is_available(): Check if status is AVAILABLE
+  - reserve(): Transition AVAILABLE → RESERVED
+  - pickup(): Transition RESERVED → PICKED_UP
+  - return_vehicle(final_mileage): Transition PICKED_UP → AVAILABLE
+</code></pre>
+
+<h4 id="reservation-a-booking-record"><strong>Reservation</strong> — A booking record</h4>
+<pre class="codehilite"><code>Properties:
+  - reservation_id: str
+  - customer_id: str
+  - vehicle_id: str
+  - pickup_date: datetime
+  - return_date: datetime
+  - status: ReservationStatus (PENDING, ACTIVE, COMPLETED, CANCELLED)
+  - pricing_strategy: PricingStrategy
+  - total_price: float
+  - created_at: datetime
+
+Behaviors:
+  - can_modify(): Check if &gt; 24 hours before pickup
+  - calculate_cancellation_penalty(): Return penalty amount
+</code></pre>
+
+<h4 id="customer-a-registered-renter"><strong>Customer</strong> — A registered renter</h4>
+<pre class="codehilite"><code>Properties:
+  - customer_id: str
+  - name: str
+  - email: str
+  - reservations: List[Reservation]
+  - created_at: datetime
+
+Behaviors:
+  - (none — data holder; reservations linked externally)
+</code></pre>
+
+<h4 id="location-a-rental-branch"><strong>Location</strong> — A rental branch</h4>
+<pre class="codehilite"><code>Properties:
+  - location_id: str
+  - name: str
+  - city: str
+  - vehicles: List[Vehicle]
+  - created_at: datetime
+
+Behaviors:
+  - add_vehicle(vehicle): Register vehicle at this location
+  - get_available_vehicles(type): Return filtered available list
+</code></pre>
+
+<h4 id="pricingstrategy-an-interchangeable-pricing-algorithm"><strong>PricingStrategy</strong> — An interchangeable pricing algorithm</h4>
+<pre class="codehilite"><code>Properties:
+  - (abstract; no state)
+
+Behaviors:
+  - calculate_price(days, daily_rate): Return total price
+  - Daily: days × daily_rate
+  - Weekly: full weeks get 1 day free; remaining days at daily rate
+  - Monthly: full months get 5 days free; remaining days at daily rate
+</code></pre>
+
+<h4 id="carrentalsystem-main-controller-singleton"><strong>CarRentalSystem</strong> — Main controller (Singleton)</h4>
+<pre class="codehilite"><code>Properties:
+  - customers: Dict[str, Customer]
+  - locations: Dict[str, Location]
+  - reservations: Dict[str, Reservation]
+  - vehicles: Dict[str, Vehicle]
+  - lock: threading.RLock
+
+Behaviors:
+  - register_customer / create_location / add_vehicle_to_location
+  - search_vehicles(location_id, type, pickup_date, return_date): List[Vehicle]
+  - create_reservation(...): Optional[str]
+  - modify_reservation(reservation_id, new_return_date): bool
+  - pickup_vehicle(reservation_id): bool
+  - return_vehicle(reservation_id, final_mileage): Tuple[bool, float]
+  - cancel_reservation(reservation_id): Tuple[bool, float]
+</code></pre>
+
+<h3 id="step-23-define-enumerations-state-type">Step 2.3: Define Enumerations (State &amp; Type)</h3>
+<pre class="codehilite"><code class="language-python">class VehicleStatus(Enum):
+    AVAILABLE = 1      # Ready to be reserved
+    RESERVED = 2       # Locked by a reservation
+    PICKED_UP = 3      # Currently with customer
+    IN_MAINTENANCE = 4 # Not available for rental
+
+class ReservationStatus(Enum):
+    PENDING = 1    # Confirmed but vehicle not yet picked up
+    ACTIVE = 2     # Vehicle currently with customer
+    COMPLETED = 3  # Vehicle returned, charges settled
+    CANCELLED = 4  # Reservation voided (penalty may apply)
+
+class VehicleType(Enum):
+    ECONOMY = 1
+    SEDAN = 2
+    SUV = 3
+    LUXURY = 4
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Vehicle</strong></td>
+<td>Track availability, location, status</td>
+<td>Can't prevent double-booking</td>
+</tr>
+<tr>
+<td><strong>Reservation</strong></td>
+<td>Bind customer to vehicle + dates</td>
+<td>Can't enforce pickup/return lifecycle</td>
+</tr>
+<tr>
+<td><strong>Customer</strong></td>
+<td>Link reservations and history</td>
+<td>Can't track rental history or notify</td>
+</tr>
+<tr>
+<td><strong>Location</strong></td>
+<td>Group vehicles by branch</td>
+<td>Can't support multi-location search</td>
+</tr>
+<tr>
+<td><strong>PricingStrategy</strong></td>
+<td>Pluggable rate calculation</td>
+<td>Can't offer weekly/monthly discounts</td>
+</tr>
+<tr>
+<td><strong>CarRentalSystem</strong></td>
+<td>Central thread-safe coordinator</td>
+<td>No consistent global state</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-search-vehicles"><strong>1. Search Vehicles</strong></h4>
+<pre class="codehilite"><code class="language-python">def search_vehicles(location_id: str, vehicle_type: Optional[VehicleType],
+                    pickup_date: datetime, return_date: datetime) -&gt; List[Vehicle]:
+    &quot;&quot;&quot;
+    Return available vehicles at a location that match the requested type.
+    Returns: List of Vehicle objects with status == AVAILABLE.
+    Raises: LocationNotFoundError if location_id is unknown.
+    Response Time: &lt;100ms (in-memory lookup)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="2-create-reservation-critical"><strong>2. Create Reservation</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def create_reservation(customer_id: str, vehicle_id: str,
+                       pickup_date: datetime, return_date: datetime,
+                       pricing_strategy: PricingStrategy) -&gt; Optional[str]:
+    &quot;&quot;&quot;
+    Lock a vehicle for a customer over a date range and generate pricing.
+
+    Precondition: vehicle.status == AVAILABLE
+    Postcondition: vehicle.status == RESERVED, Reservation.status == PENDING
+
+    Returns: reservation_id string on success, None on failure.
+
+    Failure causes:
+      - Customer or vehicle not found
+      - Vehicle already reserved or unavailable
+
+    Concurrency: THREAD-SAFE (atomic check + status transition)
+    Response Time: &lt;200ms
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="3-modify-reservation"><strong>3. Modify Reservation</strong></h4>
+<pre class="codehilite"><code class="language-python">def modify_reservation(reservation_id: str, new_return_date: datetime) -&gt; bool:
+    &quot;&quot;&quot;
+    Update the return date of a PENDING reservation.
+
+    Precondition: reservation.can_modify() is True (&gt; 24h before pickup)
+    Postcondition: total_price recalculated at new duration
+
+    Returns: True on success, False if modification window has passed.
+    Side Effects: Logs price difference (charge or refund delta).
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="4-pickup-vehicle-critical"><strong>4. Pickup Vehicle</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def pickup_vehicle(reservation_id: str) -&gt; bool:
+    &quot;&quot;&quot;
+    Hand over vehicle to customer.
+
+    Precondition: reservation.status == PENDING, vehicle.status == RESERVED
+    Postcondition: reservation.status == ACTIVE, vehicle.status == PICKED_UP
+
+    Returns: True on success, False if preconditions fail.
+    Concurrency: THREAD-SAFE
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="5-return-vehicle-critical"><strong>5. Return Vehicle</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def return_vehicle(reservation_id: str, final_mileage: int) -&gt; Tuple[bool, float]:
+    &quot;&quot;&quot;
+    Process vehicle return with final charge calculation.
+
+    Precondition: reservation.status == ACTIVE, vehicle.status == PICKED_UP
+    Postcondition: reservation.status == COMPLETED, vehicle.status == AVAILABLE
+
+    Returns: (True, total_charge) on success, (False, 0) on failure.
+    Side Effects: Records final mileage, releases vehicle to inventory.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="6-cancel-reservation"><strong>6. Cancel Reservation</strong></h4>
+<pre class="codehilite"><code class="language-python">def cancel_reservation(reservation_id: str) -&gt; Tuple[bool, float]:
+    &quot;&quot;&quot;
+    Cancel a PENDING reservation and calculate refund after penalty.
+
+    Precondition: reservation.status == PENDING (cannot cancel ACTIVE)
+    Postcondition: reservation.status == CANCELLED, vehicle.status == AVAILABLE
+
+    Returns: (True, refund_amount) on success, (False, 0) if not cancellable.
+
+    Penalty rules:
+      &lt; 48h  → 50% penalty
+      48h–7d → 25% penalty
+      &gt; 7d   → full refund (minus admin fee)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-32-exception-failure-model">Step 3.2: Exception / Failure Model</h3>
+<p>The demo uses return-value error reporting (<code>None</code> / <code>False</code>). A production version would raise:</p>
+<pre class="codehilite"><code class="language-python">class RentalException(Exception): ...
+class VehicleNotAvailableError(RentalException): ...
+class ReservationNotFoundError(RentalException): ...
+class ModificationWindowClosedError(RentalException): ...
+class ActiveReservationCancelError(RentalException): ...
+class LocationNotFoundError(RentalException): ...
+</code></pre>
+
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">system = CarRentalSystem()
+
+# 1. Setup
+system.register_customer(&quot;C001&quot;, &quot;Alice&quot;, &quot;alice@example.com&quot;)
+system.create_location(&quot;LOC001&quot;, &quot;SF Downtown&quot;, &quot;San Francisco&quot;)
+system.add_vehicle_to_location(&quot;V001&quot;, VehicleType.ECONOMY, &quot;LOC001&quot;, 50.0)
+
+# 2. Search
+pickup = datetime.now() + timedelta(days=1)
+return_date = datetime.now() + timedelta(days=3)
+vehicles = system.search_vehicles(&quot;LOC001&quot;, VehicleType.ECONOMY, pickup, return_date)
+
+# 3. Reserve
+res_id = system.create_reservation(&quot;C001&quot;, &quot;V001&quot;, pickup, return_date, DailyPricingStrategy())
+
+# 4. Pickup
+system.pickup_vehicle(res_id)
+
+# 5. Return
+success, charge = system.return_vehicle(res_id, 15050)
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and association. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>CarRentalSystem HAS-A customers / locations / vehicles / reservations (1:N Composition)
+  └─ System owns and manages lifecycle of all entities
+
+Location HAS-A vehicles (1:N Composition)
+  └─ Each branch owns its vehicle fleet
+
+Reservation REFERENCES customer, vehicle (1:1 Association)
+  └─ Reservation links existing entities (no ownership)
+
+Customer HAS-A reservations (1:N Composition)
+  └─ Customer holds their booking history
+
+CarRentalSystem USES-A PricingStrategy (1:1 per reservation)
+  └─ Strategy is injected at reservation creation time
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌─────────────────────────────────────┐
+│   CarRentalSystem (Singleton)       │
+├─────────────────────────────────────┤
+│ - customers: Dict[str, Customer]    │
+│ - locations: Dict[str, Location]    │
+│ - reservations: Dict[str, Res]      │
+│ - vehicles: Dict[str, Vehicle]      │
+│ - lock: threading.RLock             │
+├─────────────────────────────────────┤
+│ + register_customer(...): Customer  │
+│ + create_location(...): Location    │
+│ + add_vehicle_to_location(...)      │
+│ + search_vehicles(...): List        │
+│ + create_reservation(...): str      │
+│ + modify_reservation(...): bool     │
+│ + pickup_vehicle(...): bool         │
+│ + return_vehicle(...): (bool,float) │
+│ + cancel_reservation(...): (b,f)    │
+└────────────┬────────────────────────┘
+             │ manages 1:N
+    ┌────────┼────────┬───────────┐
+    │        │        │           │
+    ▼        ▼        ▼           ▼
+┌──────────┐ ┌──────────┐ ┌──────────────┐
+│Customers │ │Locations │ │Reservations[]│
+│{id→Cust} │ │{id→Loc}  │ │{id→Res}      │
+└──────────┘ └────┬─────┘ └────┬─────────┘
+                  │            │
+                  ▼            ▼
+            ┌──────────┐  ┌────────────────┐
+            │Vehicles[]│  │  Reservation   │
+            │{id→Veh}  │  ├────────────────┤
+            └──────────┘  │+vehicle_id     │
+                          │+customer_id    │
+                          │+pickup_date    │
+                          │+return_date    │
+                          │+total_price    │
+                          │+status: Enum   │
+                          └────────────────┘
+
+PRICING STRATEGY PATTERN:
+┌──────────────────────────┐
+│  PricingStrategy (ABC)   │
+├──────────────────────────┤
+│ + calculate_price(days,  │
+│     daily_rate): float   │
+└──────────┬───────────────┘
+           │ implemented by
+           ├─→ DailyPricingStrategy   (days × rate)
+           ├─→ WeeklyPricingStrategy  (1 day free/week)
+           └─→ MonthlyPricingStrategy (5 days free/month)
+
+VEHICLE STATE MACHINE:
+AVAILABLE ──reserve()──→ RESERVED ──pickup()──→ PICKED_UP ──return()──→ AVAILABLE
+    ▲                                                                         │
+    └─────────── cancel() releases back to AVAILABLE ────────────────────────┘
+    (IN_MAINTENANCE if flagged by admin)
+
+OBSERVER PATTERN (Notifications):
+┌──────────────────────────┐
+│ ReservationObserver(ABC) │
+├──────────────────────────┤
+│ + update(event, data)    │
+└──────────┬───────────────┘
+           │ implemented by
+           ├─→ EmailNotifier
+           ├─→ SMSNotifier
+           └─→ PushNotifier
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CarRentalSystem → Customers</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System owns all customers</td>
+</tr>
+<tr>
+<td>CarRentalSystem → Locations</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System owns all branches</td>
+</tr>
+<tr>
+<td>CarRentalSystem → Vehicles</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System owns all vehicles</td>
+</tr>
+<tr>
+<td>CarRentalSystem → Reservations</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System owns all bookings</td>
+</tr>
+<tr>
+<td>Location → Vehicles</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Branch owns its fleet</td>
+</tr>
+<tr>
+<td>Customer → Reservations</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Customer holds booking history</td>
+</tr>
+<tr>
+<td>Reservation → Vehicle</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Booking references one vehicle</td>
+</tr>
+<tr>
+<td>Reservation → Customer</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Booking references one customer</td>
+</tr>
+<tr>
+<td>Reservation → PricingStrategy</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Booking uses one pricing rule</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-singleton-for-carrentalsystem">Pattern 1: <strong>Singleton</strong> (For CarRentalSystem)</h3>
+<p><strong>Problem</strong>: All branches and reservation requests need a single consistent view of inventory and bookings.</p>
+<p><strong>Solution</strong>: One global <code>CarRentalSystem</code> instance with double-checked locking.</p>
+<pre class="codehilite"><code class="language-python">class CarRentalSystem:
+    _instance = None
+    _lock = threading.RLock()
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Single source of truth, ✅ Thread-safe init (double-checked lock), ✅ Global access<br />
+<strong>Trade-off</strong>: ⚠️ Global state (harder to unit-test), ⚠️ Bottleneck at scale across data centers</p>
+<hr />
+<h3 id="pattern-2-strategy-for-pricing">Pattern 2: <strong>Strategy</strong> (For Pricing)</h3>
+<p><strong>Problem</strong>: Different customers want daily, weekly, or monthly rates. Pricing rules will evolve.</p>
+<p><strong>Solution</strong>: Inject a <code>PricingStrategy</code> at reservation creation time; swap without touching booking logic.</p>
+<pre class="codehilite"><code class="language-python">class PricingStrategy(ABC):
+    @abstractmethod
+    def calculate_price(self, days: int, daily_rate: float) -&gt; float:
+        pass
+
+class WeeklyPricingStrategy(PricingStrategy):
+    def calculate_price(self, days: int, daily_rate: float) -&gt; float:
+        weeks = days // 7
+        remaining_days = days % 7
+        weekly_rate = daily_rate * 6  # 1 day free per week
+        return weeks * weekly_rate + remaining_days * daily_rate
+
+# Usage: swap algorithm at reservation time
+res_id = system.create_reservation(&quot;C001&quot;, &quot;V001&quot;, pickup, return_date,
+                                   WeeklyPricingStrategy())
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Easy to add new pricing models (EarlyBird, Corporate, etc.), ✅ No core code change<br />
+<strong>Trade-off</strong>: ⚠️ Extra abstraction layer; caller must choose strategy</p>
+<hr />
+<h3 id="pattern-3-observer-for-notifications">Pattern 3: <strong>Observer</strong> (For Notifications)</h3>
+<p><strong>Problem</strong>: Reservation events (confirmed, modified, cancelled) must notify customers by email/SMS without coupling.</p>
+<p><strong>Solution</strong>: Observer pattern decouples event production from notification delivery.</p>
+<pre class="codehilite"><code class="language-python">class ReservationObserver(ABC):
+    @abstractmethod
+    def update(self, event: str, data: dict): pass
+
+class EmailNotifier(ReservationObserver):
+    def update(self, event: str, data: dict):
+        if event == &quot;reserved&quot;:
+            print(f&quot;Email: Reservation {data['res_id']} confirmed!&quot;)
+
+# Usage: register once, fire on every event
+system.add_observer(EmailNotifier())
+system.add_observer(SMSNotifier())
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Loose coupling, ✅ New channels (Slack, push) added with no core change<br />
+<strong>Trade-off</strong>: ⚠️ Observer lifecycle management; notification failures can propagate</p>
+<hr />
+<h3 id="pattern-4-state-enums-for-vehicle-reservation-lifecycles">Pattern 4: <strong>State Enums</strong> (For Vehicle &amp; Reservation Lifecycles)</h3>
+<p><strong>Problem</strong>: Vehicles and reservations move through defined states. Invalid transitions (e.g., returning a vehicle never picked up) must be blocked.</p>
+<p><strong>Solution</strong>: Explicit enum states with guarded transition methods.</p>
+<pre class="codehilite"><code class="language-python">def pickup(self) -&gt; bool:
+    with self.lock:
+        if self.status == VehicleStatus.RESERVED:   # Guard
+            self.status = VehicleStatus.PICKED_UP
+            return True
+        return False
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Explicit state, ✅ Invalid transitions caught at runtime<br />
+<strong>Trade-off</strong>: ⚠️ State logic spread across entity methods; use a State class if transitions grow</p>
+<hr />
+<h3 id="pattern-5-factory-for-reservation-creation">Pattern 5: <strong>Factory</strong> (For Reservation Creation)</h3>
+<p><strong>Problem</strong>: Creating a reservation requires validating entities, locking the vehicle, and initializing pricing — complex multi-step logic.</p>
+<p><strong>Solution</strong>: <code>create_reservation()</code> acts as a factory method centralizing all creation steps.</p>
+<pre class="codehilite"><code class="language-python">def create_reservation(self, customer_id, vehicle_id, pickup_date,
+                       return_date, pricing_strategy):
+    # Factory: validate, lock, price, store atomically
+    vehicle.reserve()
+    reservation = Reservation(res_id, customer_id, vehicle_id,
+                               pickup_date, return_date, pricing_strategy)
+    self.reservations[res_id] = reservation
+    customer.reservations.append(reservation)
+    return res_id
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Centralized creation, ✅ Consistent initialization with pricing<br />
+<strong>Trade-off</strong>: ⚠️ System class grows; consider a dedicated ReservationFactory if it becomes large</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>Need single global CarRentalSystem</td>
+<td>Consistent state across all branches</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Varying pricing (daily/weekly/monthly)</td>
+<td>Pluggable, easy to extend</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Reservation events trigger notifications</td>
+<td>Loose coupling, event-driven</td>
+</tr>
+<tr>
+<td><strong>State (Enum)</strong></td>
+<td>Vehicle and reservation lifecycle</td>
+<td>Invalid transitions prevented</td>
+</tr>
+<tr>
+<td><strong>Factory</strong></td>
+<td>Complex multi-step reservation creation</td>
+<td>Centralized, consistent</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+Car Rental System - Interview Implementation
+Demonstrates:
+1. Search &amp; reserve vehicles
+2. Modify reservations
+3. Pickup with inspection
+4. Return with billing
+5. Cancellation with penalties
+&quot;&quot;&quot;
+
+from enum import Enum
+from abc import ABC, abstractmethod
+from typing import Optional, List, Tuple
+from datetime import datetime, timedelta
+import threading
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class VehicleStatus(Enum):
+    AVAILABLE = 1
+    RESERVED = 2
+    PICKED_UP = 3
+    IN_MAINTENANCE = 4
+
+class ReservationStatus(Enum):
+    PENDING = 1
+    ACTIVE = 2
+    COMPLETED = 3
+    CANCELLED = 4
+
+class VehicleType(Enum):
+    ECONOMY = 1
+    SEDAN = 2
+    SUV = 3
+    LUXURY = 4
+
+# ============================================================================
+# PRICING STRATEGY
+# ============================================================================
+
+class PricingStrategy(ABC):
+    @abstractmethod
+    def calculate_price(self, days: int, daily_rate: float) -&gt; float:
+        pass
+
+class DailyPricingStrategy(PricingStrategy):
+    def calculate_price(self, days: int, daily_rate: float) -&gt; float:
+        return days * daily_rate
+
+class WeeklyPricingStrategy(PricingStrategy):
+    def calculate_price(self, days: int, daily_rate: float) -&gt; float:
+        weeks = days // 7
+        remaining_days = days % 7
+        weekly_rate = daily_rate * 6  # 1 day free per week
+        return weeks * weekly_rate + remaining_days * daily_rate
+
+class MonthlyPricingStrategy(PricingStrategy):
+    def calculate_price(self, days: int, daily_rate: float) -&gt; float:
+        months = days // 30
+        remaining_days = days % 30
+        monthly_rate = daily_rate * 25  # 5 days free per month
+        return months * monthly_rate + remaining_days * daily_rate
+
+# ============================================================================
+# CORE ENTITIES
+# ============================================================================
+
+class Vehicle:
+    def __init__(self, vehicle_id: str, vehicle_type: VehicleType,
+                 location: str, daily_rate: float):
+        self.vehicle_id = vehicle_id
+        self.vehicle_type = vehicle_type
+        self.location = location
+        self.daily_rate = daily_rate
+        self.status = VehicleStatus.AVAILABLE
+        self.current_mileage = 0
+        self.created_at = datetime.now()
+        self.lock = threading.RLock()  # RLock to allow nested calls
+
+    def is_available(self) -&gt; bool:
+        with self.lock:
+            return self.status == VehicleStatus.AVAILABLE
+
+    def reserve(self) -&gt; bool:
+        with self.lock:
+            if self.status == VehicleStatus.AVAILABLE:
+                self.status = VehicleStatus.RESERVED
+                return True
+            return False
+
+    def pickup(self) -&gt; bool:
+        with self.lock:
+            if self.status == VehicleStatus.RESERVED:
+                self.status = VehicleStatus.PICKED_UP
+                return True
+            return False
+
+    def return_vehicle(self, final_mileage: int) -&gt; bool:
+        with self.lock:
+            if self.status == VehicleStatus.PICKED_UP:
+                self.current_mileage = final_mileage
+                self.status = VehicleStatus.AVAILABLE
+                return True
+            return False
+
+class Reservation:
+    def __init__(self, reservation_id: str, customer_id: str, vehicle_id: str,
+                 pickup_date: datetime, return_date: datetime,
+                 pricing_strategy: PricingStrategy):
+        self.reservation_id = reservation_id
+        self.customer_id = customer_id
+        self.vehicle_id = vehicle_id
+        self.pickup_date = pickup_date
+        self.return_date = return_date
+        self.status = ReservationStatus.PENDING
+        self.pricing_strategy = pricing_strategy
+        self.total_price = self._calculate_price()
+        self.created_at = datetime.now()
+
+    def _calculate_price(self) -&gt; float:
+        days = max(1, (self.return_date - self.pickup_date).days)
+        daily_rate = 50.0  # $50/day default
+        return self.pricing_strategy.calculate_price(days, daily_rate)
+
+    def can_modify(self) -&gt; bool:
+        hours_until_pickup = (self.pickup_date - datetime.now()).total_seconds() / 3600
+        return hours_until_pickup &gt; 24
+
+    def calculate_cancellation_penalty(self) -&gt; float:
+        hours_until_pickup = (self.pickup_date - datetime.now()).total_seconds() / 3600
+        if hours_until_pickup &lt; 48:
+            return self.total_price * 0.5
+        elif hours_until_pickup &lt; 168:  # 7 days
+            return self.total_price * 0.25
+        else:
+            return 0  # Full refund minus admin fee
+
+class Customer:
+    def __init__(self, customer_id: str, name: str, email: str):
+        self.customer_id = customer_id
+        self.name = name
+        self.email = email
+        self.reservations = []
+        self.created_at = datetime.now()
+
+class Location:
+    def __init__(self, location_id: str, name: str, city: str):
+        self.location_id = location_id
+        self.name = name
+        self.city = city
+        self.vehicles = []
+        self.created_at = datetime.now()
+
+    def add_vehicle(self, vehicle: Vehicle):
+        self.vehicles.append(vehicle)
+
+    def get_available_vehicles(self, vehicle_type: Optional[VehicleType] = None) -&gt; List[Vehicle]:
+        available = [v for v in self.vehicles if v.is_available()]
+        if vehicle_type:
+            available = [v for v in available if v.vehicle_type == vehicle_type]
+        return available
+
+# ============================================================================
+# CAR RENTAL SYSTEM (SINGLETON)
+# ============================================================================
+
+class CarRentalSystem:
+    _instance = None
+    _lock = threading.RLock()  # RLock for thread-safe singleton init
+
+    def __new__(cls, *args, **kwargs):
+        # Accept *args/**kwargs so Python does not reject them during __init__
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+        self._initialized = True
+        self.customers = {}
+        self.locations = {}
+        self.reservations = {}
+        self.vehicles = {}
+        self.lock = threading.RLock()  # RLock prevents deadlock on nested calls
+
+    def register_customer(self, customer_id: str, name: str, email: str) -&gt; Customer:
+        with self.lock:
+            customer = Customer(customer_id, name, email)
+            self.customers[customer_id] = customer
+            return customer
+
+    def create_location(self, location_id: str, name: str, city: str) -&gt; Location:
+        with self.lock:
+            location = Location(location_id, name, city)
+            self.locations[location_id] = location
+            return location
+
+    def add_vehicle_to_location(self, vehicle_id: str, vehicle_type: VehicleType,
+                                location_id: str, daily_rate: float) -&gt; Vehicle:
+        with self.lock:
+            vehicle = Vehicle(vehicle_id, vehicle_type, location_id, daily_rate)
+            self.vehicles[vehicle_id] = vehicle
+            if location_id in self.locations:
+                self.locations[location_id].add_vehicle(vehicle)
+            return vehicle
+
+    def search_vehicles(self, location_id: str, vehicle_type: Optional[VehicleType],
+                        pickup_date: datetime, return_date: datetime) -&gt; List[Vehicle]:
+        with self.lock:
+            if location_id not in self.locations:
+                return []
+            location = self.locations[location_id]
+            return location.get_available_vehicles(vehicle_type)
+
+    def create_reservation(self, customer_id: str, vehicle_id: str,
+                           pickup_date: datetime, return_date: datetime,
+                           pricing_strategy: PricingStrategy) -&gt; Optional[str]:
+        with self.lock:
+            if customer_id not in self.customers or vehicle_id not in self.vehicles:
+                return None
+
+            vehicle = self.vehicles[vehicle_id]
+            if not vehicle.reserve():
+                return None
+
+            reservation_id = f&quot;RES_{datetime.now().timestamp()}&quot;
+            reservation = Reservation(reservation_id, customer_id, vehicle_id,
+                                      pickup_date, return_date, pricing_strategy)
+            self.reservations[reservation_id] = reservation
+
+            customer = self.customers[customer_id]
+            customer.reservations.append(reservation)
+
+            print(f&quot;Reservation created: {reservation_id}, Price: ${reservation.total_price:.2f}&quot;)
+            return reservation_id
+
+    def modify_reservation(self, reservation_id: str, new_return_date: datetime) -&gt; bool:
+        with self.lock:
+            if reservation_id not in self.reservations:
+                return False
+
+            reservation = self.reservations[reservation_id]
+            if not reservation.can_modify():
+                print(&quot;Cannot modify within 24 hours of pickup&quot;)
+                return False
+
+            old_price = reservation.total_price
+            reservation.return_date = new_return_date
+            reservation.total_price = reservation._calculate_price()
+
+            price_diff = reservation.total_price - old_price
+            print(f&quot;Reservation modified. Price change: ${price_diff:.2f}&quot;)
+            return True
+
+    def pickup_vehicle(self, reservation_id: str) -&gt; bool:
+        with self.lock:
+            if reservation_id not in self.reservations:
+                return False
+
+            reservation = self.reservations[reservation_id]
+            vehicle = self.vehicles[reservation.vehicle_id]
+
+            if vehicle.pickup():
+                reservation.status = ReservationStatus.ACTIVE
+                print(f&quot;Vehicle picked up. Reservation: {reservation_id}&quot;)
+                return True
+            return False
+
+    def return_vehicle(self, reservation_id: str, final_mileage: int) -&gt; Tuple[bool, float]:
+        with self.lock:
+            if reservation_id not in self.reservations:
+                return False, 0
+
+            reservation = self.reservations[reservation_id]
+            vehicle = self.vehicles[reservation.vehicle_id]
+
+            if vehicle.return_vehicle(final_mileage):
+                reservation.status = ReservationStatus.COMPLETED
+                print(f&quot;Vehicle returned. Total charge: ${reservation.total_price:.2f}&quot;)
+                return True, reservation.total_price
+            return False, 0
+
+    def cancel_reservation(self, reservation_id: str) -&gt; Tuple[bool, float]:
+        with self.lock:
+            if reservation_id not in self.reservations:
+                return False, 0
+
+            reservation = self.reservations[reservation_id]
+            if reservation.status == ReservationStatus.ACTIVE:
+                print(&quot;Cannot cancel active reservation&quot;)
+                return False, 0
+
+            vehicle = self.vehicles[reservation.vehicle_id]
+            vehicle.status = VehicleStatus.AVAILABLE
+
+            penalty = reservation.calculate_cancellation_penalty()
+            refund = reservation.total_price - penalty
+
+            reservation.status = ReservationStatus.CANCELLED
+            print(f&quot;Reservation cancelled. Penalty: ${penalty:.2f}, Refund: ${refund:.2f}&quot;)
+            return True, refund
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def demo_1_search_and_reserve():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 1: SEARCH &amp; RESERVE&quot;)
+    print(&quot;=&quot;*70)
+
+    system = CarRentalSystem()
+
+    customer = system.register_customer(&quot;C001&quot;, &quot;Alice&quot;, &quot;alice@example.com&quot;)
+    print(f&quot;Customer registered: {customer.name}&quot;)
+
+    loc = system.create_location(&quot;LOC001&quot;, &quot;SF Downtown&quot;, &quot;San Francisco&quot;)
+    print(f&quot;Location created: {loc.name}&quot;)
+
+    for i in range(3):
+        system.add_vehicle_to_location(f&quot;V{i}&quot;, VehicleType.ECONOMY, &quot;LOC001&quot;, 50.0)
+    print(&quot;3 vehicles added&quot;)
+
+    pickup = datetime.now() + timedelta(days=1)
+    return_date = datetime.now() + timedelta(days=3)
+
+    vehicles = system.search_vehicles(&quot;LOC001&quot;, VehicleType.ECONOMY, pickup, return_date)
+    print(f&quot;Found {len(vehicles)} available vehicles&quot;)
+
+    res_id = system.create_reservation(&quot;C001&quot;, &quot;V0&quot;, pickup, return_date, DailyPricingStrategy())
+    print(f&quot;Reservation: {res_id}&quot;)
+
+def demo_2_modify_reservation():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 2: MODIFY RESERVATION&quot;)
+    print(&quot;=&quot;*70)
+
+    system = CarRentalSystem()
+
+    system.register_customer(&quot;C002&quot;, &quot;Bob&quot;, &quot;bob@example.com&quot;)
+    system.create_location(&quot;LOC002&quot;, &quot;NYC&quot;, &quot;New York&quot;)
+    system.add_vehicle_to_location(&quot;V10&quot;, VehicleType.SEDAN, &quot;LOC002&quot;, 75.0)
+
+    pickup = datetime.now() + timedelta(days=2)
+    return_date = datetime.now() + timedelta(days=4)
+
+    res_id = system.create_reservation(&quot;C002&quot;, &quot;V10&quot;, pickup, return_date, DailyPricingStrategy())
+
+    new_return = datetime.now() + timedelta(days=5)
+    system.modify_reservation(res_id, new_return)
+
+def demo_3_pickup_vehicle():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 3: PICKUP VEHICLE&quot;)
+    print(&quot;=&quot;*70)
+
+    system = CarRentalSystem()
+
+    system.register_customer(&quot;C003&quot;, &quot;Charlie&quot;, &quot;charlie@example.com&quot;)
+    system.create_location(&quot;LOC003&quot;, &quot;LA&quot;, &quot;Los Angeles&quot;)
+    system.add_vehicle_to_location(&quot;V20&quot;, VehicleType.SUV, &quot;LOC003&quot;, 100.0)
+
+    pickup = datetime.now() + timedelta(days=1)
+    return_date = datetime.now() + timedelta(days=8)  # 8 days → 1 week + 1 day
+
+    res_id = system.create_reservation(&quot;C003&quot;, &quot;V20&quot;, pickup, return_date, WeeklyPricingStrategy())
+    system.pickup_vehicle(res_id)
+
+def demo_4_return_vehicle():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 4: RETURN VEHICLE&quot;)
+    print(&quot;=&quot;*70)
+
+    system = CarRentalSystem()
+
+    system.register_customer(&quot;C004&quot;, &quot;Diana&quot;, &quot;diana@example.com&quot;)
+    system.create_location(&quot;LOC004&quot;, &quot;Seattle&quot;, &quot;Seattle&quot;)
+    system.add_vehicle_to_location(&quot;V30&quot;, VehicleType.LUXURY, &quot;LOC004&quot;, 150.0)
+
+    pickup = datetime.now() + timedelta(days=1)
+    return_date = datetime.now() + timedelta(days=31)  # 31 days → 1 month + 1 day
+
+    res_id = system.create_reservation(&quot;C004&quot;, &quot;V30&quot;, pickup, return_date, MonthlyPricingStrategy())
+    system.pickup_vehicle(res_id)
+    system.return_vehicle(res_id, 25000)
+
+def demo_5_cancel_reservation():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 5: CANCEL RESERVATION (&gt; 7 days out — full refund)&quot;)
+    print(&quot;=&quot;*70)
+
+    system = CarRentalSystem()
+
+    system.register_customer(&quot;C005&quot;, &quot;Eve&quot;, &quot;eve@example.com&quot;)
+    system.create_location(&quot;LOC005&quot;, &quot;Boston&quot;, &quot;Boston&quot;)
+    system.add_vehicle_to_location(&quot;V40&quot;, VehicleType.ECONOMY, &quot;LOC005&quot;, 50.0)
+
+    pickup = datetime.now() + timedelta(days=10)
+    return_date = datetime.now() + timedelta(days=12)
+
+    res_id = system.create_reservation(&quot;C005&quot;, &quot;V40&quot;, pickup, return_date, DailyPricingStrategy())
+    system.cancel_reservation(res_id)
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;CAR RENTAL SYSTEM - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_search_and_reserve()
+    demo_2_modify_reservation()
+    demo_3_pickup_vehicle()
+    demo_4_return_vehicle()
+    demo_5_cancel_reservation()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;ALL DEMOS COMPLETED&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>create_reservation</strong></td>
+<td>System RLock</td>
+<td>Atomic vehicle check + reserve + reservation create</td>
+</tr>
+<tr>
+<td><strong>pickup_vehicle</strong></td>
+<td>System RLock</td>
+<td>Atomic status check + vehicle.pickup() transition</td>
+</tr>
+<tr>
+<td><strong>return_vehicle</strong></td>
+<td>System RLock</td>
+<td>Atomic vehicle.return + reservation completion</td>
+</tr>
+<tr>
+<td><strong>cancel_reservation</strong></td>
+<td>System RLock</td>
+<td>No double-cancel; vehicle released atomically</td>
+</tr>
+<tr>
+<td><strong>Vehicle status</strong></td>
+<td>Vehicle RLock</td>
+<td>Per-vehicle transitions safe under concurrent holds</td>
+</tr>
+<tr>
+<td><strong>Singleton init</strong></td>
+<td>Class RLock</td>
+<td>Double-checked locking, single instance</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. ✅ System and Vehicle both use <code>threading.RLock</code> — re-entrant, prevents deadlock on nested calls
+2. ✅ Notifications fire after critical state changes to keep lock duration short
+3. ✅ Double-checked locking for Singleton with <code>*args, **kwargs</code> in <code>__new__</code>
+4. ✅ <code>can_modify()</code> and <code>calculate_cancellation_penalty()</code> are pure checks — no lock needed inside</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="demo-1-search-reserve">Demo 1: Search &amp; Reserve</h3>
+<pre class="codehilite"><code>- Search for economy cars at SF location, date range 1–3 days out
+- System shows 3 available vehicles with pricing
+- Select vehicle V0, confirm reservation
+- Reservation confirmed: Price $100.00 (2 days × $50)
+</code></pre>
+
+<h3 id="demo-2-modify-reservation">Demo 2: Modify Reservation</h3>
+<pre class="codehilite"><code>- Customer Bob has a 2-day sedan reservation ($150 at $75/day)
+- Modifies return date to add one extra day
+- System recalculates: 3 days × $75 = $225
+- Price change: +$75.00 displayed
+</code></pre>
+
+<h3 id="demo-3-pickup-vehicle">Demo 3: Pickup Vehicle</h3>
+<pre class="codehilite"><code>- Customer Charlie reserves SUV for 8 days at weekly rate
+- Weekly pricing: 1 week (6 days × $100) + 1 day × $100 = $700
+- Pickup confirmed: vehicle transitions RESERVED → PICKED_UP
+</code></pre>
+
+<h3 id="demo-4-return-vehicle">Demo 4: Return Vehicle</h3>
+<pre class="codehilite"><code>- Customer Diana returns luxury vehicle after 31-day monthly rental
+- Monthly pricing: 1 month (25 days × $150) + 1 day × $150 = $3,900
+- Final mileage recorded: 25,000
+- Vehicle released: PICKED_UP → AVAILABLE
+</code></pre>
+
+<h3 id="demo-5-cancel-reservation">Demo 5: Cancel Reservation</h3>
+<pre class="codehilite"><code>- Customer Eve cancels 10 days before pickup (&gt; 7 days → full refund)
+- 2-day economy at $50/day = $100 total
+- Penalty: $0.00, Refund: $100.00
+- Vehicle released back to available
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-level">Basic Level</h3>
+<p><strong>Q1: What does CarRentalSystem singleton manage?</strong>
+A: Single global instance coordinating all rental operations: customers, vehicles, locations, reservations, pricing, payments. Prevents conflicts, ensures coherent state across all branches.</p>
+<p><strong>Q2: How do you handle vehicle availability at multiple locations?</strong>
+A: Each location tracks its vehicle inventory. Search queries filter by location. Reservation locks specific vehicle at location. Transfer between locations requires explicit operation (move vehicle, update location).</p>
+<p><strong>Q3: What is a Reservation and what states does it have?</strong>
+A: Reservation represents booking from specific customer. States: PENDING (confirmed but not picked up), ACTIVE (picked up), COMPLETED (returned), CANCELLED. Transitions enforce business rules (can't cancel after pickup).</p>
+<p><strong>Q4: Why use multiple pricing strategies?</strong>
+A: Different customers prefer different rates: daily renters want per-day rate, weekly travelers want discount, monthly users want bulk rate. Strategy pattern allows pluggable pricing without modifying core code.</p>
+<h3 id="intermediate-level">Intermediate Level</h3>
+<p><strong>Q5: How do you prevent double-booking same vehicle?</strong>
+A: For each vehicle, the <code>reserve()</code> method checks status == AVAILABLE atomically (under lock) and transitions to RESERVED in the same critical section. Before confirming reservation, this check prevents any race condition.</p>
+<p><strong>Q6: How are cancellation penalties calculated?</strong>
+A: Penalty depends on how close to rental start: &lt; 48h → 50% penalty, 48h–7d → 25% penalty, &gt;7d → full refund (minus admin fee). Calculated at cancellation time.</p>
+<p><strong>Q7: What happens if reserved vehicle needs maintenance?</strong>
+A: Check vehicle status before pickup. If maintenance needed, mark as IN_MAINTENANCE. Notify customer, offer alternative vehicle or cancellation with full refund. Prevent pickup if status ≠ RESERVED.</p>
+<p><strong>Q8: How do you handle payment failures?</strong>
+A: At return, calculate total charge. Process payment. If failed: retry with different method, or place on hold. Can't release car until payment success or customer agrees to billing terms.</p>
+<h3 id="advanced-level">Advanced Level</h3>
+<p><strong>Q9: How to scale across 1000 locations and 100K vehicles?</strong>
+A: Geo-partitioned database (each region separate). Per-location caches for popular queries. Distributed search index (Elasticsearch). Eventual consistency for inter-location transfers. Sync vehicles hourly vs real-time.</p>
+<p><strong>Q10: How to handle reservation transfer between locations?</strong>
+A: Pickup at Location A, return at Location B. Charge transfer fee. Update location on return. Track vehicle movement. Risk: vehicle in transit state. Solution: location field includes "in_transit" state.</p>
+<p><strong>Q11: How to optimize pricing for maximum revenue?</strong>
+A: Analyze demand (bookings vs available). Dynamic pricing: increase rate if demand high, decrease if inventory excess. A/B test pricing strategies. Predict demand for future dates. Trade-off: optimization complexity vs revenue gain.</p>
+<p><strong>Q12: How to ensure data consistency across distributed locations?</strong>
+A: Pessimistic: lock vehicle during reservation (slow but safe). Optimistic: allow concurrent bookings, detect conflicts, retry. Distributed consensus (Raft) for critical operations. Read replicas with eventual consistency for queries.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<p><strong>Q1: How does search scale to 1M queries/day across 100K vehicles?</strong>
+A: In-memory index (location × vehicle_type → available_vehicles). Query hits cache. Update index as vehicles book/return. Use Elasticsearch for complex filters (price, features). Cache popular queries (top 100 locations).</p>
+<p><strong>Q2: What if two customers try to book same vehicle simultaneously?</strong>
+A: Race condition. Solution: pessimistic locking (lock vehicle, check status, reserve atomically). Or optimistic (allow both, detect conflict during commit, roll one back + notify). Pessimistic simpler but slower.</p>
+<p><strong>Q3: How to handle peak booking times (holiday weekends)?</strong>
+A: Spike in queries + reservations. Scale horizontally: increase reservation processing servers. Rate limit expensive operations (searches per user). Queue excess requests. Upgrade pricing during peak = incentivize off-peak.</p>
+<p><strong>Q4: How to track vehicle movement and maintain accuracy?</strong>
+A: GPS tracking (IoT device in car). Sync location periodically. On pickup/return, verify location. Track mileage, damage via photos/inspection reports. Detect theft (vehicle outside expected region).</p>
+<p><strong>Q5: How to prevent overbooking during high concurrency?</strong>
+A: Test scenario: vehicle has 10 days available, 100 customers try to book simultaneously. Need strict locking. Reserve only after confirming no overlap + available. Implement using DB transaction + row locks.</p>
+<p><strong>Q6: What's memory overhead for 100K vehicles?</strong>
+A: Vehicle object: vehicle_id + type + location + status + current_mileage + damage_report ≈ 200 bytes. For 100K: 20MB. Acceptable for in-memory cache. Add DB for persistent storage.</p>
+<p><strong>Q7: How to handle vehicle transfer between locations efficiently?</strong>
+A: Mark vehicle as "IN_TRANSIT" (unavailable for booking). Transport physically. Update location + status. For 1000 transfers/day: batch process at off-peak times. Sync overnight if network permits.</p>
+<p><strong>Q8: How to calculate revenue per vehicle/location/type?</strong>
+A: Track all reservations: (vehicle, dates, customer, price). Aggregate by vehicle/location/type. Calculate utilization = total_booked_days / total_days. Report daily/weekly/monthly. Query DB with aggregation pipeline (MongoDB) or Spark jobs (Hadoop).</p>
+<p><strong>Q9: Can pricing strategy change mid-season?</strong>
+A: Yes. Update strategy globally or per-vehicle. Existing reservations locked at original price. Future bookings use new strategy. Implement using version control (pricing_strategy_version field).</p>
+<p><strong>Q10: How to handle customer disputes (damaged vehicle, overbilling)?</strong>
+A: Maintain audit log (all transactions, inspection photos, GPS locations). Review dispute with evidence. Refund/charge difference if justified. Store dispute history per customer (fraud detection).</p>
+<p><strong>Q11: What if payment processor is down during checkout?</strong>
+A: Queue payment requests. Retry with exponential backoff. Hold car for customer if payment pending. Notify after processor recovers. Risk: customer leaves angry. Better: async processing (reserve car, process payment later).</p>
+<p><strong>Q12: How to optimize vehicle utilization (minimize idle time)?</strong>
+A: Predictive analytics: forecast demand per location/date. Reposition vehicles proactively (transfer from low-demand to high-demand areas). Incentivize off-peak bookings (discounts). Monitor utilization KPI (target: 80%+).</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw the UML class diagram with all relationships</li>
+<li>[ ] Walk through the reserve → pickup → return → cancel lifecycle</li>
+<li>[ ] Explain how atomic vehicle status transitions prevent double-booking</li>
+<li>[ ] Explain cancellation penalty calculation (&lt; 48h, 48h–7d, &gt; 7d tiers)</li>
+<li>[ ] Explain the three pricing strategies and when each applies</li>
+<li>[ ] Run the complete implementation (5 demos) without errors</li>
+<li>[ ] Answer 5+ scaling Q&amp;A questions</li>
+<li>[ ] Mention thread safety in Singleton, create_reservation, and vehicle state transitions</li>
+<li>[ ] Discuss trade-offs (daily vs weekly vs monthly pricing, pessimistic vs optimistic locking)</li>
+</ul>
+<hr />
+<p><strong>Ready for interview? Start your engine and reserve a vehicle!</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

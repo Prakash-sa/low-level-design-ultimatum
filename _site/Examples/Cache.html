@@ -1,0 +1,1929 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cache - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="cache-system-complete-design-guide">Cache System — Complete Design Guide</h1>
+<blockquote>
+<p>Configurable in-memory cache with pluggable eviction strategies (LRU, LFU, FIFO), write policies, TTL expiration, undo/redo commands, snapshots, and event-based observability.</p>
+</blockquote>
+<p><strong>Scale</strong>: 1,000+ concurrent operations, up to 1M entries, bounded memory<br />
+<strong>Duration</strong>: 75-minute interview guide<br />
+<strong>Focus</strong>: Pluggable eviction/write policies, TTL expiration, thread safety, undo/redo, event observability</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>A caller stores key/value pairs in fast memory. When capacity is exceeded, the cache must intelligently evict entries using a pluggable algorithm (LRU, LFU, FIFO). Reads check TTL expiration lazily. All mutations are reversible via undo/redo, and the entire state can be snapshotted and restored. Core concerns: adaptability (swap strategies at runtime), reliability (correct eviction and expiry), and transparency (metric events).</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>put(key, value) → Validate size → Evict if over capacity (strategy) → Write policy → Emit event
+get(key)        → Check TTL expiry (lazy) → Update access metadata → Return value / None
+delete(key)     → Remove from store → Write policy.on_delete → Emit event
+                                ↓ capacity exceeded
+                  choose_victim() (LRU / LFU / FIFO) → evict → emit entry_evicted
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Single node or distributed?</strong> → "Single node in-process cache; distributed is a scaling concern"</li>
+<li><strong>Which eviction algorithms are required?</strong> → "LRU for now, but LFU and FIFO must also be supported"</li>
+<li><strong>Do we need TTL?</strong> → "Yes, per-key expiration"</li>
+<li><strong>Backing store integration?</strong> → "Mock backing store; discuss write-through vs write-back"</li>
+<li><strong>Concurrency requirements?</strong> → "Mention lock strategy; single-threaded demo"</li>
+<li><strong>Undo/redo required?</strong> → "Yes, for set and delete operations"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Application</strong></td>
+<td>Primary cache consumer</td>
+<td>put/get/delete values, subscribe to events</td>
+</tr>
+<tr>
+<td><strong>Admin / Operator</strong></td>
+<td>Manages cache configuration</td>
+<td>Swap eviction strategy, swap write policy, flush, snapshot/restore</td>
+</tr>
+<tr>
+<td><strong>System</strong></td>
+<td>Event emitter &amp; metrics tracker</td>
+<td>Emit hits/misses/evictions, expire TTL entries, enforce capacity</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Core Operations</strong>
+  - <code>put(key, value, ttl?)</code> — insert or update an entry
+  - <code>get(key)</code> — retrieve with hit/miss/expiration handling
+  - <code>delete(key)</code> — remove an entry</p>
+<p>✅ <strong>Capacity Management</strong>
+  - Item-count limit (e.g., 1000 max entries)
+  - Byte-size limit (e.g., 10 MB)
+  - Automatic eviction when either limit is exceeded</p>
+<p>✅ <strong>Eviction Strategies</strong>
+  - LRU (Least Recently Used)
+  - LFU (Least Frequently Used)
+  - FIFO (First In, First Out)
+  - Runtime swap without downtime (preserve entries)</p>
+<p>✅ <strong>TTL Expiration</strong>
+  - Per-key TTL in seconds
+  - Lazy evaluation on access (no background thread in demo)</p>
+<p>✅ <strong>Write Policies</strong>
+  - Write-through: immediately sync to backing store
+  - Write-back: mark dirty, defer sync; explicit <code>flush()</code>
+  - Runtime swap (auto-flush when leaving write-back)</p>
+<p>✅ <strong>Undo / Redo</strong>
+  - <code>SetCommand</code> and <code>DeleteCommand</code> wrap mutations
+  - <code>undo()</code> reverts last operation; <code>redo()</code> reapplies</p>
+<p>✅ <strong>Snapshot &amp; Restore</strong>
+  - <code>take_snapshot()</code> — deep-copy full state
+  - <code>restore_snapshot()</code> — atomic whole-system rollback</p>
+<p>✅ <strong>Observability</strong>
+  - Event listeners for: set, get-hit, get-miss, eviction, expiry, strategy-swap, policy-swap, snapshot, metrics</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Access Performance</strong>: O(1) average key lookup<br />
+✅ <strong>Eviction Performance</strong>: O(n) victim selection (optimizable to O(1) with bucket-based LFU)<br />
+✅ <strong>Concurrency</strong>: Thread-safe with locks in production; single-threaded demo<br />
+✅ <strong>Memory</strong>: Bounded metadata overhead (~48 bytes per entry)<br />
+✅ <strong>Extensibility</strong>: New eviction or write-policy class needs no core changes</p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Max entries</strong></td>
+<td>Configurable (e.g., 1000)</td>
+</tr>
+<tr>
+<td><strong>Max bytes</strong></td>
+<td>Configurable (e.g., 10 MB)</td>
+</tr>
+<tr>
+<td><strong>TTL enforcement</strong></td>
+<td>Lazy on access only (demo); background scan in production</td>
+</tr>
+<tr>
+<td><strong>Strategy swap</strong></td>
+<td>Preserve all entries; rebuild metadata</td>
+</tr>
+<tr>
+<td><strong>Write-back flush</strong></td>
+<td>Required before swapping away from write-back</td>
+</tr>
+<tr>
+<td><strong>Undo stack depth</strong></td>
+<td>Unbounded in demo; cap to 100 in production</td>
+</tr>
+<tr>
+<td><strong>Snapshot copy</strong></td>
+<td>Deep copy (full state clone)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on the whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<pre class="codehilite"><code>CacheEntry, CacheManager, EvictionStrategy, WritePolicy, Command, Snapshot, BackingStore, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="cacheentry-one-stored-item"><strong>CacheEntry</strong> — One stored item</h4>
+<pre class="codehilite"><code>Properties:
+  - value: Any
+  - size: int                  (bytes estimate)
+  - created_at: float          (epoch timestamp)
+  - last_access: float         (epoch timestamp)
+  - frequency: int             (access counter)
+  - ttl: Optional[float]       (seconds until expiry)
+  - dirty: bool                (write-back pending flag)
+
+Behaviors:
+  - expired(now?): Return True if (now - created_at) &gt;= ttl
+</code></pre>
+
+<h4 id="evictionstrategy-pluggable-victim-selection-algorithm"><strong>EvictionStrategy</strong> — Pluggable victim-selection algorithm</h4>
+<pre class="codehilite"><code>Properties:
+  - name: str
+
+Behaviors:
+  - on_insert(key, entry): Initialize metadata (e.g., set last_access)
+  - on_access(key, entry): Update metadata on read
+  - choose_victim(store): Return the key to evict, or None
+</code></pre>
+
+<h4 id="lrustrategy-lfustrategy-fifostrategy-concrete-eviction-algorithms"><strong>LRUStrategy / LFUStrategy / FIFOStrategy</strong> — Concrete eviction algorithms</h4>
+<pre class="codehilite"><code>LRU  → choose_victim: min(last_access)
+LFU  → choose_victim: min(frequency, then last_access)
+FIFO → choose_victim: min(created_at)
+</code></pre>
+
+<h4 id="writepolicy-pluggable-persistence-strategy"><strong>WritePolicy</strong> — Pluggable persistence strategy</h4>
+<pre class="codehilite"><code>Properties:
+  - name: str
+
+Behaviors:
+  - on_set(key, entry, backing_store): React to a put (sync or mark dirty)
+  - on_delete(key, backing_store): Remove key from backing store
+  - flush(backing_store, entries): Sync all dirty entries; return count
+</code></pre>
+
+<h4 id="command-reversible-mutation"><strong>Command</strong> — Reversible mutation</h4>
+<pre class="codehilite"><code>Behaviors:
+  - execute(): Apply the mutation; save previous state
+  - undo(): Restore previous state
+</code></pre>
+
+<h4 id="setcommand-deletecommand-concrete-commands"><strong>SetCommand / DeleteCommand</strong> — Concrete commands</h4>
+<pre class="codehilite"><code>SetCommand:
+  - key, value, ttl, prev_entry (saved before execute)
+  - execute → cache.set(via_command=True); save old entry
+  - undo    → restore prev_entry (or delete if it was new)
+
+DeleteCommand:
+  - key, removed_entry (saved before execute)
+  - execute → cache.delete(via_command=True)
+  - undo    → restore removed_entry
+</code></pre>
+
+<h4 id="cachemanager-central-orchestrator"><strong>CacheManager</strong> — Central orchestrator</h4>
+<pre class="codehilite"><code>Properties:
+  - capacity_items: int
+  - capacity_bytes: int
+  - eviction_strategy: EvictionStrategy
+  - write_policy: WritePolicy
+  - _store: Dict[str, CacheEntry]
+  - _backing_store: Dict[str, Any]
+  - _listeners: List[Callable]
+  - _undo_stack / _redo_stack: List[Command]
+  - _metrics: Dict[str, int]
+
+Behaviors:
+  - set / get / delete
+  - swap_eviction_strategy / swap_write_policy / flush
+  - take_snapshot / restore_snapshot
+  - undo / redo
+  - add_listener / summary
+</code></pre>
+
+<h3 id="step-23-define-enumerations-state-type">Step 2.3: Define Enumerations (State &amp; Type)</h3>
+<pre class="codehilite"><code class="language-python"># No formal Enum classes in this design — eviction algorithm and write policy
+# are identified by string names on strategy/policy objects:
+#   strategy.name in {&quot;lru&quot;, &quot;lfu&quot;, &quot;fifo&quot;}
+#   policy.name   in {&quot;write_through&quot;, &quot;write_back&quot;}
+#
+# This keeps runtime swapping simple (restore_snapshot maps name → class).
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>CacheEntry</strong></td>
+<td>Per-key metadata for eviction, TTL, dirty tracking</td>
+<td>Can't implement any eviction or TTL</td>
+</tr>
+<tr>
+<td><strong>EvictionStrategy</strong></td>
+<td>Pluggable victim selection</td>
+<td>Hard-coded algorithm, no runtime swap</td>
+</tr>
+<tr>
+<td><strong>WritePolicy</strong></td>
+<td>Pluggable persistence</td>
+<td>Mixed concerns, can't switch through/back</td>
+</tr>
+<tr>
+<td><strong>Command</strong></td>
+<td>Encapsulates reversible mutations</td>
+<td>No undo/redo</td>
+</tr>
+<tr>
+<td><strong>CacheManager</strong></td>
+<td>Central coordinator</td>
+<td>No capacity enforcement or metric collection</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-put-critical"><strong>1. put</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def set(key: str, value: Any, ttl: Optional[float] = None,
+        via_command: bool = False) -&gt; None:
+    &quot;&quot;&quot;
+    Insert or update a key/value pair.
+
+    Precondition:  key is a non-empty string; value is any serialisable object
+    Postcondition: key exists in store; capacity enforced; write policy applied
+
+    Parameters:
+      key          -- lookup key
+      value        -- value to cache
+      ttl          -- optional time-to-live in seconds (None = no expiry)
+      via_command  -- internal flag; callers must leave False
+
+    Side Effects:
+      - Evicts entries if over capacity (calls eviction_strategy.choose_victim)
+      - Calls write_policy.on_set (immediately persists or marks dirty)
+      - Emits 'entry_set' event
+      - Appends SetCommand to undo stack (when via_command=False)
+    &quot;&quot;&quot;
+</code></pre>
+
+<h4 id="2-get-critical"><strong>2. get</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def get(key: str) -&gt; Optional[Any]:
+    &quot;&quot;&quot;
+    Retrieve a value by key.
+
+    Precondition:  key is a string
+    Postcondition: access metadata updated; expired entry removed
+
+    Returns: value if present and not expired, else None
+
+    Failure causes:
+      - Key not found    → None, emits 'entry_get_miss'
+      - Key TTL expired  → entry removed, None, emits 'entry_expired' + miss
+
+    Side Effects: updates last_access &amp; frequency; emits 'entry_get_hit' or miss
+    &quot;&quot;&quot;
+</code></pre>
+
+<h4 id="3-delete"><strong>3. delete</strong></h4>
+<pre class="codehilite"><code class="language-python">def delete(key: str, via_command: bool = False) -&gt; None:
+    &quot;&quot;&quot;
+    Remove a key from the cache.
+
+    Postcondition: key absent from store; write_policy.on_delete called
+
+    Side Effects: emits 'entry_evicted' (reason='delete');
+                  appends DeleteCommand to undo stack when via_command=False
+    &quot;&quot;&quot;
+</code></pre>
+
+<h4 id="4-strategy-policy-controls"><strong>4. Strategy / Policy Controls</strong></h4>
+<pre class="codehilite"><code class="language-python">def swap_eviction_strategy(new_strategy: EvictionStrategy) -&gt; None:
+    &quot;&quot;&quot;Replace eviction algorithm; rebuilds metadata on existing entries.&quot;&quot;&quot;
+
+def swap_write_policy(new_policy: WritePolicy) -&gt; None:
+    &quot;&quot;&quot;Replace write policy; auto-flushes if leaving write-back.&quot;&quot;&quot;
+
+def flush() -&gt; None:
+    &quot;&quot;&quot;Force-sync all dirty write-back entries to the backing store.&quot;&quot;&quot;
+</code></pre>
+
+<h4 id="5-snapshot-undo"><strong>5. Snapshot / Undo</strong></h4>
+<pre class="codehilite"><code class="language-python">def take_snapshot() -&gt; Dict[str, Any]:
+    &quot;&quot;&quot;Return a deep copy of the complete cache state.&quot;&quot;&quot;
+
+def restore_snapshot(snapshot: Dict[str, Any]) -&gt; None:
+    &quot;&quot;&quot;Atomically replace current state with snapshot.&quot;&quot;&quot;
+
+def undo() -&gt; None: ...
+def redo() -&gt; None: ...
+</code></pre>
+
+<h3 id="step-32-exception-failure-model">Step 3.2: Exception / Failure Model</h3>
+<p>The implementation uses silent returns and event emission rather than raising exceptions — keeping the demo interview-friendly. A production version would raise a typed hierarchy:</p>
+<pre class="codehilite"><code class="language-python">class CacheException(Exception): ...
+class CapacityError(CacheException): ...
+class EvictionBlockedError(CacheException): ...
+class InvalidKeyError(CacheException): ...
+class SnapshotRestoreError(CacheException): ...
+</code></pre>
+
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">cache = CacheManager(
+    capacity_items=5,
+    capacity_bytes=100,
+    eviction_strategy=LRUStrategy(),
+    write_policy=WriteThroughPolicy()
+)
+cache.add_listener(lambda event, payload: print(f&quot;[{event}] {payload}&quot;))
+
+# Basic put / get
+cache.set(&quot;user:1&quot;, &quot;Alice&quot;, ttl=60)
+value = cache.get(&quot;user:1&quot;)   # &quot;Alice&quot;
+
+# Strategy swap at runtime
+cache.swap_eviction_strategy(LFUStrategy())
+
+# Write-back + flush
+cache.swap_write_policy(WriteBackPolicy())
+cache.set(&quot;config&quot;, &quot;dark-mode&quot;)   # marked dirty
+cache.flush()                       # synced to backing store
+
+# Snapshot &amp; restore
+snap = cache.take_snapshot()
+cache.set(&quot;temp&quot;, &quot;x&quot;)
+cache.restore_snapshot(snap)        # reverts to state before &quot;temp&quot;
+
+# Undo / redo
+cache.set(&quot;a&quot;, 1)
+cache.undo()    # removes &quot;a&quot;
+cache.redo()    # re-inserts &quot;a&quot;
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and association. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>CacheManager HAS-A EvictionStrategy (1:1 Composition)
+  └─ Manager owns and replaces the strategy
+
+CacheManager HAS-A WritePolicy (1:1 Composition)
+  └─ Manager owns and replaces the policy
+
+CacheManager HAS-A store: Dict[str, CacheEntry] (1:N Composition)
+  └─ Manager owns all entries
+
+CacheManager HAS-A backing_store: Dict (1:1 Composition)
+  └─ Manager simulates the durable store
+
+CacheManager HAS-A undo_stack / redo_stack (1:N Composition)
+  └─ Manager owns command history
+
+Command REFERENCES CacheManager (Association)
+  └─ Commands call back into the manager to apply/undo
+
+CacheManager NOTIFIES Listeners via callbacks (1:N Association)
+  └─ Many callables listen to cache events
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌────────────────────────────────────────────────────────┐
+│            CacheManager (Singleton-style)              │
+├────────────────────────────────────────────────────────┤
+│ - capacity_items: int                                  │
+│ - capacity_bytes: int                                  │
+│ - eviction_strategy: EvictionStrategy                  │
+│ - write_policy: WritePolicy                            │
+│ - _store: Dict[str, CacheEntry]                        │
+│ - _backing_store: Dict[str, Any]                       │
+│ - _listeners: List[Callable]                           │
+│ - _undo_stack / _redo_stack: List[Command]             │
+│ - _metrics: Dict[str, int]                             │
+├────────────────────────────────────────────────────────┤
+│ + set(key, value, ttl?)                                │
+│ + get(key) -&gt; Optional[Any]                            │
+│ + delete(key)                                          │
+│ + swap_eviction_strategy(new_strategy)                 │
+│ + swap_write_policy(new_policy)                        │
+│ + flush()                                              │
+│ + take_snapshot() -&gt; Dict                              │
+│ + restore_snapshot(snapshot)                           │
+│ + undo() / redo()                                      │
+│ + add_listener(fn) / summary() -&gt; Dict                 │
+└────────────┬──────────────────────────────────────────┘
+             │ owns 1:N
+    ┌────────┼────────────┬─────────────┐
+    │        │            │             │
+    ▼        ▼            ▼             ▼
+┌─────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│  Store  │ │EvictionStrat.│ │ WritePolicy  │ │  Command     │
+│(Dict)   │ │(LRU/LFU/FIFO)│ │(Through/Back)│ │ undo stack   │
+└────┬────┘ └──────────────┘ └──────────────┘ └──────────────┘
+     │
+     ▼
+┌──────────────────┐
+│  CacheEntry      │
+├──────────────────┤
+│ + value: Any     │
+│ + size: int      │
+│ + frequency: int │
+│ + last_access    │
+│ + created_at     │
+│ + ttl            │
+│ + dirty: bool    │
+├──────────────────┤
+│ + expired(): bool│
+└──────────────────┘
+
+Command Pattern (Undo/Redo):
+┌─────────────────────┐
+│   Command (ABC)     │
+│ + execute()         │
+│ + undo()            │
+└────┬────────────────┘
+     │
+  ┌──┴──────────┐
+  ▼             ▼
+┌──────────┐ ┌──────────┐
+│SetCommand│ │DeleteCmd │
+│(prev_    │ │(removed_ │
+│ entry)   │ │ entry)   │
+└──────────┘ └──────────┘
+
+Observer Pattern (Events):
+┌─────────────────────────────────────┐
+│   Listeners (callbacks)             │
+│ - entry_set, entry_get_hit/miss     │
+│ - entry_evicted, entry_expired      │
+│ - strategy_swapped, policy_swapped  │
+│ - snapshot_taken/restored           │
+│ - metrics_updated                   │
+└─────────────────────────────────────┘
+
+Memento Pattern (Snapshots):
+┌──────────────────────────────────────┐
+│   Snapshot (Deep Copy)               │
+│ - store state                        │
+│ - backing store                      │
+│ - strategy/policy identifiers        │
+│ - metrics baseline                   │
+└──────────────────────────────────────┘
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CacheManager → CacheEntry (store)</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Manager owns all entries</td>
+</tr>
+<tr>
+<td>CacheManager → EvictionStrategy</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>One active algorithm at a time</td>
+</tr>
+<tr>
+<td>CacheManager → WritePolicy</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>One active policy at a time</td>
+</tr>
+<tr>
+<td>CacheManager → Command (stacks)</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Manager owns full command history</td>
+</tr>
+<tr>
+<td>CacheManager → Listeners</td>
+<td>1:N</td>
+<td>Association</td>
+<td>Callbacks registered externally</td>
+</tr>
+<tr>
+<td>Command → CacheManager</td>
+<td>N:1</td>
+<td>Association</td>
+<td>Commands call back into the manager</td>
+</tr>
+<tr>
+<td>CacheEntry → CacheManager</td>
+<td>N:1</td>
+<td>(none)</td>
+<td>Entries are passive data objects</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-singleton-for-cachemanager">Pattern 1: <strong>Singleton</strong> (For CacheManager)</h3>
+<p><strong>Problem</strong>: Multiple subsystems must share one consistent view of cached data, metrics, and strategies.</p>
+<p><strong>Solution</strong>: One global CacheManager instance with thread-safe initialization (double-checked locking).</p>
+<pre class="codehilite"><code class="language-python">class CacheManager:
+    _instance = None
+    _cls_lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            with cls._cls_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Single source of truth, ✅ No conflicting capacity counts, ✅ Global access<br />
+<strong>Trade-off</strong>: ⚠️ Global state (harder to unit-test), ⚠️ Must reset <code>_instance</code> between tests</p>
+<hr />
+<h3 id="pattern-2-strategy-for-eviction-write-policy">Pattern 2: <strong>Strategy</strong> (For Eviction &amp; Write Policy)</h3>
+<p><strong>Problem</strong>: Different workloads need different eviction algorithms (LRU for recency, LFU for frequency, FIFO for fairness). Write semantics differ too (sync vs deferred).</p>
+<p><strong>Solution</strong>: <code>EvictionStrategy</code> and <code>WritePolicy</code> are abstract interfaces; concrete classes implement the variation.</p>
+<pre class="codehilite"><code class="language-python">class EvictionStrategy:
+    def on_insert(self, key, entry): pass
+    def on_access(self, key, entry): pass
+    def choose_victim(self, store) -&gt; Optional[str]:
+        raise NotImplementedError
+
+class LRUStrategy(EvictionStrategy):
+    def on_access(self, key, entry):
+        entry.last_access = time.time()
+    def choose_victim(self, store):
+        return min(store.items(), key=lambda kv: kv[1].last_access)[0]
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Runtime swapping with zero downtime, ✅ Open/closed principle (add CLOCK strategy without touching CacheManager)<br />
+<strong>Trade-off</strong>: ⚠️ O(n) victim scan; optimize with priority queue or bucket structure at scale</p>
+<hr />
+<h3 id="pattern-3-observer-for-event-driven-observability">Pattern 3: <strong>Observer</strong> (For Event-Driven Observability)</h3>
+<p><strong>Problem</strong>: Cache consumers need to react to hits, misses, evictions, and metric updates without coupling cache core to specific monitoring systems.</p>
+<p><strong>Solution</strong>: A list of callable listeners receives every event with its payload.</p>
+<pre class="codehilite"><code class="language-python">def add_listener(self, fn: Callable[[str, Dict], None]):
+    self._listeners.append(fn)
+
+def _emit_event(self, name: str, payload: Dict):
+    for fn in self._listeners:
+        try:
+            fn(name, payload)
+        except Exception:
+            pass  # never let a listener crash the cache
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Pluggable monitoring (Prometheus, logging, alerting), ✅ Loose coupling<br />
+<strong>Trade-off</strong>: ⚠️ Slow listeners block the cache; move to async queue in production</p>
+<hr />
+<h3 id="pattern-4-command-for-undo-redo">Pattern 4: <strong>Command</strong> (For Undo / Redo)</h3>
+<p><strong>Problem</strong>: Mutations (set/delete) need to be reversible for debugging, testing, and rollback workflows.</p>
+<p><strong>Solution</strong>: <code>SetCommand</code> and <code>DeleteCommand</code> encapsulate the mutation and its inverse, stored in undo/redo stacks.</p>
+<pre class="codehilite"><code class="language-python">class SetCommand(Command):
+    def execute(self):
+        self.prev_entry = copy.deepcopy(self.cache._store.get(self.key))
+        self.cache.set(self.key, self.value, self.ttl, via_command=True)
+
+    def undo(self):
+        if self.prev_entry is None:
+            self.cache.delete(self.key, via_command=True)
+        else:
+            self.cache._direct_restore_entry(self.key, self.prev_entry)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Fine-grained reversible history, ✅ Clean separation of command logic from cache core<br />
+<strong>Trade-off</strong>: ⚠️ Deep copies add memory pressure; cap stack to ~100 in production</p>
+<hr />
+<h3 id="pattern-5-memento-for-snapshot-restore">Pattern 5: <strong>Memento</strong> (For Snapshot &amp; Restore)</h3>
+<p><strong>Problem</strong>: A coarse-grained rollback is needed — restoring the entire cache to a known-good state after a bad batch operation.</p>
+<p><strong>Solution</strong>: <code>take_snapshot()</code> creates a deep copy of the full store, backing store, and metadata; <code>restore_snapshot()</code> atomically swaps the whole state back.</p>
+<pre class="codehilite"><code class="language-python">def take_snapshot(self) -&gt; Dict[str, Any]:
+    return {
+        'store': copy.deepcopy(self._store),
+        'backing': copy.deepcopy(self._backing_store),
+        'eviction_strategy': self.eviction_strategy.name,
+        'write_policy': self.write_policy.name,
+        'metrics': copy.deepcopy(self._metrics),
+        'timestamp': time.time(),
+    }
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Atomic whole-system recovery, ✅ Strategy and policy names preserved for reconstruction<br />
+<strong>Trade-off</strong>: ⚠️ O(n) deep copy cost; for large caches consider COW (copy-on-write) or incremental snapshots</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>One global cache coordinator</td>
+<td>Coherent state, no conflicts</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Pluggable eviction &amp; write behavior</td>
+<td>Runtime swapping, open/closed</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Lifecycle event monitoring</td>
+<td>Decoupled observability</td>
+</tr>
+<tr>
+<td><strong>Command</strong></td>
+<td>Reversible mutations (undo/redo)</td>
+<td>Fine-grained history, testability</td>
+</tr>
+<tr>
+<td><strong>Memento</strong></td>
+<td>Whole-system snapshot &amp; restore</td>
+<td>Atomic coarse-grained rollback</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+Cache System - Interview Implementation
+Demonstrates:
+1. Basic LRU put/get &amp; eviction
+2. TTL expiration
+3. Strategy swap (LRU -&gt; LFU)
+4. Write policy swap (write-through -&gt; write-back -&gt; flush)
+5. Snapshot &amp; restore
+6. High volume insertion &amp; metrics summary
+&quot;&quot;&quot;
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Callable, List
+import time
+import copy
+import threading
+
+# =============================
+# Data Structures &amp; Strategies
+# =============================
+@dataclass
+class CacheEntry:
+    value: Any
+    size: int
+    created_at: float
+    last_access: float
+    frequency: int = 0
+    ttl: Optional[float] = None  # seconds
+    dirty: bool = False
+
+    def expired(self, now: Optional[float] = None) -&gt; bool:
+        if self.ttl is None:
+            return False
+        ref = now or time.time()
+        return (ref - self.created_at) &gt;= self.ttl
+
+# ---- Eviction Strategy Interface ----
+class EvictionStrategy:
+    name: str = &quot;base&quot;
+
+    def on_insert(self, key: str, entry: CacheEntry) -&gt; None:
+        pass
+
+    def on_access(self, key: str, entry: CacheEntry) -&gt; None:
+        pass
+
+    def choose_victim(self, store: Dict[str, CacheEntry]) -&gt; Optional[str]:
+        raise NotImplementedError
+
+class LRUStrategy(EvictionStrategy):
+    name = &quot;lru&quot;
+    def on_insert(self, key: str, entry: CacheEntry) -&gt; None:
+        entry.last_access = time.time()
+    def on_access(self, key: str, entry: CacheEntry) -&gt; None:
+        entry.last_access = time.time()
+    def choose_victim(self, store: Dict[str, CacheEntry]) -&gt; Optional[str]:
+        if not store:
+            return None
+        return min(store.items(), key=lambda kv: kv[1].last_access)[0]
+
+class LFUStrategy(EvictionStrategy):
+    name = &quot;lfu&quot;
+    def on_insert(self, key: str, entry: CacheEntry) -&gt; None:
+        entry.frequency = 1
+        entry.last_access = time.time()
+    def on_access(self, key: str, entry: CacheEntry) -&gt; None:
+        entry.frequency += 1
+        entry.last_access = time.time()
+    def choose_victim(self, store: Dict[str, CacheEntry]) -&gt; Optional[str]:
+        if not store:
+            return None
+        return min(store.items(), key=lambda kv: (kv[1].frequency, kv[1].last_access))[0]
+
+class FIFOStrategy(EvictionStrategy):
+    name = &quot;fifo&quot;
+    def on_insert(self, key: str, entry: CacheEntry) -&gt; None:
+        pass
+    def on_access(self, key: str, entry: CacheEntry) -&gt; None:
+        entry.frequency += 1
+    def choose_victim(self, store: Dict[str, CacheEntry]) -&gt; Optional[str]:
+        if not store:
+            return None
+        return min(store.items(), key=lambda kv: kv[1].created_at)[0]
+
+# ---- Write Policy Interface ----
+class WritePolicy:
+    name: str = &quot;base&quot;
+    def on_set(self, key: str, entry: CacheEntry, backing_store: Dict[str, Any]) -&gt; None:
+        raise NotImplementedError
+    def on_delete(self, key: str, backing_store: Dict[str, Any]) -&gt; None:
+        raise NotImplementedError
+    def flush(self, backing_store: Dict[str, Any], entries: Dict[str, CacheEntry]) -&gt; int:
+        return 0
+
+class WriteThroughPolicy(WritePolicy):
+    name = &quot;write_through&quot;
+    def on_set(self, key: str, entry: CacheEntry, backing_store: Dict[str, Any]) -&gt; None:
+        backing_store[key] = entry.value
+        entry.dirty = False
+    def on_delete(self, key: str, backing_store: Dict[str, Any]) -&gt; None:
+        backing_store.pop(key, None)
+    def flush(self, backing_store: Dict[str, Any], entries: Dict[str, CacheEntry]) -&gt; int:
+        return 0
+
+class WriteBackPolicy(WritePolicy):
+    name = &quot;write_back&quot;
+    def on_set(self, key: str, entry: CacheEntry, backing_store: Dict[str, Any]) -&gt; None:
+        entry.dirty = True
+    def on_delete(self, key: str, backing_store: Dict[str, Any]) -&gt; None:
+        backing_store.pop(key, None)
+    def flush(self, backing_store: Dict[str, Any], entries: Dict[str, CacheEntry]) -&gt; int:
+        count = 0
+        for k, e in entries.items():
+            if e.dirty:
+                backing_store[k] = e.value
+                e.dirty = False
+                count += 1
+        return count
+
+# =============================
+# Command Pattern
+# =============================
+class Command:
+    def execute(self):
+        raise NotImplementedError
+    def undo(self):
+        raise NotImplementedError
+
+class SetCommand(Command):
+    def __init__(self, cache: 'CacheManager', key: str, value: Any, ttl: Optional[float] = None):
+        self.cache = cache
+        self.key = key
+        self.value = value
+        self.ttl = ttl
+        self.prev_entry: Optional[CacheEntry] = None
+    def execute(self):
+        self.prev_entry = copy.deepcopy(self.cache._store.get(self.key))
+        self.cache.set(self.key, self.value, self.ttl, via_command=True)
+    def undo(self):
+        if self.prev_entry is None:
+            self.cache.delete(self.key, via_command=True)
+        else:
+            self.cache._direct_restore_entry(self.key, self.prev_entry)
+
+class DeleteCommand(Command):
+    def __init__(self, cache: 'CacheManager', key: str):
+        self.cache = cache
+        self.key = key
+        self.removed_entry: Optional[CacheEntry] = None
+    def execute(self):
+        if self.key in self.cache._store:
+            self.removed_entry = copy.deepcopy(self.cache._store[self.key])
+        self.cache.delete(self.key, via_command=True)
+    def undo(self):
+        if self.removed_entry:
+            self.cache._direct_restore_entry(self.key, self.removed_entry)
+
+# =============================
+# Cache Manager (Singleton)
+# =============================
+class CacheManager:
+    _instance = None
+    _cls_lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        # Accept constructor args so Singleton can be re-initialised in tests
+        if cls._instance is None:
+            with cls._cls_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self,
+                 capacity_items: int,
+                 capacity_bytes: int,
+                 eviction_strategy: EvictionStrategy,
+                 write_policy: WritePolicy):
+        # Guard against re-initialisation on repeated __init__ calls
+        if getattr(self, '_initialised', False):
+            return
+        self._initialised = True
+        self.capacity_items = capacity_items
+        self.capacity_bytes = capacity_bytes
+        self.eviction_strategy = eviction_strategy
+        self.write_policy = write_policy
+        self._store: Dict[str, CacheEntry] = {}
+        self._backing_store: Dict[str, Any] = {}
+        self._listeners: List[Callable[[str, Dict[str, Any]], None]] = []
+        self._undo_stack: List[Command] = []
+        self._redo_stack: List[Command] = []
+        self._lock = threading.RLock()  # RLock so set() can call _enforce_capacity safely
+        self._metrics = {
+            'hits': 0,
+            'misses': 0,
+            'evictions': 0,
+            'expirations': 0,
+            'sets': 0,
+            'deletes': 0,
+            'flushed_writes': 0,
+            'dirty_writes_pending': 0,
+            'current_items': 0,
+            'total_bytes': 0,
+        }
+
+    @classmethod
+    def _reset(cls):
+        &quot;&quot;&quot;Test helper: clear singleton so a fresh instance can be created.&quot;&quot;&quot;
+        cls._instance = None
+
+    def add_listener(self, fn: Callable[[str, Dict[str, Any]], None]):
+        self._listeners.append(fn)
+
+    def set(self, key: str, value: Any, ttl: Optional[float] = None, via_command: bool = False):
+        with self._lock:
+            size = self._estimate_size(value)
+            now = time.time()
+            if key in self._store:
+                entry = self._store[key]
+                entry.value = value
+                entry.size = size
+                entry.ttl = ttl
+                entry.last_access = now
+            else:
+                entry = CacheEntry(value=value, size=size, created_at=now, last_access=now, ttl=ttl)
+                self._store[key] = entry
+                self.eviction_strategy.on_insert(key, entry)
+            self._enforce_capacity()
+            self.write_policy.on_set(key, entry, self._backing_store)
+            self._metrics['sets'] += 1
+            self._refresh_metrics()
+        self._emit_event('entry_set', {'key': key, 'size': size})
+        if not via_command:
+            self._record_command(SetCommand(self, key, value, ttl), executed=True)
+
+    def get(self, key: str) -&gt; Optional[Any]:
+        with self._lock:
+            now = time.time()
+            entry = self._store.get(key)
+            if entry is None:
+                self._metrics['misses'] += 1
+                self._refresh_metrics()
+                self._emit_event('entry_get_miss', {'key': key})
+                return None
+            if entry.expired(now):
+                self._store.pop(key, None)
+                self._metrics['expirations'] += 1
+                self._emit_event('entry_expired', {'key': key})
+                self._metrics['misses'] += 1
+                self._refresh_metrics()
+                return None
+            entry.last_access = now
+            entry.frequency += 1
+            self.eviction_strategy.on_access(key, entry)
+            self._metrics['hits'] += 1
+            self._refresh_metrics()
+        self._emit_event('entry_get_hit', {'key': key})
+        return entry.value
+
+    def delete(self, key: str, via_command: bool = False):
+        with self._lock:
+            if key not in self._store:
+                return
+            self._store.pop(key)
+            self.write_policy.on_delete(key, self._backing_store)
+            self._metrics['deletes'] += 1
+            self._refresh_metrics()
+        self._emit_event('entry_evicted', {'key': key, 'reason': 'delete'})
+        if not via_command:
+            self._record_command(DeleteCommand(self, key), executed=True)
+
+    def swap_eviction_strategy(self, new_strategy: EvictionStrategy):
+        with self._lock:
+            prev = self.eviction_strategy.name
+            self.eviction_strategy = new_strategy
+            for k, e in self._store.items():
+                new_strategy.on_insert(k, e)
+        self._emit_event('strategy_swapped', {'from': prev, 'to': new_strategy.name})
+
+    def swap_write_policy(self, new_policy: WritePolicy):
+        with self._lock:
+            prev = self.write_policy.name
+            if isinstance(self.write_policy, WriteBackPolicy) and not isinstance(new_policy, WriteBackPolicy):
+                flushed = self.write_policy.flush(self._backing_store, self._store)
+                self._metrics['flushed_writes'] += flushed
+                self._emit_event('flushed', {'flushed_count': flushed})
+            self.write_policy = new_policy
+        self._emit_event('write_policy_swapped', {'from': prev, 'to': new_policy.name})
+        self._refresh_metrics()
+
+    def flush(self):
+        with self._lock:
+            flushed = self.write_policy.flush(self._backing_store, self._store)
+            if flushed:
+                self._metrics['flushed_writes'] += flushed
+                self._emit_event('flushed', {'flushed_count': flushed})
+                self._refresh_metrics()
+
+    def take_snapshot(self) -&gt; Dict[str, Any]:
+        with self._lock:
+            snap = {
+                'store': copy.deepcopy(self._store),
+                'backing': copy.deepcopy(self._backing_store),
+                'eviction_strategy': self.eviction_strategy.name,
+                'write_policy': self.write_policy.name,
+                'metrics': copy.deepcopy(self._metrics),
+                'timestamp': time.time(),
+            }
+        self._emit_event('snapshot_taken', {'items': len(snap['store'])})
+        return snap
+
+    def restore_snapshot(self, snapshot: Dict[str, Any]):
+        with self._lock:
+            self._store = snapshot['store']
+            self._backing_store = snapshot['backing']
+            self._metrics = snapshot['metrics']
+            es_name = snapshot['eviction_strategy']
+            wp_name = snapshot['write_policy']
+            self.eviction_strategy = {
+                'lru': LRUStrategy(), 'lfu': LFUStrategy(), 'fifo': FIFOStrategy()
+            }[es_name]
+            self.write_policy = {
+                'write_through': WriteThroughPolicy(), 'write_back': WriteBackPolicy()
+            }[wp_name]
+        self._emit_event('snapshot_restored', {})
+        self._refresh_metrics()
+
+    def summary(self) -&gt; Dict[str, Any]:
+        with self._lock:
+            return copy.deepcopy(self._metrics)
+
+    # ---- Internal Helpers ----
+    def _emit_event(self, name: str, payload: Dict[str, Any]):
+        for listener_fn in self._listeners:
+            try:
+                listener_fn(name, payload)
+            except Exception:
+                pass
+
+    def _estimate_size(self, value: Any) -&gt; int:
+        if isinstance(value, (str, bytes)):
+            return len(value)
+        return 1
+
+    def _current_total_bytes(self) -&gt; int:
+        return sum(e.size for e in self._store.values())
+
+    def _enforce_capacity(self):
+        # Called inside self._lock (RLock allows re-entry)
+        safety = 0
+        while (len(self._store) &gt; self.capacity_items or self._current_total_bytes() &gt; self.capacity_bytes) and safety &lt; 10_000:
+            victim = self.eviction_strategy.choose_victim(self._store)
+            if victim is None:
+                self._emit_event('eviction_blocked', {})
+                break
+            removed = self._store.pop(victim)
+            if removed.dirty:
+                self.write_policy.on_delete(victim, self._backing_store)
+            self._metrics['evictions'] += 1
+            self._emit_event('entry_evicted', {'key': victim, 'reason': 'capacity'})
+            safety += 1
+        self._refresh_metrics()
+
+    def _refresh_metrics(self):
+        self._metrics['current_items'] = len(self._store)
+        self._metrics['total_bytes'] = self._current_total_bytes()
+        self._metrics['dirty_writes_pending'] = sum(1 for e in self._store.values() if e.dirty)
+        self._emit_event('metrics_updated', copy.deepcopy(self._metrics))
+
+    def _record_command(self, cmd: Command, executed: bool = False):
+        if executed:
+            self._undo_stack.append(cmd)
+            self._redo_stack.clear()
+            self._emit_event('command_executed', {'type': cmd.__class__.__name__})
+        else:
+            cmd.execute()
+            self._undo_stack.append(cmd)
+            self._redo_stack.clear()
+            self._emit_event('command_executed', {'type': cmd.__class__.__name__})
+
+    def undo(self):
+        if not self._undo_stack:
+            return
+        cmd = self._undo_stack.pop()
+        cmd.undo()
+        self._redo_stack.append(cmd)
+        self._refresh_metrics()
+        self._emit_event('command_undone', {'type': cmd.__class__.__name__})
+
+    def redo(self):
+        if not self._redo_stack:
+            return
+        cmd = self._redo_stack.pop()
+        cmd.execute()
+        self._undo_stack.append(cmd)
+        self._refresh_metrics()
+        self._emit_event('command_redone', {'type': cmd.__class__.__name__})
+
+    def _direct_restore_entry(self, key: str, entry: CacheEntry):
+        with self._lock:
+            self._store[key] = entry
+            self._refresh_metrics()
+        self._emit_event('entry_set', {'key': key, 'size': entry.size, 'restore': True})
+
+# =============================
+# Demo / Showcase
+# =============================
+
+def listener(event: str, payload: Dict[str, Any]):
+    if event in {&quot;metrics_updated&quot;}:
+        return
+    print(f&quot;  [EVENT] {event} -&gt; {payload}&quot;)
+
+
+def _make_cache(capacity_items, capacity_bytes, strategy=None, policy=None):
+    &quot;&quot;&quot;Helper: reset singleton and create a fresh CacheManager for each demo.&quot;&quot;&quot;
+    CacheManager._reset()
+    return CacheManager(
+        capacity_items=capacity_items,
+        capacity_bytes=capacity_bytes,
+        eviction_strategy=strategy or LRUStrategy(),
+        write_policy=policy or WriteThroughPolicy()
+    )
+
+
+def demo_1_basic_lru():
+    &quot;&quot;&quot;Demo 1: Basic LRU &amp; Eviction&quot;&quot;&quot;
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 1: BASIC LRU &amp; EVICTION&quot;)
+    print(&quot;=&quot;*70)
+    cache = _make_cache(capacity_items=5, capacity_bytes=50)
+    cache.add_listener(listener)
+
+    for i in range(7):
+        cache.set(f&quot;k{i}&quot;, f&quot;value-{i}&quot;)
+    cache.get(&quot;k3&quot;)
+    cache.get(&quot;k4&quot;)
+    cache.set(&quot;k_new&quot;, &quot;new-value&quot;)
+    print(&quot;Summary:&quot;, cache.summary())
+
+def demo_2_ttl():
+    &quot;&quot;&quot;Demo 2: TTL Expiration&quot;&quot;&quot;
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 2: TTL EXPIRATION&quot;)
+    print(&quot;=&quot;*70)
+    cache = _make_cache(capacity_items=100, capacity_bytes=1000)
+    cache.add_listener(listener)
+
+    cache.set(&quot;temp&quot;, &quot;short&quot;, ttl=0.2)
+    time.sleep(0.25)
+    v = cache.get(&quot;temp&quot;)
+    print(f&quot;  Value after TTL expiration: {v}&quot;)
+    print(&quot;Summary:&quot;, cache.summary())
+
+def demo_3_strategy_swap():
+    &quot;&quot;&quot;Demo 3: Strategy Swap (LRU -&gt; LFU)&quot;&quot;&quot;
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 3: STRATEGY SWAP (LRU -&gt; LFU)&quot;)
+    print(&quot;=&quot;*70)
+    cache = _make_cache(capacity_items=10, capacity_bytes=100)
+    cache.add_listener(listener)
+
+    for i in range(5):
+        cache.set(f&quot;k{i}&quot;, f&quot;val{i}&quot;)
+    for _ in range(5):
+        cache.get(&quot;k0&quot;)
+    for _ in range(2):
+        cache.get(&quot;k1&quot;)
+
+    cache.swap_eviction_strategy(LFUStrategy())
+    cache.set(&quot;new&quot;, &quot;item&quot;)
+    print(&quot;Summary:&quot;, cache.summary())
+
+def demo_4_write_policy():
+    &quot;&quot;&quot;Demo 4: Write Policy Swap (Through -&gt; Back -&gt; Flush)&quot;&quot;&quot;
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 4: WRITE POLICY SWAP &amp; FLUSH&quot;)
+    print(&quot;=&quot;*70)
+    cache = _make_cache(capacity_items=100, capacity_bytes=1000)
+    cache.add_listener(listener)
+
+    cache.set(&quot;k1&quot;, &quot;v1&quot;)
+    cache.swap_write_policy(WriteBackPolicy())
+    cache.set(&quot;k2&quot;, &quot;v2&quot;)
+    cache.set(&quot;k3&quot;, &quot;v3&quot;)
+    print(f&quot;  Dirty before flush: {cache.summary()['dirty_writes_pending']}&quot;)
+    cache.flush()
+    print(f&quot;  Dirty after flush: {cache.summary()['dirty_writes_pending']}&quot;)
+
+def demo_5_snapshot():
+    &quot;&quot;&quot;Demo 5: Snapshot &amp; Restore&quot;&quot;&quot;
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 5: SNAPSHOT &amp; RESTORE&quot;)
+    print(&quot;=&quot;*70)
+    cache = _make_cache(capacity_items=100, capacity_bytes=1000)
+    cache.add_listener(listener)
+
+    cache.set(&quot;base1&quot;, &quot;val1&quot;)
+    cache.set(&quot;base2&quot;, &quot;val2&quot;)
+    snap = cache.take_snapshot()
+    cache.set(&quot;after_snap&quot;, &quot;val3&quot;)
+    print(f&quot;  Items after snap: {cache.summary()['current_items']}&quot;)
+    cache.restore_snapshot(snap)
+    print(f&quot;  Items after restore: {cache.summary()['current_items']}&quot;)
+
+if True:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;CACHE SYSTEM - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_basic_lru()
+    demo_2_ttl()
+    demo_3_strategy_swap()
+    demo_4_write_policy()
+    demo_5_snapshot()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;ALL DEMOS COMPLETED&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>set</strong></td>
+<td>RLock (re-entrant)</td>
+<td>Atomic insert + capacity enforce + write policy</td>
+</tr>
+<tr>
+<td><strong>get</strong></td>
+<td>RLock</td>
+<td>Atomic TTL check + metadata update</td>
+</tr>
+<tr>
+<td><strong>delete</strong></td>
+<td>RLock</td>
+<td>Atomic removal + write policy notification</td>
+</tr>
+<tr>
+<td><strong>swap_eviction_strategy</strong></td>
+<td>RLock</td>
+<td>Atomic strategy replace + metadata rebuild</td>
+</tr>
+<tr>
+<td><strong>swap_write_policy</strong></td>
+<td>RLock</td>
+<td>Auto-flush + atomic policy swap</td>
+</tr>
+<tr>
+<td><strong>take_snapshot</strong></td>
+<td>RLock</td>
+<td>Consistent deep copy under lock</td>
+</tr>
+<tr>
+<td><strong>Singleton init</strong></td>
+<td>Class-level Lock</td>
+<td>Double-checked locking, single instance</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. ✅ <code>threading.RLock</code> used so <code>set()</code> can call <code>_enforce_capacity()</code> without deadlock
+2. ✅ Events emitted <em>outside</em> the lock to keep critical sections short
+3. ✅ Listeners wrapped in try/except — a slow or crashing observer never blocks the cache
+4. ✅ Singleton double-checked locking prevents race during first instantiation</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="scenario-1-basic-lru-putget-eviction">Scenario 1: Basic LRU Put/Get &amp; Eviction</h3>
+<pre class="codehilite"><code>- Set k0 → k6 (7 items, capacity 5)
+- Access k3, k4 to make them recent
+- Set k_new → triggers eviction of oldest (k0, k1, k2)
+- Show remaining: k3, k4, k5, k6, k_new
+</code></pre>
+
+<h3 id="scenario-2-ttl-expiration">Scenario 2: TTL Expiration</h3>
+<pre class="codehilite"><code>- Set &quot;temp&quot; with ttl=0.2 seconds
+- Wait 0.25 seconds
+- Get &quot;temp&quot; → None (lazy expiration on access)
+- Hit ratio affected (counts as miss)
+</code></pre>
+
+<h3 id="scenario-3-eviction-strategy-swap-lru-lfu">Scenario 3: Eviction Strategy Swap (LRU → LFU)</h3>
+<pre class="codehilite"><code>- Initially LRU
+- Access k0 five times, k1 twice
+- Swap to LFU
+- Set new_item → LFU evicts k1 (lower frequency) not k0
+</code></pre>
+
+<h3 id="scenario-4-write-policy-swap-through-back-flush">Scenario 4: Write Policy Swap (Through → Back → Flush)</h3>
+<pre class="codehilite"><code>- Set with write-through (immediate backing store write)
+- Swap to write-back (mark dirty)
+- Set multiple items (dirty_pending increases)
+- Call flush() → writes all dirty, dirty_pending = 0
+- Swap back to write-through
+</code></pre>
+
+<h3 id="scenario-5-snapshot-restore">Scenario 5: Snapshot &amp; Restore</h3>
+<pre class="codehilite"><code>- Take snapshot of current state (base1, base2)
+- Set after_snap item
+- Restore snapshot → state reverts to 2 items
+- Verifies full state recovery including metrics
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-level">Basic Level</h3>
+<p><strong>Q1: What is the main purpose of the CacheManager?</strong><br />
+A: Singleton pattern ensures one global instance coordinating all cache operations (put/get/delete), strategies (LRU/LFU/FIFO), write policies (through/back), and metrics/events emission for observability.</p>
+<p><strong>Q2: Why do you need multiple eviction strategies?</strong><br />
+A: Different workloads benefit from different policies: LRU favors recent access patterns, LFU favors frequently accessed items, FIFO is simple for fair rotation. Pluggable Strategy pattern allows swapping at runtime without modifying core code.</p>
+<p><strong>Q3: What is TTL and how is it handled?</strong><br />
+A: TTL (time-to-live) is per-key expiration time. System uses lazy expiration: checks on access. If expired, entry removed, recorded as miss/eviction. Advantage: no background thread overhead. Trade-off: stale entries briefly visible.</p>
+<p><strong>Q4: Why separate WritePolicy from eviction strategy?</strong><br />
+A: Clear separation of concerns: eviction decides residency (which keys stay), write policy decides persistence (when to write backing store). Allows independent swapping and testing.</p>
+<h3 id="intermediate-level">Intermediate Level</h3>
+<p><strong>Q5: How does write-through differ from write-back?</strong><br />
+A: Write-through: immediately persist to backing store on set (safe but slower). Write-back: mark entry dirty, defer writing (fast but risky if crash). System requires explicit flush() for write-back.</p>
+<p><strong>Q6: How do you safely swap strategies at runtime?</strong><br />
+A: Eviction strategy swap rebuilds metadata (LRU last_access, LFU frequency counters) on existing entries but preserves all data. Write policy swap flushes if leaving write-back to avoid data loss. Both emit events for monitoring.</p>
+<p><strong>Q7: How does the Command pattern enable undo/redo?</strong><br />
+A: SetCommand and DeleteCommand encapsulate reversible mutations, storing previous state (old entry for set, removed entry for delete). Undo stack reverses last command; redo reapplies. Each new command clears redo stack.</p>
+<p><strong>Q8: How is memory managed under capacity pressure?</strong><br />
+A: <code>_enforce_capacity()</code> runs after each set, repeatedly calling strategy's <code>choose_victim()</code> until item count ≤ capacity_items AND total bytes ≤ capacity_bytes. Victim removed, eviction metric incremented, event emitted.</p>
+<h3 id="advanced-level">Advanced Level</h3>
+<p><strong>Q9: How would you handle concurrent access in production?</strong><br />
+A: Add <code>threading.RLock()</code> around critical sections: store access, capacity enforcement, metric updates. Strategy's on_access() needs thread-safe frequency updates. Write policy flush needs atomic backing store write. Emit events outside the lock to avoid holding it during slow observers.</p>
+<p><strong>Q10: How would you optimize LFU for 1M entries?</strong><br />
+A: Naive LFU scans all entries to find min frequency: O(n) per eviction. Optimize: bucket-based LFU mapping frequency → ordered set of keys. Update on access is O(log n), victim selection O(1). Trade-off: higher memory for faster eviction.</p>
+<p><strong>Q11: How would you scale this to a distributed cache?</strong><br />
+A: Shard by key hash (consistent hashing) across multiple nodes. Each shard runs same architecture independently. Promotion strategy: hot keys replicated to fast tier (e.g., local RAM + remote store). Leader for invalidation coordination.</p>
+<p><strong>Q12: What security/correctness concerns exist?</strong><br />
+A: Size accounting prevents memory blowups. TTL prevents eternal residency. Snapshot restore replaces entire state (avoids partial injection). Missing: access control (who can get/set), audit logging, encryption at rest, rate limiting.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<p><strong>Q1: How does eviction strategy affect performance at 100K keys?</strong><br />
+A: LRU: maintains last_access timestamps, O(1) per access, victim selection O(n) scan (acceptable). At 100K, could optimize with time-bucketing or segment-based approach. LFU: similar O(n) scan, bucket optimization suggested.</p>
+<p><strong>Q2: What happens if the cache fills up and strategy returns no victim?</strong><br />
+A: Current implementation prevents infinite loop with safety counter (10K iterations). If no victim found, emit <code>eviction_blocked</code> event and stop accepting new keys. Production: reject new puts with error, alert ops.</p>
+<p><strong>Q3: How do you prevent memory growth from undo/redo stacks?</strong><br />
+A: Cap stack sizes (e.g., max 100 commands). When exceeded, pop oldest. Or implement per-session undo (discard when user disconnects). Trade-off: bounded memory vs full history.</p>
+<p><strong>Q4: Can snapshot restore happen while writes are in progress?</strong><br />
+A: In single-threaded demo, no. Production: acquire global write lock during restore to ensure consistency. Alternative: versioned snapshots + eventual consistency model.</p>
+<p><strong>Q5: How does write-back handle crash scenarios?</strong><br />
+A: Current implementation loses dirty writes. Production mitigation: WAL (write-ahead logging) per dirty write before acknowledging set(). On startup, replay log to restore dirty entries. Trade-off: write latency vs durability.</p>
+<p><strong>Q6: What's the memory overhead of tracking frequency + timestamps + TTL per entry?</strong><br />
+A: CacheEntry: value + size + created_at + last_access + frequency + ttl + dirty ≈ 48+ bytes per entry. For 100K entries: ~4.8 MB overhead. Acceptable. Optimization: use compact integer timestamps for memory-constrained systems.</p>
+<p><strong>Q7: How do you handle TTL expiration at scale?</strong><br />
+A: Current: lazy expiration on access only (stale entries accumulate). Production: background thread periodic scan + removal. Alternative: delta queue of pending expirations (O(1) add, pop nearest). Trade-off: background CPU vs stale data window.</p>
+<p><strong>Q8: How would you monitor cache health metrics?</strong><br />
+A: Emit <code>metrics_updated</code> event with hit rate, eviction pressure, dirty backlog. Exporter: Prometheus format. Alerts: hit ratio drops below threshold, eviction rate &gt; threshold, dirty backlog growing unbounded.</p>
+<p><strong>Q9: Can write policy swap happen mid-flush?</strong><br />
+A: Current: swap triggers flush if leaving write-back. If flush in progress elsewhere, potential race. Solution: acquire lock during swap, ensure flush completes before releasing policy reference.</p>
+<p><strong>Q10: How to partition cache across NUMA nodes for locality?</strong><br />
+A: Shard by key hash. Each NUMA node owns subset of shards. Thread binds to NUMA node; access local shards (cache-friendly). Remote shard access incurs penalty but infrequent. Performance gain: 20–30% on NUMA systems.</p>
+<p><strong>Q11: What if an eviction strategy always returns the same victim (bug)?</strong><br />
+A: Safety counter prevents infinite loop. But cache keeps trying same victim, making no progress. Detect: track prev_victim across iterations. If repeated, trigger strategy fallback (e.g., FIFO) or emit alert.</p>
+<p><strong>Q12: How do you handle cache stampede (1000 simultaneous misses after expiration)?</strong><br />
+A: Lazy expiration causes sudden miss spike. Mitigation: probabilistic early expiration (remove entry slightly before TTL), or lock-free read during fetch (wait for one fetch result, all others use it). Trade-off: extra reads vs stampede risk.</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw the UML class diagram with all relationships</li>
+<li>[ ] Walk through put → capacity check → eviction → write policy lifecycle</li>
+<li>[ ] Explain all three eviction strategies (LRU, LFU, FIFO) and when to choose each</li>
+<li>[ ] Explain TTL lazy expiration and its trade-off vs background scan</li>
+<li>[ ] Explain write-through vs write-back and the dirty flag / flush flow</li>
+<li>[ ] Explain how RLock prevents deadlock when set() calls _enforce_capacity()</li>
+<li>[ ] Walk through undo/redo: Command pattern, prev_entry, execute/undo</li>
+<li>[ ] Walk through snapshot/restore: deep copy, strategy name, atomic state swap</li>
+<li>[ ] Run the complete implementation (5 demos) without errors</li>
+<li>[ ] Answer 5+ scaling Q&amp;A questions</li>
+<li>[ ] Discuss optimizing LFU from O(n) scan to O(1) with bucket structure</li>
+</ul>
+<hr />
+<p><strong>Ready for interview? Cache it, evict it, and restore it! 🔄</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

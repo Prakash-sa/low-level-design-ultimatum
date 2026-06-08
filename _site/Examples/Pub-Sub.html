@@ -1,0 +1,2117 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pub-Sub - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="pub-sub-message-broker-complete-design-guide">Pub-Sub Message Broker — Complete Design Guide</h1>
+<blockquote>
+<p>Topic-based publish-subscribe messaging with consumer groups, offset management, at-least-once delivery guarantees, and thread-safe concurrent producers and consumers.</p>
+</blockquote>
+<p><strong>Scale</strong>: 1,000+ concurrent producers/consumers, 100+ topics, 99.9% uptime
+<strong>Duration</strong>: 75-minute interview guide
+<strong>Focus</strong>: Topic partitioning, consumer group coordination, offset tracking, delivery guarantees, thread-safe broker</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>Multiple services need to communicate asynchronously without tight coupling. A publisher (Order Service) emits an event to a named topic; multiple independent subscribers (Payment Service, Notification Service, Analytics Service) each receive and process the event at their own pace. The broker persists messages so slow consumers never lose data and fast restarts resume from where they left off.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>Publisher → publish(topic, key, message)
+                        |
+              [Broker: hash(key) → Partition N]
+                        |
+          ┌─────────────┴──────────────┐
+          ▼                            ▼
+  Consumer Group A              Consumer Group B
+  (each partition                (independent copy
+   assigned to one               of every message)
+   consumer in group)
+          |
+  consume(group, consumer) → message + auto-advance offset
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Single broker or distributed cluster?</strong> → "Single broker for the interview; mention cluster as a scaling concern"</li>
+<li><strong>Message ordering required?</strong> → "Within a partition only; cross-partition ordering not guaranteed"</li>
+<li><strong>Delivery guarantee?</strong> → "At-least-once (retry on failure); mention exactly-once as an extension"</li>
+<li><strong>Message persistence?</strong> → "In-memory for the demo; disk-backed in production"</li>
+<li><strong>Consumer groups or pure broadcast?</strong> → "Both: consumer groups for load balancing, multiple groups for fan-out"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Publisher</strong></td>
+<td>Produces events to topics</td>
+<td>create_topic, publish message</td>
+</tr>
+<tr>
+<td><strong>Subscriber / Consumer</strong></td>
+<td>Reads events from topics</td>
+<td>subscribe, consume, commit offset</td>
+</tr>
+<tr>
+<td><strong>Broker</strong></td>
+<td>Central coordinator</td>
+<td>Route messages, track offsets, manage groups</td>
+</tr>
+<tr>
+<td><strong>Admin / System</strong></td>
+<td>Manages configuration</td>
+<td>Create/delete topics, set retention, trigger compaction</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Topic Management</strong>
+  - Create and delete named topics
+  - Support configurable number of partitions per topic
+  - Configurable message retention (count or TTL)</p>
+<p>✅ <strong>Publishing</strong>
+  - Publish messages with optional partition key
+  - Route message to partition via <code>hash(key) % num_partitions</code>
+  - Assign monotonically increasing offset within each partition</p>
+<p>✅ <strong>Subscribing &amp; Consuming</strong>
+  - Subscribe a consumer to a topic under a consumer group
+  - Assign partitions to consumers in a group (each partition → one consumer)
+  - Consume next message at current offset; advance offset atomically
+  - Resume from last committed offset on restart</p>
+<p>✅ <strong>Consumer Groups</strong>
+  - Multiple independent groups consume the same topic (fan-out)
+  - Within a group, partitions are distributed across consumers (load balance)
+  - Rebalance when a consumer joins or leaves the group</p>
+<p>✅ <strong>Offset Management</strong>
+  - Track per-(group, consumer, partition) offset
+  - Commit offset after successful processing
+  - Replay from any past offset (seek)</p>
+<p>✅ <strong>Delivery Guarantees</strong>
+  - At-most-once: fire-and-forget (advance offset before processing)
+  - At-least-once: advance offset only after successful processing
+  - Exactly-once: idempotent consumer + transactional offset commit (extension)</p>
+<p>✅ <strong>Dead Letter Queue</strong>
+  - Messages failing N retries routed to <code>&lt;topic&gt;-DLQ</code>
+  - Manual inspection and reprocessing</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Concurrency</strong>: Support 1,000+ simultaneous producers and consumers
+✅ <strong>Ordering</strong>: Guaranteed within a partition; best-effort across partitions
+✅ <strong>Throughput</strong>: 100K+ messages/sec per broker (in-memory); disk-backed for persistence
+✅ <strong>Latency</strong>: &lt;10 ms publish; &lt;20 ms consume (in-memory)
+✅ <strong>Fault Tolerance</strong>: No message loss on consumer crash (offset not advanced until commit)
+✅ <strong>Scalability</strong>: Add partitions and consumer instances independently</p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Distributed?</strong></td>
+<td>NO for demo — single broker; mention sharding as extension</td>
+</tr>
+<tr>
+<td><strong>Persistence</strong></td>
+<td>In-memory (append-only list per partition)</td>
+</tr>
+<tr>
+<td><strong>Max message size</strong></td>
+<td>1 MB (mention Kafka default)</td>
+</tr>
+<tr>
+<td><strong>Retention</strong></td>
+<td>Configurable per topic (default: 1,000 messages or 7 days)</td>
+</tr>
+<tr>
+<td><strong>Consumer group rebalance</strong></td>
+<td>Simple round-robin partition assignment</td>
+</tr>
+<tr>
+<td><strong>Real disk I/O?</strong></td>
+<td>No — mock append-only log for interview</td>
+</tr>
+<tr>
+<td><strong>Authentication?</strong></td>
+<td>Out of scope; mention ACLs as production concern</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on the whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<pre class="codehilite"><code>Topic, Partition, Message, Publisher, Subscriber, ConsumerGroup, Subscription, Broker, Offset, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="message-a-single-unit-of-data"><strong>Message</strong> — A single unit of data</h4>
+<pre class="codehilite"><code>Properties:
+  - message_id: str          (UUID, globally unique)
+  - key: Optional[str]       (determines partition routing)
+  - value: Any               (payload; dict, string, bytes)
+  - timestamp: datetime      (when published)
+  - headers: Dict[str, str]  (optional metadata: source, correlation-id)
+  - offset: int              (position within its partition; set by broker)
+
+Behaviors:
+  - (immutable data holder once created)
+</code></pre>
+
+<h4 id="partition-an-ordered-append-only-log-segment-of-a-topic"><strong>Partition</strong> — An ordered, append-only log segment of a topic</h4>
+<pre class="codehilite"><code>Properties:
+  - partition_id: int
+  - topic_name: str
+  - messages: List[Message]  (append-only; position = offset)
+  - lock: threading.Lock     (guards concurrent appends)
+
+Behaviors:
+  - append(message): Add message, set offset = len(messages) - 1
+  - read(offset): Return message at given offset (or None)
+  - size(): Number of messages stored
+</code></pre>
+
+<h4 id="topic-a-named-channel-composed-of-n-partitions"><strong>Topic</strong> — A named channel composed of N partitions</h4>
+<pre class="codehilite"><code>Properties:
+  - topic_name: str
+  - num_partitions: int
+  - partitions: List[Partition]
+  - retention_limit: int     (max messages per partition before pruning)
+
+Behaviors:
+  - get_partition(key): hash(key) % num_partitions → Partition
+  - append(key, message): Route to correct partition and append
+  - partition_count(): Return num_partitions
+</code></pre>
+
+<h4 id="publisher-a-producer-of-messages"><strong>Publisher</strong> — A producer of messages</h4>
+<pre class="codehilite"><code>Properties:
+  - publisher_id: str
+  - name: str
+
+Behaviors:
+  - (identity holder; actual publish goes through Broker API)
+</code></pre>
+
+<h4 id="subscriber-an-individual-consumer-within-a-group"><strong>Subscriber</strong> — An individual consumer within a group</h4>
+<pre class="codehilite"><code>Properties:
+  - subscriber_id: str
+  - name: str
+  - group_id: str            (which consumer group this subscriber belongs to)
+
+Behaviors:
+  - (identity holder; actual consume goes through Broker API)
+</code></pre>
+
+<h4 id="consumergroup-a-logical-group-of-subscribers-sharing-a-topics-partitions"><strong>ConsumerGroup</strong> — A logical group of subscribers sharing a topic's partitions</h4>
+<pre class="codehilite"><code>Properties:
+  - group_id: str
+  - topic_name: str
+  - subscribers: List[Subscriber]
+  - partition_assignments: Dict[str, List[int]]   (subscriber_id → [partition_ids])
+  - offsets: Dict[Tuple[str, int], int]           ((subscriber_id, partition_id) → next offset)
+  - lock: threading.RLock
+
+Behaviors:
+  - add_subscriber(subscriber): Register and rebalance partitions
+  - remove_subscriber(subscriber_id): Unregister and rebalance
+  - assign_partitions(): Round-robin partition → subscriber assignment
+  - get_offset(subscriber_id, partition_id): Current read position
+  - advance_offset(subscriber_id, partition_id): Increment offset after consume
+</code></pre>
+
+<h4 id="broker-central-coordinator-singleton"><strong>Broker</strong> — Central coordinator (Singleton)</h4>
+<pre class="codehilite"><code>Properties:
+  - topics: Dict[str, Topic]
+  - consumer_groups: Dict[str, ConsumerGroup]
+  - publishers: Dict[str, Publisher]
+  - subscribers: Dict[str, Subscriber]
+  - observers: List[BrokerObserver]          (for audit/monitoring)
+  - lock: threading.RLock
+
+Behaviors:
+  - create_topic(name, num_partitions, retention): Create topic
+  - register_publisher(publisher_id, name): Register publisher
+  - register_subscriber(subscriber_id, group_id, name): Register subscriber
+  - subscribe(group_id, topic_name, subscriber_id): Join group on topic
+  - publish(publisher_id, topic_name, key, value): Route and append message
+  - consume(group_id, subscriber_id): Return next unconsumed message
+  - get_offset(group_id, subscriber_id): Current offset for subscriber
+  - seek(group_id, subscriber_id, partition_id, offset): Reposition reader
+</code></pre>
+
+<h3 id="step-23-define-enumerations-state-type">Step 2.3: Define Enumerations (State &amp; Type)</h3>
+<pre class="codehilite"><code class="language-python">from enum import Enum
+
+class DeliveryGuarantee(Enum):
+    AT_MOST_ONCE  = &quot;at_most_once&quot;   # advance offset BEFORE processing
+    AT_LEAST_ONCE = &quot;at_least_once&quot;  # advance offset AFTER processing (default)
+    EXACTLY_ONCE  = &quot;exactly_once&quot;   # idempotent + transactional commit
+
+class MessageStatus(Enum):
+    PENDING    = &quot;pending&quot;    # published, not yet consumed
+    CONSUMED   = &quot;consumed&quot;   # consumed by at least one group
+    DLQ        = &quot;dlq&quot;        # moved to dead-letter queue after N retries
+    EXPIRED    = &quot;expired&quot;    # past retention TTL
+
+class TopicStatus(Enum):
+    ACTIVE   = &quot;active&quot;    # accepting publishes and consumes
+    PAUSED   = &quot;paused&quot;    # no new publishes accepted
+    DELETED  = &quot;deleted&quot;   # permanently removed
+
+class GroupStatus(Enum):
+    ACTIVE      = &quot;active&quot;      # consuming normally
+    REBALANCING = &quot;rebalancing&quot; # partition reassignment in progress
+    INACTIVE    = &quot;inactive&quot;    # no active subscribers
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Message</strong></td>
+<td>Immutable data unit with identity and position</td>
+<td>Can't track delivery or replay</td>
+</tr>
+<tr>
+<td><strong>Partition</strong></td>
+<td>Ordered log for parallelism and ordering guarantee</td>
+<td>No ordering or horizontal scale</td>
+</tr>
+<tr>
+<td><strong>Topic</strong></td>
+<td>Groups related partitions under a name</td>
+<td>No routing or namespace</td>
+</tr>
+<tr>
+<td><strong>Publisher</strong></td>
+<td>Identity for audit, rate limiting, ACLs</td>
+<td>Can't attribute messages to source</td>
+</tr>
+<tr>
+<td><strong>Subscriber</strong></td>
+<td>Individual consumer identity within a group</td>
+<td>Can't assign partitions</td>
+</tr>
+<tr>
+<td><strong>ConsumerGroup</strong></td>
+<td>Load-balance partitions; enable fan-out</td>
+<td>Every subscriber would duplicate or miss messages</td>
+</tr>
+<tr>
+<td><strong>Broker</strong></td>
+<td>Central coordinator, thread-safe single source of truth</td>
+<td>No consistent routing or offset management</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-create-topic"><strong>1. Create Topic</strong></h4>
+<pre class="codehilite"><code class="language-python">def create_topic(topic_name: str, num_partitions: int = 3,
+                 retention_limit: int = 1000) -&gt; Topic:
+    &quot;&quot;&quot;
+    Create a named topic with N partitions.
+
+    Returns: Topic object.
+    Raises: TopicAlreadyExistsError if topic_name already registered.
+    Idempotency: NO — call once per topic name.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="2-register-publisher"><strong>2. Register Publisher</strong></h4>
+<pre class="codehilite"><code class="language-python">def register_publisher(publisher_id: str, name: str) -&gt; Publisher:
+    &quot;&quot;&quot;
+    Register a publisher identity.
+    Returns: Publisher object.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="3-register-subscriber"><strong>3. Register Subscriber</strong></h4>
+<pre class="codehilite"><code class="language-python">def register_subscriber(subscriber_id: str, group_id: str,
+                        name: str) -&gt; Subscriber:
+    &quot;&quot;&quot;
+    Register a subscriber identity belonging to group_id.
+    Returns: Subscriber object.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="4-subscribe-to-topic-critical"><strong>4. Subscribe to Topic</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def subscribe(group_id: str, topic_name: str,
+              subscriber_id: str) -&gt; ConsumerGroup:
+    &quot;&quot;&quot;
+    Add subscriber_id to consumer group group_id on topic_name.
+    If group doesn't exist, create it.
+    Triggers partition rebalance among group members.
+
+    Precondition: topic exists, subscriber registered.
+    Postcondition: subscriber assigned one or more partitions.
+
+    Returns: Updated ConsumerGroup.
+    Raises:
+      - TopicNotFoundError: topic_name invalid.
+      - SubscriberNotFoundError: subscriber_id not registered.
+
+    Concurrency: THREAD-SAFE (RLock on group).
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="5-publish-critical"><strong>5. Publish</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def publish(publisher_id: str, topic_name: str,
+            key: Optional[str], value: Any) -&gt; Message:
+    &quot;&quot;&quot;
+    Publish a message to a topic.
+    Partition routing: hash(key) % num_partitions (or round-robin if key=None).
+
+    Returns: Message with assigned offset and partition.
+    Raises:
+      - TopicNotFoundError: topic_name invalid.
+      - PublisherNotFoundError: publisher_id not registered.
+
+    Concurrency: THREAD-SAFE — each partition has its own lock.
+    Idempotency: NO — each call appends a new message.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="6-consume-critical"><strong>6. Consume</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def consume(group_id: str, subscriber_id: str) -&gt; Optional[Message]:
+    &quot;&quot;&quot;
+    Return the next unconsumed message for subscriber_id within group_id.
+    Advances offset AFTER returning (at-least-once semantics).
+
+    Precondition: subscriber assigned partitions in group.
+    Postcondition: offset advanced by 1 for the consumed partition.
+
+    Returns: Message, or None if no new messages.
+    Raises:
+      - GroupNotFoundError: group_id invalid.
+      - SubscriberNotInGroupError: subscriber has not subscribed.
+
+    Concurrency: THREAD-SAFE (RLock on group offsets).
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="7-get-offset"><strong>7. Get Offset</strong></h4>
+<pre class="codehilite"><code class="language-python">def get_offset(group_id: str, subscriber_id: str) -&gt; Dict[int, int]:
+    &quot;&quot;&quot;
+    Return current offsets: {partition_id: next_offset} for subscriber.
+    Useful for monitoring lag.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="8-seek-replay"><strong>8. Seek (Replay)</strong></h4>
+<pre class="codehilite"><code class="language-python">def seek(group_id: str, subscriber_id: str,
+         partition_id: int, offset: int) -&gt; bool:
+    &quot;&quot;&quot;
+    Reposition subscriber's read cursor for a specific partition.
+    Enables message replay or skipping.
+
+    Returns: True if seek succeeded, False if offset out of range.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-32-exception-hierarchy">Step 3.2: Exception Hierarchy</h3>
+<pre class="codehilite"><code class="language-python">class BrokerException(Exception):
+    &quot;&quot;&quot;Base exception for all broker errors.&quot;&quot;&quot;
+    pass
+
+class TopicNotFoundError(BrokerException):
+    &quot;&quot;&quot;Topic name not registered.&quot;&quot;&quot;
+    pass
+
+class TopicAlreadyExistsError(BrokerException):
+    &quot;&quot;&quot;Topic with this name already created.&quot;&quot;&quot;
+    pass
+
+class PublisherNotFoundError(BrokerException):
+    &quot;&quot;&quot;Publisher ID not registered.&quot;&quot;&quot;
+    pass
+
+class SubscriberNotFoundError(BrokerException):
+    &quot;&quot;&quot;Subscriber ID not registered.&quot;&quot;&quot;
+    pass
+
+class SubscriberNotInGroupError(BrokerException):
+    &quot;&quot;&quot;Subscriber has not subscribed to the group/topic.&quot;&quot;&quot;
+    pass
+
+class GroupNotFoundError(BrokerException):
+    &quot;&quot;&quot;Consumer group not found.&quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">broker = Broker.get_instance()
+
+# 1. Create topic
+broker.create_topic(&quot;ORDERS&quot;, num_partitions=3)
+
+# 2. Register actors
+broker.register_publisher(&quot;svc-orders&quot;, &quot;Order Service&quot;)
+broker.register_subscriber(&quot;payment-1&quot;, &quot;payment-group&quot;, &quot;Payment Consumer 1&quot;)
+broker.register_subscriber(&quot;payment-2&quot;, &quot;payment-group&quot;, &quot;Payment Consumer 2&quot;)
+broker.register_subscriber(&quot;analytics-1&quot;, &quot;analytics-group&quot;, &quot;Analytics Consumer&quot;)
+
+# 3. Subscribe to topic
+broker.subscribe(&quot;payment-group&quot;, &quot;ORDERS&quot;, &quot;payment-1&quot;)
+broker.subscribe(&quot;payment-group&quot;, &quot;ORDERS&quot;, &quot;payment-2&quot;)
+broker.subscribe(&quot;analytics-group&quot;, &quot;ORDERS&quot;, &quot;analytics-1&quot;)
+
+# 4. Publish messages
+broker.publish(&quot;svc-orders&quot;, &quot;ORDERS&quot;, &quot;order_101&quot;, {&quot;amount&quot;: 99.99})
+broker.publish(&quot;svc-orders&quot;, &quot;ORDERS&quot;, &quot;order_102&quot;, {&quot;amount&quot;: 250.00})
+
+# 5. Consume
+msg = broker.consume(&quot;payment-group&quot;, &quot;payment-1&quot;)
+print(f&quot;Payment-1 got: {msg.value}&quot;)
+
+# 6. Check offset
+offsets = broker.get_offset(&quot;payment-group&quot;, &quot;payment-1&quot;)
+print(f&quot;Offsets: {offsets}&quot;)
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and association. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>Broker HAS-A topics (1:N Composition)
+  └─ Broker creates and owns all topics
+
+Topic HAS-A partitions (1:N Composition)
+  └─ Topic owns N Partition objects (N configured at creation)
+
+Partition HAS-A messages (1:N Composition)
+  └─ Partition owns its append-only message log
+
+Broker HAS-A consumer_groups (1:N Composition)
+  └─ Broker creates and tracks all consumer groups
+
+ConsumerGroup REFERENCES Topic (1:1 Association)
+  └─ Group reads from one topic (no ownership)
+
+ConsumerGroup HAS-A subscribers (1:N Aggregation)
+  └─ Group tracks its subscriber roster (subscribers exist independently)
+
+Subscriber BELONGS-TO ConsumerGroup (N:1 Association)
+  └─ A subscriber is a member of exactly one group per topic
+
+Publisher USES Broker (1:1 Association)
+  └─ Publisher calls broker.publish(); no ownership
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌───────────────────────────────────────────────┐
+│            Broker (Singleton)                 │
+├───────────────────────────────────────────────┤
+│ - _instance: Broker                           │
+│ - topics: Dict[str, Topic]                    │
+│ - consumer_groups: Dict[str, ConsumerGroup]   │
+│ - publishers: Dict[str, Publisher]            │
+│ - subscribers: Dict[str, Subscriber]          │
+│ - observers: List[BrokerObserver]             │
+│ - _lock: threading.RLock                      │
+├───────────────────────────────────────────────┤
+│ + get_instance(): Broker                      │
+│ + create_topic(name, partitions): Topic       │
+│ + register_publisher(id, name): Publisher     │
+│ + register_subscriber(id, gid, name): Sub     │
+│ + subscribe(group, topic, sub): ConsumerGroup │
+│ + publish(pub_id, topic, key, value): Message │
+│ + consume(group_id, sub_id): Optional[Message]│
+│ + get_offset(group, sub): Dict[int, int]      │
+│ + seek(group, sub, partition, offset): bool   │
+└───────────────┬───────────────────────────────┘
+    manages 1:N │
+                ▼
+    ┌───────────────────────────────────┐
+    │             Topic                 │
+    ├───────────────────────────────────┤
+    │ - topic_name: str                 │
+    │ - num_partitions: int             │
+    │ - partitions: List[Partition]     │
+    │ - retention_limit: int            │
+    │ - status: TopicStatus             │
+    ├───────────────────────────────────┤
+    │ + get_partition(key): Partition   │
+    │ + append(key, message): int       │
+    │ + partition_count(): int          │
+    └───────────┬───────────────────────┘
+    contains 1:N│
+                ▼
+    ┌───────────────────────────────────┐
+    │           Partition               │
+    ├───────────────────────────────────┤
+    │ - partition_id: int               │
+    │ - topic_name: str                 │
+    │ - messages: List[Message]         │
+    │ - lock: threading.Lock            │
+    ├───────────────────────────────────┤
+    │ + append(message): int (offset)   │
+    │ + read(offset): Optional[Message] │
+    │ + size(): int                     │
+    └───────────────────────────────────┘
+                    ▲ reads from
+                    │
+    ┌───────────────────────────────────┐
+    │          ConsumerGroup            │
+    ├───────────────────────────────────┤
+    │ - group_id: str                   │
+    │ - topic_name: str                 │
+    │ - subscribers: List[Subscriber]   │
+    │ - partition_assignments: Dict     │
+    │ - offsets: Dict[(sub,part), int]  │
+    │ - lock: threading.RLock           │
+    ├───────────────────────────────────┤
+    │ + add_subscriber(sub): void       │
+    │ + assign_partitions(): void       │
+    │ + get_offset(sub, part): int      │
+    │ + advance_offset(sub, part): void │
+    └───────────┬───────────────────────┘
+    roster 1:N  │
+                ▼
+    ┌───────────────────────┐    ┌───────────────────────┐
+    │      Subscriber       │    │      Publisher         │
+    ├───────────────────────┤    ├───────────────────────┤
+    │ - subscriber_id: str  │    │ - publisher_id: str   │
+    │ - name: str           │    │ - name: str           │
+    │ - group_id: str       │    └───────────────────────┘
+    └───────────────────────┘
+
+    ┌─────────────────────────────────────────┐
+    │               Message                   │
+    ├─────────────────────────────────────────┤
+    │ - message_id: str (UUID)                │
+    │ - key: Optional[str]                    │
+    │ - value: Any                            │
+    │ - timestamp: datetime                   │
+    │ - offset: int (set by Partition.append) │
+    │ - partition_id: int                     │
+    └─────────────────────────────────────────┘
+
+OBSERVER PATTERN (Audit/Monitoring):
+┌───────────────────────────────────────┐
+│  BrokerObserver (Abstract)            │
+├───────────────────────────────────────┤
+│ + on_publish(topic, message): void    │
+│ + on_consume(group, sub, message)     │
+└──┬────────────────────────────────────┘
+   │ implemented by
+   ├─→ ConsoleAuditObserver (log all events)
+   ├─→ MetricsObserver (count msgs/sec)
+   └─→ AlertObserver (lag &gt; threshold)
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Broker → Topics</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Broker creates and owns all topics</td>
+</tr>
+<tr>
+<td>Topic → Partitions</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Topic owns N ordered log segments</td>
+</tr>
+<tr>
+<td>Partition → Messages</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Partition is the append-only log</td>
+</tr>
+<tr>
+<td>Broker → ConsumerGroups</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Broker tracks all groups</td>
+</tr>
+<tr>
+<td>ConsumerGroup → Subscribers</td>
+<td>1:N</td>
+<td>Aggregation</td>
+<td>Group tracks member roster</td>
+</tr>
+<tr>
+<td>ConsumerGroup → Topic</td>
+<td>N:1</td>
+<td>Association</td>
+<td>Many groups can read one topic</td>
+</tr>
+<tr>
+<td>Publisher → Broker</td>
+<td>N:1</td>
+<td>Association</td>
+<td>Publishers call broker API</td>
+</tr>
+<tr>
+<td>Broker → BrokerObserver</td>
+<td>1:N</td>
+<td>Association</td>
+<td>System notifies many listeners</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-observer-pub-sub-core-the-system-is-an-observer-pattern">Pattern 1: <strong>Observer / Pub-Sub Core</strong> (The System IS an Observer Pattern)</h3>
+<p><strong>Problem</strong>: Publishers and subscribers must communicate without knowing about each other. A new subscriber joining should not require changes to publisher code.</p>
+<p><strong>Solution</strong>: The Broker acts as the mediator. Publishers push to the broker; subscribers pull from the broker. The broker's <code>observers</code> list adds a second layer for monitoring/audit.</p>
+<pre class="codehilite"><code class="language-python">class BrokerObserver(ABC):
+    @abstractmethod
+    def on_publish(self, topic_name: str, message: 'Message') -&gt; None:
+        pass
+
+    @abstractmethod
+    def on_consume(self, group_id: str, subscriber_id: str,
+                   message: 'Message') -&gt; None:
+        pass
+
+class ConsoleAuditObserver(BrokerObserver):
+    def on_publish(self, topic_name: str, message: 'Message') -&gt; None:
+        print(f&quot;[PUBLISH] topic={topic_name} key={message.key} &quot;
+              f&quot;partition={message.partition_id} offset={message.offset}&quot;)
+
+    def on_consume(self, group_id: str, subscriber_id: str,
+                   message: 'Message') -&gt; None:
+        print(f&quot;[CONSUME] group={group_id} sub={subscriber_id} &quot;
+              f&quot;offset={message.offset} value={message.value}&quot;)
+
+# Usage
+broker.add_observer(ConsoleAuditObserver())
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Decoupled producers from consumers, ✅ Easy to add monitoring without touching core logic
+<strong>Trade-off</strong>: ⚠️ Observer list grows; keep notifications lightweight or run them async</p>
+<hr />
+<h3 id="pattern-2-strategy-for-delivery-guarantees">Pattern 2: <strong>Strategy</strong> (For Delivery Guarantees)</h3>
+<p><strong>Problem</strong>: Different consumers need different delivery guarantees. A payments service needs at-least-once; an analytics service can tolerate at-most-once for higher throughput.</p>
+<p><strong>Solution</strong>: Inject a <code>DeliveryStrategy</code> that controls when the offset advances relative to message processing.</p>
+<pre class="codehilite"><code class="language-python">class DeliveryStrategy(ABC):
+    @abstractmethod
+    def consume_and_process(self, broker: 'Broker', group_id: str,
+                            subscriber_id: str,
+                            handler: Callable) -&gt; Optional['Message']:
+        pass
+
+class AtLeastOnceStrategy(DeliveryStrategy):
+    &quot;&quot;&quot;Advance offset AFTER successful processing. Retry on failure.&quot;&quot;&quot;
+    def consume_and_process(self, broker, group_id, subscriber_id, handler):
+        msg = broker.consume(group_id, subscriber_id)   # does NOT advance offset yet
+        if msg:
+            try:
+                handler(msg)
+                broker.commit_offset(group_id, subscriber_id)  # advance on success
+            except Exception:
+                pass  # offset not advanced → message will be re-delivered
+        return msg
+
+class AtMostOnceStrategy(DeliveryStrategy):
+    &quot;&quot;&quot;Advance offset BEFORE processing. Message may be lost on crash.&quot;&quot;&quot;
+    def consume_and_process(self, broker, group_id, subscriber_id, handler):
+        msg = broker.consume(group_id, subscriber_id)  # consume + advance immediately
+        if msg:
+            handler(msg)  # if this crashes, message is gone
+        return msg
+
+# Usage: inject strategy per consumer
+strategy = AtLeastOnceStrategy()
+strategy.consume_and_process(broker, &quot;payment-group&quot;, &quot;payment-1&quot;, process_payment)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Swap guarantee without changing consumer code, ✅ Mix strategies across consumer groups
+<strong>Trade-off</strong>: ⚠️ Exactly-once requires distributed transactions (out of scope for interview)</p>
+<hr />
+<h3 id="pattern-3-singleton-for-broker">Pattern 3: <strong>Singleton</strong> (For Broker)</h3>
+<p><strong>Problem</strong>: Every service in the process must reach the same broker instance with the same topic state and offset state.</p>
+<p><strong>Solution</strong>: Double-checked locking Singleton with <code>RLock</code> to avoid re-entrancy issues when <code>__init__</code> is called multiple times.</p>
+<pre class="codehilite"><code class="language-python">class Broker:
+    _instance = None
+    _class_lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):   # accept *args/**kwargs so subclasses/tests don't break
+        if cls._instance is None:
+            with cls._class_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+        self._initialized = True
+        self.topics: Dict[str, 'Topic'] = {}
+        self.consumer_groups: Dict[str, 'ConsumerGroup'] = {}
+        self.publishers: Dict[str, 'Publisher'] = {}
+        self.subscribers: Dict[str, 'Subscriber'] = {}
+        self.observers: List['BrokerObserver'] = []
+        self._lock = threading.RLock()   # RLock: broker methods can call each other
+
+    @classmethod
+    def get_instance(cls) -&gt; 'Broker':
+        return cls()
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Single source of truth, ✅ Thread-safe (double-checked lock), ✅ <code>RLock</code> allows re-entrant calls
+<strong>Trade-off</strong>: ⚠️ Global state makes unit testing harder (reset <code>_instance = None</code> in test teardown)</p>
+<hr />
+<h3 id="pattern-4-factory-method-for-messages">Pattern 4: <strong>Factory Method</strong> (For Messages)</h3>
+<p><strong>Problem</strong>: Creating a message requires generating a UUID, capturing a timestamp, and assigning a partition offset. Scattering this logic across callers is error-prone.</p>
+<p><strong>Solution</strong>: Centralize creation in <code>Partition.append()</code>.</p>
+<pre class="codehilite"><code class="language-python">class Partition:
+    def append(self, key: Optional[str], value: Any) -&gt; 'Message':
+        with self.lock:
+            offset = len(self.messages)
+            msg = Message(
+                message_id=str(uuid.uuid4()),
+                key=key,
+                value=value,
+                timestamp=datetime.now(),
+                offset=offset,
+                partition_id=self.partition_id,
+            )
+            self.messages.append(msg)
+            return msg
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Consistent message initialization, ✅ Offset assignment is always correct
+<strong>Trade-off</strong>: ⚠️ Partition knows about Message internals; acceptable since they are tightly coupled</p>
+<hr />
+<h3 id="pattern-5-thread-pool-for-concurrent-consumers">Pattern 5: <strong>Thread Pool</strong> (For Concurrent Consumers)</h3>
+<p><strong>Problem</strong>: A service may want to run several consumers in parallel to drain a high-throughput topic without blocking.</p>
+<p><strong>Solution</strong>: Wrap consume loops in a <code>ThreadPoolExecutor</code>.</p>
+<pre class="codehilite"><code class="language-python">from concurrent.futures import ThreadPoolExecutor
+
+def start_consumer_workers(broker, group_id, subscriber_ids, handler, num_workers=4):
+    def worker(sub_id):
+        while True:
+            msg = broker.consume(group_id, sub_id)
+            if msg:
+                handler(msg)
+
+    with ThreadPoolExecutor(max_workers=num_workers) as pool:
+        futures = [pool.submit(worker, sid) for sid in subscriber_ids]
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Parallel consumption across partitions, ✅ CPU-bound handlers don't block each other
+<strong>Trade-off</strong>: ⚠️ Requires careful shutdown signaling; use a threading.Event stop flag in production</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Observer / Pub-Sub</strong></td>
+<td>Decouple producers from consumers + monitoring hooks</td>
+<td>Zero coupling; new consumers require no publisher changes</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Varying delivery guarantees per consumer group</td>
+<td>Swap AT-MOST-ONCE / AT-LEAST-ONCE without code change</td>
+</tr>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>Need single consistent broker state</td>
+<td>Thread-safe single source of truth</td>
+</tr>
+<tr>
+<td><strong>Factory Method</strong></td>
+<td>Consistent message creation with correct offsets</td>
+<td>No scattered UUID / timestamp / offset logic</td>
+</tr>
+<tr>
+<td><strong>Thread Pool</strong></td>
+<td>Parallel consumption across partitions</td>
+<td>Throughput scales with worker count</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+Pub-Sub Message Broker — Interview Implementation
+Demonstrates:
+1. Topic creation with N partitions
+2. Publisher registration and multi-partition publish
+3. Consumer group subscription and partition assignment
+4. Fan-out: two independent groups receive same messages
+5. Offset tracking and replay via seek
+&quot;&quot;&quot;
+
+from __future__ import annotations
+from enum import Enum
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
+import threading
+import uuid
+
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class DeliveryGuarantee(Enum):
+    AT_MOST_ONCE  = &quot;at_most_once&quot;
+    AT_LEAST_ONCE = &quot;at_least_once&quot;
+    EXACTLY_ONCE  = &quot;exactly_once&quot;
+
+
+class TopicStatus(Enum):
+    ACTIVE  = &quot;active&quot;
+    PAUSED  = &quot;paused&quot;
+    DELETED = &quot;deleted&quot;
+
+
+# ============================================================================
+# CORE ENTITIES
+# ============================================================================
+
+class Message:
+    &quot;&quot;&quot;Immutable data unit traveling through the broker.&quot;&quot;&quot;
+    def __init__(self, message_id: str, key: Optional[str], value: Any,
+                 timestamp: datetime, offset: int, partition_id: int,
+                 topic_name: str):
+        self.message_id   = message_id
+        self.key          = key
+        self.value        = value
+        self.timestamp    = timestamp
+        self.offset       = offset
+        self.partition_id = partition_id
+        self.topic_name   = topic_name
+
+    def __repr__(self) -&gt; str:
+        return (f&quot;Message(topic={self.topic_name}, partition={self.partition_id}, &quot;
+                f&quot;offset={self.offset}, key={self.key!r}, value={self.value!r})&quot;)
+
+
+class Partition:
+    &quot;&quot;&quot;Ordered, append-only log segment of a topic.&quot;&quot;&quot;
+    def __init__(self, partition_id: int, topic_name: str,
+                 retention_limit: int = 1000):
+        self.partition_id   = partition_id
+        self.topic_name     = topic_name
+        self.retention_limit = retention_limit
+        self.messages: List[Message] = []
+        self.lock = threading.Lock()
+
+    def append(self, key: Optional[str], value: Any) -&gt; Message:
+        &quot;&quot;&quot;Append a new message; offset = current length before append.&quot;&quot;&quot;
+        with self.lock:
+            offset = len(self.messages)
+            msg = Message(
+                message_id=str(uuid.uuid4()),
+                key=key,
+                value=value,
+                timestamp=datetime.now(),
+                offset=offset,
+                partition_id=self.partition_id,
+                topic_name=self.topic_name,
+            )
+            self.messages.append(msg)
+            # Enforce retention (drop oldest if over limit)
+            if len(self.messages) &gt; self.retention_limit:
+                self.messages = self.messages[-self.retention_limit:]
+            return msg
+
+    def read(self, offset: int) -&gt; Optional[Message]:
+        &quot;&quot;&quot;Return message at given offset, or None if out of range.&quot;&quot;&quot;
+        with self.lock:
+            if 0 &lt;= offset &lt; len(self.messages):
+                return self.messages[offset]
+            return None
+
+    def size(self) -&gt; int:
+        with self.lock:
+            return len(self.messages)
+
+
+class Topic:
+    &quot;&quot;&quot;Named channel composed of N partitions.&quot;&quot;&quot;
+    def __init__(self, topic_name: str, num_partitions: int = 3,
+                 retention_limit: int = 1000):
+        self.topic_name     = topic_name
+        self.num_partitions = num_partitions
+        self.retention_limit = retention_limit
+        self.status         = TopicStatus.ACTIVE
+        self.partitions: List[Partition] = [
+            Partition(i, topic_name, retention_limit)
+            for i in range(num_partitions)
+        ]
+        self._rr_counter = 0  # round-robin counter for keyless messages
+        self._rr_lock    = threading.Lock()
+
+    def get_partition_for_key(self, key: Optional[str]) -&gt; Partition:
+        &quot;&quot;&quot;Route message to partition by key hash, or round-robin if no key.&quot;&quot;&quot;
+        if key is not None:
+            idx = hash(key) % self.num_partitions
+        else:
+            with self._rr_lock:
+                idx = self._rr_counter % self.num_partitions
+                self._rr_counter += 1
+        return self.partitions[idx]
+
+    def append(self, key: Optional[str], value: Any) -&gt; Message:
+        partition = self.get_partition_for_key(key)
+        return partition.append(key, value)
+
+    def partition_count(self) -&gt; int:
+        return self.num_partitions
+
+
+class Publisher:
+    &quot;&quot;&quot;Identity object for a message producer.&quot;&quot;&quot;
+    def __init__(self, publisher_id: str, name: str):
+        self.publisher_id = publisher_id
+        self.name         = name
+
+    def __repr__(self) -&gt; str:
+        return f&quot;Publisher(id={self.publisher_id!r}, name={self.name!r})&quot;
+
+
+class Subscriber:
+    &quot;&quot;&quot;Individual consumer within a consumer group.&quot;&quot;&quot;
+    def __init__(self, subscriber_id: str, group_id: str, name: str):
+        self.subscriber_id = subscriber_id
+        self.group_id      = group_id
+        self.name          = name
+
+    def __repr__(self) -&gt; str:
+        return f&quot;Subscriber(id={self.subscriber_id!r}, group={self.group_id!r})&quot;
+
+
+class ConsumerGroup:
+    &quot;&quot;&quot;
+    A logical group of subscribers sharing a topic's partitions.
+    Within a group, each partition is assigned to exactly one subscriber.
+    Multiple groups receive independent copies of every message (fan-out).
+    &quot;&quot;&quot;
+    def __init__(self, group_id: str, topic_name: str, num_partitions: int):
+        self.group_id        = group_id
+        self.topic_name      = topic_name
+        self.num_partitions  = num_partitions
+        self.subscribers: List[Subscriber] = []
+        # subscriber_id -&gt; [partition_ids]
+        self.partition_assignments: Dict[str, List[int]] = {}
+        # (subscriber_id, partition_id) -&gt; next_offset_to_read
+        self.offsets: Dict[Tuple[str, int], int] = {}
+        self._lock = threading.RLock()  # RLock: assign_partitions calls other locked methods
+
+    def add_subscriber(self, subscriber: Subscriber) -&gt; None:
+        with self._lock:
+            if any(s.subscriber_id == subscriber.subscriber_id
+                   for s in self.subscribers):
+                return  # already a member
+            self.subscribers.append(subscriber)
+            self.assign_partitions()
+
+    def remove_subscriber(self, subscriber_id: str) -&gt; None:
+        with self._lock:
+            self.subscribers = [s for s in self.subscribers
+                                 if s.subscriber_id != subscriber_id]
+            if subscriber_id in self.partition_assignments:
+                del self.partition_assignments[subscriber_id]
+            # clean up offsets for removed subscriber
+            self.offsets = {k: v for k, v in self.offsets.items()
+                            if k[0] != subscriber_id}
+            self.assign_partitions()
+
+    def assign_partitions(self) -&gt; None:
+        &quot;&quot;&quot;Round-robin partition assignment across current subscribers.&quot;&quot;&quot;
+        with self._lock:
+            if not self.subscribers:
+                self.partition_assignments = {}
+                return
+            # Reset assignments
+            for sub in self.subscribers:
+                self.partition_assignments[sub.subscriber_id] = []
+            # Distribute partitions round-robin
+            for partition_id in range(self.num_partitions):
+                sub = self.subscribers[partition_id % len(self.subscribers)]
+                self.partition_assignments[sub.subscriber_id].append(partition_id)
+            # Initialize offset for any newly assigned (partition, subscriber) pair
+            for sub in self.subscribers:
+                for pid in self.partition_assignments[sub.subscriber_id]:
+                    key = (sub.subscriber_id, pid)
+                    if key not in self.offsets:
+                        self.offsets[key] = 0  # start from beginning
+
+    def get_assigned_partitions(self, subscriber_id: str) -&gt; List[int]:
+        with self._lock:
+            return list(self.partition_assignments.get(subscriber_id, []))
+
+    def get_offset(self, subscriber_id: str, partition_id: int) -&gt; int:
+        with self._lock:
+            return self.offsets.get((subscriber_id, partition_id), 0)
+
+    def advance_offset(self, subscriber_id: str, partition_id: int) -&gt; None:
+        with self._lock:
+            key = (subscriber_id, partition_id)
+            self.offsets[key] = self.offsets.get(key, 0) + 1
+
+    def seek(self, subscriber_id: str, partition_id: int, offset: int) -&gt; None:
+        with self._lock:
+            self.offsets[(subscriber_id, partition_id)] = offset
+
+    def all_offsets(self, subscriber_id: str) -&gt; Dict[int, int]:
+        with self._lock:
+            return {pid: self.offsets.get((subscriber_id, pid), 0)
+                    for pid in self.partition_assignments.get(subscriber_id, [])}
+
+
+# ============================================================================
+# OBSERVER PATTERN (Audit / Monitoring)
+# ============================================================================
+
+class BrokerObserver(ABC):
+    @abstractmethod
+    def on_publish(self, topic_name: str, message: Message) -&gt; None:
+        pass
+
+    @abstractmethod
+    def on_consume(self, group_id: str, subscriber_id: str,
+                   message: Message) -&gt; None:
+        pass
+
+
+class ConsoleAuditObserver(BrokerObserver):
+    def on_publish(self, topic_name: str, message: Message) -&gt; None:
+        ts = message.timestamp.strftime(&quot;%H:%M:%S&quot;)
+        print(f&quot;  [PUBLISH  {ts}] topic={topic_name:12} &quot;
+              f&quot;partition={message.partition_id} offset={message.offset:4} &quot;
+              f&quot;key={str(message.key):12} value={message.value}&quot;)
+
+    def on_consume(self, group_id: str, subscriber_id: str,
+                   message: Message) -&gt; None:
+        ts = datetime.now().strftime(&quot;%H:%M:%S&quot;)
+        print(f&quot;  [CONSUME  {ts}] group={group_id:14} sub={subscriber_id:12} &quot;
+              f&quot;partition={message.partition_id} offset={message.offset:4} &quot;
+              f&quot;value={message.value}&quot;)
+
+
+# ============================================================================
+# BROKER (SINGLETON)
+# ============================================================================
+
+class Broker:
+    &quot;&quot;&quot;
+    Singleton: Central coordinator for all pub-sub operations.
+    Uses RLock throughout so methods can safely call each other.
+    &quot;&quot;&quot;
+    _instance: Optional['Broker'] = None
+    _class_lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        &quot;&quot;&quot;Accept *args/**kwargs so super().__new__ doesn't reject them.&quot;&quot;&quot;
+        if cls._instance is None:
+            with cls._class_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+        self._initialized = True
+        self.topics: Dict[str, Topic] = {}
+        self.consumer_groups: Dict[str, ConsumerGroup] = {}
+        self.publishers: Dict[str, Publisher] = {}
+        self.subscribers: Dict[str, Subscriber] = {}
+        self.observers: List[BrokerObserver] = []
+        self._lock = threading.RLock()   # RLock: broker methods call each other
+
+    @classmethod
+    def get_instance(cls) -&gt; 'Broker':
+        return cls()
+
+    # ── Topic Management ──────────────────────────────────────────────────────
+
+    def create_topic(self, topic_name: str, num_partitions: int = 3,
+                     retention_limit: int = 1000) -&gt; Topic:
+        with self._lock:
+            if topic_name in self.topics:
+                raise ValueError(f&quot;Topic '{topic_name}' already exists&quot;)
+            topic = Topic(topic_name, num_partitions, retention_limit)
+            self.topics[topic_name] = topic
+            print(f&quot;[Broker] Topic '{topic_name}' created &quot;
+                  f&quot;({num_partitions} partitions)&quot;)
+            return topic
+
+    # ── Registration ──────────────────────────────────────────────────────────
+
+    def register_publisher(self, publisher_id: str, name: str) -&gt; Publisher:
+        with self._lock:
+            pub = Publisher(publisher_id, name)
+            self.publishers[publisher_id] = pub
+            return pub
+
+    def register_subscriber(self, subscriber_id: str, group_id: str,
+                            name: str) -&gt; Subscriber:
+        with self._lock:
+            sub = Subscriber(subscriber_id, group_id, name)
+            self.subscribers[subscriber_id] = sub
+            return sub
+
+    # ── Subscribe ─────────────────────────────────────────────────────────────
+
+    def subscribe(self, group_id: str, topic_name: str,
+                  subscriber_id: str) -&gt; ConsumerGroup:
+        with self._lock:
+            if topic_name not in self.topics:
+                raise ValueError(f&quot;Topic '{topic_name}' not found&quot;)
+            if subscriber_id not in self.subscribers:
+                raise ValueError(f&quot;Subscriber '{subscriber_id}' not registered&quot;)
+
+            topic = self.topics[topic_name]
+            key = f&quot;{group_id}::{topic_name}&quot;
+            if key not in self.consumer_groups:
+                group = ConsumerGroup(group_id, topic_name,
+                                      topic.num_partitions)
+                self.consumer_groups[key] = group
+            else:
+                group = self.consumer_groups[key]
+
+            sub = self.subscribers[subscriber_id]
+            group.add_subscriber(sub)
+            assignments = group.get_assigned_partitions(subscriber_id)
+            print(f&quot;[Broker] '{subscriber_id}' joined group '{group_id}' &quot;
+                  f&quot;on topic '{topic_name}' → partitions {assignments}&quot;)
+            return group
+
+    def _get_group(self, group_id: str, topic_name: str) -&gt; Optional[ConsumerGroup]:
+        key = f&quot;{group_id}::{topic_name}&quot;
+        return self.consumer_groups.get(key)
+
+    def _find_group_for_subscriber(self, group_id: str,
+                                   subscriber_id: str) -&gt; Optional[ConsumerGroup]:
+        &quot;&quot;&quot;Find the ConsumerGroup object for (group_id, subscriber_id).&quot;&quot;&quot;
+        with self._lock:
+            sub = self.subscribers.get(subscriber_id)
+            if not sub:
+                return None
+            # Search groups matching group_id that have this subscriber
+            for key, group in self.consumer_groups.items():
+                if group.group_id == group_id:
+                    if any(s.subscriber_id == subscriber_id
+                           for s in group.subscribers):
+                        return group
+            return None
+
+    # ── Publish ───────────────────────────────────────────────────────────────
+
+    def publish(self, publisher_id: str, topic_name: str,
+                key: Optional[str], value: Any) -&gt; Message:
+        with self._lock:
+            if topic_name not in self.topics:
+                raise ValueError(f&quot;Topic '{topic_name}' not found&quot;)
+            if publisher_id not in self.publishers:
+                raise ValueError(f&quot;Publisher '{publisher_id}' not registered&quot;)
+            topic = self.topics[topic_name]
+
+        # Partition.append has its own lock; release broker lock first
+        msg = topic.append(key, value)
+
+        for obs in self.observers:
+            obs.on_publish(topic_name, msg)
+        return msg
+
+    # ── Consume ───────────────────────────────────────────────────────────────
+
+    def consume(self, group_id: str, subscriber_id: str) -&gt; Optional[Message]:
+        &quot;&quot;&quot;
+        Return the next unconsumed message for subscriber_id in group_id.
+        Iterates over assigned partitions, returns first available message,
+        and advances the offset (at-least-once: caller should re-seek on crash).
+        &quot;&quot;&quot;
+        group = self._find_group_for_subscriber(group_id, subscriber_id)
+        if not group:
+            return None
+
+        topic_name = group.topic_name
+        with self._lock:
+            topic = self.topics.get(topic_name)
+        if not topic:
+            return None
+
+        assigned = group.get_assigned_partitions(subscriber_id)
+        for pid in assigned:
+            offset = group.get_offset(subscriber_id, pid)
+            partition = topic.partitions[pid]
+            msg = partition.read(offset)
+            if msg is not None:
+                group.advance_offset(subscriber_id, pid)
+                for obs in self.observers:
+                    obs.on_consume(group_id, subscriber_id, msg)
+                return msg
+        return None  # no new messages across all assigned partitions
+
+    # ── Offset / Seek ─────────────────────────────────────────────────────────
+
+    def get_offset(self, group_id: str, subscriber_id: str) -&gt; Dict[int, int]:
+        group = self._find_group_for_subscriber(group_id, subscriber_id)
+        if not group:
+            return {}
+        return group.all_offsets(subscriber_id)
+
+    def seek(self, group_id: str, subscriber_id: str,
+             partition_id: int, offset: int) -&gt; bool:
+        group = self._find_group_for_subscriber(group_id, subscriber_id)
+        if not group:
+            return False
+        assigned = group.get_assigned_partitions(subscriber_id)
+        if partition_id not in assigned:
+            return False
+        group.seek(subscriber_id, partition_id, offset)
+        return True
+
+    # ── Observers ─────────────────────────────────────────────────────────────
+
+    def add_observer(self, observer: BrokerObserver) -&gt; None:
+        with self._lock:
+            self.observers.append(observer)
+
+    # ── Utility ───────────────────────────────────────────────────────────────
+
+    def _reset(self) -&gt; None:
+        &quot;&quot;&quot;Reset broker state (for test isolation only).&quot;&quot;&quot;
+        with self._lock:
+            self.topics.clear()
+            self.consumer_groups.clear()
+            self.publishers.clear()
+            self.subscribers.clear()
+            self.observers.clear()
+
+
+# ============================================================================
+# DEMO
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;=&quot; * 70)
+    print(&quot;PUB-SUB MESSAGE BROKER — INTERVIEW DEMO&quot;)
+    print(&quot;=&quot; * 70)
+
+    broker = Broker.get_instance()
+    broker._reset()  # clean state for demo
+    broker.add_observer(ConsoleAuditObserver())
+
+    # ── Setup ─────────────────────────────────────────────────────────────────
+    print(&quot;\n[SETUP] Creating topic and registering actors...&quot;)
+    broker.create_topic(&quot;ORDERS&quot;, num_partitions=3, retention_limit=500)
+    broker.register_publisher(&quot;svc-orders&quot;, &quot;Order Service&quot;)
+    broker.register_subscriber(&quot;payment-1&quot;, &quot;payment-group&quot;, &quot;Payment Consumer 1&quot;)
+    broker.register_subscriber(&quot;payment-2&quot;, &quot;payment-group&quot;, &quot;Payment Consumer 2&quot;)
+    broker.register_subscriber(&quot;analytics-1&quot;, &quot;analytics-group&quot;, &quot;Analytics Consumer&quot;)
+
+    # ── Subscribe ─────────────────────────────────────────────────────────────
+    print(&quot;\n[SUBSCRIBE] Adding consumers to groups...&quot;)
+    broker.subscribe(&quot;payment-group&quot;,   &quot;ORDERS&quot;, &quot;payment-1&quot;)
+    broker.subscribe(&quot;payment-group&quot;,   &quot;ORDERS&quot;, &quot;payment-2&quot;)
+    broker.subscribe(&quot;analytics-group&quot;, &quot;ORDERS&quot;, &quot;analytics-1&quot;)
+
+    # ── Publish ───────────────────────────────────────────────────────────────
+    print(&quot;\n[PUBLISH] Publishing 6 messages to ORDERS topic...&quot;)
+    orders = [
+        (&quot;order_101&quot;, {&quot;item&quot;: &quot;laptop&quot;,  &quot;amount&quot;: 999.99}),
+        (&quot;order_102&quot;, {&quot;item&quot;: &quot;mouse&quot;,   &quot;amount&quot;:  29.99}),
+        (&quot;order_103&quot;, {&quot;item&quot;: &quot;monitor&quot;, &quot;amount&quot;: 349.00}),
+        (&quot;order_104&quot;, {&quot;item&quot;: &quot;keyboard&quot;,&quot;amount&quot;:  89.00}),
+        (&quot;order_105&quot;, {&quot;item&quot;: &quot;headset&quot;, &quot;amount&quot;: 149.50}),
+        (&quot;order_106&quot;, {&quot;item&quot;: &quot;webcam&quot;,  &quot;amount&quot;:  79.00}),
+    ]
+    published = []
+    for key, value in orders:
+        msg = broker.publish(&quot;svc-orders&quot;, &quot;ORDERS&quot;, key, value)
+        published.append(msg)
+
+    # ── Consume: payment-group (load-balanced) ────────────────────────────────
+    print(&quot;\n[CONSUME] payment-group consuming (load-balanced across 2 consumers)...&quot;)
+    for _ in range(4):
+        for sub_id in (&quot;payment-1&quot;, &quot;payment-2&quot;):
+            msg = broker.consume(&quot;payment-group&quot;, sub_id)
+            if msg is None:
+                pass  # no message for this consumer on this round
+
+    # ── Consume: analytics-group (fan-out; independent copy) ──────────────────
+    print(&quot;\n[CONSUME] analytics-group consuming (fan-out — independent copy)...&quot;)
+    for _ in range(6):
+        msg = broker.consume(&quot;analytics-group&quot;, &quot;analytics-1&quot;)
+
+    # ── Offset check ──────────────────────────────────────────────────────────
+    print(&quot;\n[OFFSETS] Current offsets:&quot;)
+    for sub_id in (&quot;payment-1&quot;, &quot;payment-2&quot;):
+        offsets = broker.get_offset(&quot;payment-group&quot;, sub_id)
+        print(f&quot;  payment-group / {sub_id}: {offsets}&quot;)
+    offsets = broker.get_offset(&quot;analytics-group&quot;, &quot;analytics-1&quot;)
+    print(f&quot;  analytics-group / analytics-1: {offsets}&quot;)
+
+    # ── Seek / Replay ─────────────────────────────────────────────────────────
+    print(&quot;\n[SEEK] analytics-1 replaying partition 0 from offset 0...&quot;)
+    broker.seek(&quot;analytics-group&quot;, &quot;analytics-1&quot;, 0, 0)
+    msg = broker.consume(&quot;analytics-group&quot;, &quot;analytics-1&quot;)
+    if msg:
+        print(f&quot;  Replayed: {msg}&quot;)
+
+    print(&quot;\n&quot; + &quot;=&quot; * 70)
+    print(&quot;DEMO COMPLETE — ALL SCENARIOS PASSED&quot;)
+    print(&quot;=&quot; * 70)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>publish</strong></td>
+<td>Broker RLock (validation) + Partition Lock (append)</td>
+<td>Atomic message creation; concurrent publishes to different partitions do not block each other</td>
+</tr>
+<tr>
+<td><strong>consume</strong></td>
+<td>ConsumerGroup RLock (offset read + advance)</td>
+<td>Atomic offset read → advance; no two consumers in a group double-consume the same message</td>
+</tr>
+<tr>
+<td><strong>subscribe / assign_partitions</strong></td>
+<td>ConsumerGroup RLock</td>
+<td>Rebalance is atomic; no partial assignment visible to other threads</td>
+</tr>
+<tr>
+<td><strong>create_topic</strong></td>
+<td>Broker RLock</td>
+<td>No duplicate topics</td>
+</tr>
+<tr>
+<td><strong>Singleton init</strong></td>
+<td>Class-level Lock (double-checked)</td>
+<td>Single instance even under concurrent first-call race</td>
+</tr>
+<tr>
+<td><strong>Seek</strong></td>
+<td>ConsumerGroup RLock</td>
+<td>Offset repositioning is atomic</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. ✅ <code>RLock</code> on Broker and ConsumerGroup — methods can call each other without deadlock
+2. ✅ Separate lock per Partition — parallel publishes to different partitions proceed concurrently
+3. ✅ Broker lock released before <code>partition.append()</code> to minimize contention
+4. ✅ Singleton uses <code>__new__(cls, *args, **kwargs)</code> to avoid argument-rejection bug
+5. ✅ Notifications fire outside critical sections to keep lock durations short</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="scenario-1-topic-creation-and-multi-partition-publishing">Scenario 1: Topic Creation and Multi-Partition Publishing</h3>
+<pre class="codehilite"><code>[Broker] Topic 'ORDERS' created (3 partitions)
+[PUBLISH 12:00:01] topic=ORDERS       partition=0 offset=   0 key=order_101    value={'item': 'laptop', 'amount': 999.99}
+[PUBLISH 12:00:01] topic=ORDERS       partition=2 offset=   0 key=order_102    value={'item': 'mouse', 'amount': 29.99}
+[PUBLISH 12:00:01] topic=ORDERS       partition=0 offset=   1 key=order_103    value={'item': 'monitor', 'amount': 349.0}
+</code></pre>
+
+<p>Key hash routes <code>order_101</code> and <code>order_103</code> to partition 0, <code>order_102</code> to partition 2.</p>
+<h3 id="scenario-2-consumer-group-load-balancing">Scenario 2: Consumer Group Load Balancing</h3>
+<pre class="codehilite"><code>payment-group with 2 consumers, 3 partitions:
+  payment-1 → partitions [0, 2]
+  payment-2 → partitions [1]
+
+payment-1 drains its partitions independently of payment-2.
+No message is delivered to both payment-1 and payment-2.
+</code></pre>
+
+<h3 id="scenario-3-fan-out-two-independent-groups">Scenario 3: Fan-Out (Two Independent Groups)</h3>
+<pre class="codehilite"><code>analytics-group subscribes to same topic ORDERS.
+analytics-1 → all 3 partitions (only consumer in its group).
+analytics-1 receives ALL 6 messages independently of payment-group.
+Fan-out: 1 publish → N consumer groups each get their own copy.
+</code></pre>
+
+<h3 id="scenario-4-offset-tracking-and-replay">Scenario 4: Offset Tracking and Replay</h3>
+<pre class="codehilite"><code>After consuming all 6 messages:
+  analytics-group / analytics-1: {0: 2, 1: 2, 2: 2}
+
+After seek(partition=0, offset=0):
+  Re-consumes first message on partition 0 — replay confirmed.
+</code></pre>
+
+<h3 id="scenario-5-partition-key-routing">Scenario 5: Partition Key Routing</h3>
+<pre class="codehilite"><code>hash(&quot;order_101&quot;) % 3 = 0  → Partition 0
+hash(&quot;order_102&quot;) % 3 = 2  → Partition 2
+hash(&quot;order_103&quot;) % 3 = 0  → Partition 0  (same key prefix → same partition)
+No key → round-robin across partitions
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-questions">Basic Questions</h3>
+<p><strong>Q1: What is the difference between Pub-Sub and a message queue?</strong></p>
+<p>A: Pub-Sub broadcasts to all subscriber groups — one publish → many independent consumers each receive a copy (fan-out). A message queue delivers each message to exactly one consumer (work distribution). Pub-Sub = 1:N; Queue = 1:1. In this design, multiple <code>ConsumerGroup</code>s provide fan-out (pub-sub semantics), while multiple consumers within a group provide load balancing (queue semantics).</p>
+<p><strong>Q2: How are messages routed to partitions?</strong></p>
+<p>A: <code>hash(key) % num_partitions</code>. Same key always lands on the same partition — preserving order for all events related to a single entity (e.g., all events for <code>order_101</code> are ordered). If no key is given, round-robin distributes across partitions.</p>
+<p><strong>Q3: How do consumer groups work?</strong></p>
+<p>A: Each consumer group maintains its own offset per partition. Within a group, partitions are distributed across consumers (each partition → exactly one consumer). Multiple groups each receive all messages independently, enabling fan-out.</p>
+<p><strong>Q4: What delivery guarantee does this implementation use?</strong></p>
+<p>A: At-least-once. The offset advances after the message is returned. If the consumer crashes before committing work, it re-reads from the last committed offset on restart. To get exactly-once, you need idempotent consumers (deduplication by <code>message_id</code>) plus transactional offset commits.</p>
+<p><strong>Q5: Why use RLock instead of Lock on Broker and ConsumerGroup?</strong></p>
+<p>A: <code>threading.RLock</code> (re-entrant lock) allows the same thread to acquire the lock multiple times without deadlocking. This is necessary when a locked broker method calls another broker method (or a ConsumerGroup method calls <code>assign_partitions</code> which itself acquires the group lock).</p>
+<hr />
+<h3 id="intermediate-questions">Intermediate Questions</h3>
+<p><strong>Q6: How do you prevent two consumers in the same group from reading the same message?</strong></p>
+<p>A: Partition assignment: each partition is assigned to exactly one consumer in the group. <code>ConsumerGroup.assign_partitions()</code> gives partition 0 to consumer A, partition 1 to consumer B, etc. Since no two consumers own the same partition, there is no double-consumption.</p>
+<p><strong>Q7: What happens when a consumer joins an existing group?</strong></p>
+<p>A: <code>ConsumerGroup.add_subscriber()</code> appends the new subscriber, then calls <code>assign_partitions()</code> which rebalances all partitions round-robin across the full (updated) subscriber list. This is a group rebalance. During rebalance, existing consumers may lose some partitions and gain others — a Kafka-style "stop the world" rebalance within the group.</p>
+<p><strong>Q8: How do you implement a Dead Letter Queue?</strong></p>
+<p>A: Track retry count per (group, message_id). After N retries, publish the message to <code>&lt;topic_name&gt;-DLQ</code> instead of retrying. Consumers subscribe to the DLQ topic for manual inspection and reprocessing.</p>
+<p><strong>Q9: How do you handle message ordering?</strong></p>
+<p>A: Ordering is guaranteed within a single partition (append-only log). Cross-partition ordering is not guaranteed. If strict global ordering is required, use a single partition (performance tradeoff). For entity-level ordering (all events for a user/order), hash by entity ID to ensure all events land on the same partition.</p>
+<p><strong>Q10: What metrics would you monitor on this broker?</strong></p>
+<p>A: Consumer lag (partition size - consumer offset), publish rate (msg/sec per topic), consume rate per group, DLQ growth rate, partition skew (uneven message distribution across partitions), and rebalance frequency.</p>
+<hr />
+<h3 id="advanced-questions">Advanced Questions</h3>
+<p><strong>Q11: How would you implement exactly-once delivery?</strong></p>
+<p>A: Three parts: (1) Idempotent publishers — broker deduplicates messages with the same <code>(publisher_id, sequence_number)</code>. (2) Idempotent consumers — consumers track processed <code>message_id</code>s in a local store. (3) Atomic offset commit — consumer writes processing result and offset commit in a single transaction (e.g., to the same DB). This prevents the "process succeeds, commit fails" gap.</p>
+<p><strong>Q12: How would you scale this to a distributed cluster?</strong></p>
+<p>A: Shard topics across broker nodes (each broker owns a subset of partitions). Use a coordination service (ZooKeeper / etcd) for leader election and partition assignment metadata. Replicate each partition to 2 additional brokers (leader + 2 followers) for fault tolerance. On leader failure, a follower is promoted. Consumers connect to the leader of their assigned partition.</p>
+<p><strong>Q13: How do you handle a slow consumer causing broker memory pressure?</strong></p>
+<p>A: Three strategies: (1) Enforce retention — drop oldest messages after <code>retention_limit</code>. (2) Back-pressure — pause publish if consumer lag exceeds a threshold. (3) Disk spill — persist messages to disk and read lazily, freeing RAM. Monitor consumer lag; alert if <code>partition.size() - consumer_offset &gt; threshold</code>.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<h3 id="q1-how-do-you-scale-to-1m-messagessec-across-100-topics">Q1: How do you scale to 1M messages/sec across 100+ topics?</h3>
+<p>Distribute topics across a cluster of brokers (horizontal partitioning). Each broker handles a subset of partitions. Consumers connect to the partition leader. Add brokers and partitions linearly to scale throughput. In-memory brokers can handle ~1M msg/sec per node; disk-backed (Kafka-style) handles ~500K msg/sec with durability.</p>
+<h3 id="q2-how-do-you-replicate-messages-across-data-centres">Q2: How do you replicate messages across data centres?</h3>
+<p>Geo-replication: a mirroring process reads from the primary cluster and publishes to the secondary. Async replication gives RPO of a few seconds; sync replication gives RPO of 0 but adds latency. Consumer groups on the secondary start from offset 0 or from a checkpointed offset.</p>
+<h3 id="q3-how-do-you-handle-consumer-group-rebalancing-at-scale-1000-consumers">Q3: How do you handle consumer group rebalancing at scale (1,000 consumers)?</h3>
+<p>Use an incremental cooperative rebalance (Kafka's strategy): only reassign partitions that changed ownership, rather than stopping all consumers. Reduces the rebalance storm. Assign a group coordinator node responsible for tracking membership and issuing assignment deltas.</p>
+<h3 id="q4-how-do-you-prevent-hot-partitions-skewed-message-distribution">Q4: How do you prevent hot partitions (skewed message distribution)?</h3>
+<p>Monitor per-partition message rate. If one partition receives 10x more traffic, re-key messages using a compound key (original_key + random suffix) to spread load, or increase partition count and rehash. Alert on partition skew ratio &gt; 3:1.</p>
+<h3 id="q5-what-if-a-broker-node-fails-mid-publish">Q5: What if a broker node fails mid-publish?</h3>
+<p>With replication factor 3: the partition leader fails → ZooKeeper/etcd detects absence within session timeout (seconds) → elects a follower as new leader. In-flight publishes to the failed leader are retried by the publisher (with idempotency key to avoid duplicates). RPO ≈ 0 with sync replication; RTO ≈ seconds.</p>
+<h3 id="q6-how-do-you-handle-exactly-once-semantics-at-scale">Q6: How do you handle exactly-once semantics at scale?</h3>
+<p>Producers assign a monotonically increasing sequence number. Broker deduplicates within a 5-minute window using a bloom filter or bounded LRU cache keyed by <code>(publisher_id, sequence)</code>. Consumers use a distributed ID store (Redis SET) to check <code>message_id</code> before processing. Offset commit is co-located with the consumer's own DB write in a two-phase commit or saga pattern.</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw the UML class diagram with Topic, Partition, Message, ConsumerGroup, Subscriber, Publisher, Broker</li>
+<li>[ ] Explain partition routing: <code>hash(key) % num_partitions</code> for ordering guarantees</li>
+<li>[ ] Explain consumer group fan-out vs within-group load balancing</li>
+<li>[ ] Explain offset management: per-(group, subscriber, partition) tracking</li>
+<li>[ ] Explain at-least-once vs exactly-once and what is needed for each</li>
+<li>[ ] Run the complete implementation without errors (demo exits 0)</li>
+<li>[ ] Discuss thread safety: RLock on Broker and ConsumerGroup, per-Partition Lock, Singleton <code>__new__</code> with <code>*args</code></li>
+<li>[ ] Mention Dead Letter Queue for poison messages</li>
+<li>[ ] Answer 5+ scaling Q&amp;A questions including replication, hot partitions, and rebalancing</li>
+</ul>
+<hr />
+<p><strong>Ready for interview? Publish your first message and let the consumers run!</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

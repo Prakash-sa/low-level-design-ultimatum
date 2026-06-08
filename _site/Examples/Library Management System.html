@@ -1,0 +1,1714 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Library Management System - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="library-management-system-complete-design-guide">Library Management System — Complete Design Guide</h1>
+<blockquote>
+<p>Book inventory management, member borrowing and return lifecycle, late fine calculation, reservation queues, and multi-branch support.</p>
+</blockquote>
+<p><strong>Scale</strong>: 100K+ members, 1M+ books, multi-branch<br />
+<strong>Duration</strong>: 75-minute interview guide<br />
+<strong>Focus</strong>: Overborrowing prevention, fine calculation, reservation queues, thread-safe inventory</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>A member searches for a book → finds an available physical copy → borrows it (checkout with a due date) → returns it on time or late (fine applied) → or reserves it if all copies are borrowed and gets notified when one becomes available. Core concerns: prevent overborrowing, enforce fine policy, manage reservation queues, and keep inventory accurate across concurrent operations.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>Search Book → Find Available Copy → BORROW (14-day due date) → RETURN (fine if late)
+                     ↓ all copies borrowed
+              RESERVE (queue) → Notified when returned → Pick up within 2 days
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Single branch or multi-branch?</strong> → "Multi-branch, each with its own inventory"</li>
+<li><strong>Digital books in scope?</strong> → "Physical only for core; mention digital as extension"</li>
+<li><strong>Real payment for fines?</strong> → "Mock fine tracking for the interview"</li>
+<li><strong>Renewals allowed?</strong> → "Yes, max 2 renewals if no holds on that copy"</li>
+<li><strong>Who manages inventory?</strong> → "Librarian admin adds/removes books; members borrow/return"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Member</strong></td>
+<td>Borrows and returns books</td>
+<td>Search, borrow, return, renew, reserve</td>
+</tr>
+<tr>
+<td><strong>Librarian / Admin</strong></td>
+<td>Manages inventory and accounts</td>
+<td>Add books, register members, resolve disputes</td>
+</tr>
+<tr>
+<td><strong>System</strong></td>
+<td>Coordinator and notifier</td>
+<td>Calculate fines, expire reservations, send notifications</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Search &amp; Browse</strong>
+  - Search books by title, author, or ISBN
+  - View available copies and reservation status per branch</p>
+<p>✅ <strong>Borrow &amp; Return</strong>
+  - Borrow an available physical copy (14-day loan period)
+  - Return a book and auto-calculate late fines
+  - Prevent borrowing beyond the 5-book limit per member</p>
+<p>✅ <strong>Renewal</strong>
+  - Extend due date by 14 days (max 2 renewals)
+  - Reject renewal if another member has reserved the copy</p>
+<p>✅ <strong>Reserve</strong>
+  - Join a reservation queue when all copies are borrowed
+  - Notify member (first in queue) when a copy is returned
+  - Hold copy for 2 days before releasing to next member</p>
+<p>✅ <strong>Fine Management</strong>
+  - Charge $0.50 per day late, capped at $10 per borrowing
+  - Suspend membership when total fine balance exceeds $50</p>
+<p>✅ <strong>Reporting &amp; Admin</strong>
+  - Track inventory per branch and per status
+  - Generate borrowing reports and overdue notifications</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Concurrency</strong>: Support simultaneous borrows/returns without inventory corruption<br />
+✅ <strong>Consistency</strong>: Borrow limit and inventory status atomically enforced<br />
+✅ <strong>Latency</strong>: Search &lt; 200ms, borrow/return &lt; 200ms<br />
+✅ <strong>Availability</strong>: 99.5% uptime<br />
+✅ <strong>Scalability</strong>: 100K+ members, 1M+ books with indexing  </p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Borrow limit</strong></td>
+<td>5 books per member at a time</td>
+</tr>
+<tr>
+<td><strong>Loan period</strong></td>
+<td>14 days per checkout</td>
+</tr>
+<tr>
+<td><strong>Renewals</strong></td>
+<td>Max 2 per borrowing, only if no holds</td>
+</tr>
+<tr>
+<td><strong>Fine rate</strong></td>
+<td>$0.50/day late</td>
+</tr>
+<tr>
+<td><strong>Fine cap per borrowing</strong></td>
+<td>$10</td>
+</tr>
+<tr>
+<td><strong>Suspension threshold</strong></td>
+<td>Fine balance &gt; $50</td>
+</tr>
+<tr>
+<td><strong>Reservation hold window</strong></td>
+<td>2 days after member notified</td>
+</tr>
+<tr>
+<td><strong>Multi-branch</strong></td>
+<td>YES — books tracked per branch</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on the whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<pre class="codehilite"><code>Book, BookItem, Member, Borrowing, Fine, Reservation, Library, Branch, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="book-a-title-in-the-catalog-logical-record"><strong>Book</strong> — A title in the catalog (logical record)</h4>
+<pre class="codehilite"><code>Properties:
+  - isbn: str (e.g., &quot;978-0-7432-7356-5&quot;)
+  - title: str
+  - author: str
+  - genre: str
+
+Behaviors:
+  - (catalog entry; no behavior beyond data)
+</code></pre>
+
+<h4 id="bookitem-a-single-physical-copy-of-a-book"><strong>BookItem</strong> — A single physical copy of a Book</h4>
+<pre class="codehilite"><code>Properties:
+  - book_id: str (unique per physical copy)
+  - isbn: str (links to Book title)
+  - title: str
+  - author: str
+  - status: BookStatus (AVAILABLE, BORROWED, RESERVED, MAINTENANCE, LOST)
+  - branch: str
+
+Behaviors:
+  - is_available(): Check if status == AVAILABLE
+  - mark_borrowed() / mark_available() / mark_reserved()
+</code></pre>
+
+<h4 id="member-a-library-member-account"><strong>Member</strong> — A library member account</h4>
+<pre class="codehilite"><code>Properties:
+  - member_id: str
+  - name: str
+  - email: str
+  - status: MemberStatus (ACTIVE, SUSPENDED)
+  - fine_balance: float
+  - active_borrows: List[Borrowing]
+
+Behaviors:
+  - can_borrow(): Check borrow limit and suspension status
+  - add_fine(amount): Accumulate fine, suspend if &gt; $50
+</code></pre>
+
+<h4 id="borrowing-a-single-checkout-transaction"><strong>Borrowing</strong> — A single checkout transaction</h4>
+<pre class="codehilite"><code>Properties:
+  - borrowing_id: str
+  - book_id: str (which physical copy)
+  - member_id: str
+  - checkout_date: datetime
+  - due_date: datetime (checkout + 14 days)
+  - return_date: Optional[datetime]
+  - fine: float
+  - renewal_count: int
+
+Behaviors:
+  - calculate_fine(): max(0, days_late × 0.50), capped at $10
+  - renew(): Extend due_date if renewal_count &lt; 2
+  - is_overdue(): return_date or now &gt; due_date
+</code></pre>
+
+<h4 id="library-singleton-central-coordinator"><strong>Library</strong> — Singleton central coordinator</h4>
+<pre class="codehilite"><code>Properties:
+  - books: Dict[str, BookItem]
+  - members: Dict[str, Member]
+  - borrowings: Dict[str, Borrowing]
+  - book_counter / borrowing_counter: int
+  - lock: threading.RLock
+
+Behaviors:
+  - add_book() / register_member()
+  - search_books(title): Return matching BookItem list
+  - borrow_book(member_id, book_id): Create Borrowing, update status
+  - return_book(borrowing_id): Calculate fine, release copy
+  - renew_book(borrowing_id): Extend due date
+  - reserve_book(member_id, isbn): Mark copy RESERVED
+  - display_member_account(member_id)
+</code></pre>
+
+<h3 id="step-23-define-enumerations-state-type">Step 2.3: Define Enumerations (State &amp; Type)</h3>
+<pre class="codehilite"><code class="language-python">class BookStatus(Enum):
+    AVAILABLE    = 1   # Can be borrowed
+    BORROWED     = 2   # Currently checked out
+    RESERVED     = 3   # On hold for a specific member
+    MAINTENANCE  = 4   # Under repair
+    LOST         = 5   # Reported lost
+
+class MemberStatus(Enum):
+    ACTIVE    = 1   # Can borrow
+    SUSPENDED = 2   # Fine balance &gt; $50; borrowing blocked
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>BookItem</strong></td>
+<td>Track individual physical copies, not just titles</td>
+<td>Can't prevent double-borrowing of the same copy</td>
+</tr>
+<tr>
+<td><strong>Member</strong></td>
+<td>Profile with borrow limit and fine balance</td>
+<td>Can't enforce limits or suspensions</td>
+</tr>
+<tr>
+<td><strong>Borrowing</strong></td>
+<td>Full transaction record with dates and fine</td>
+<td>No audit trail; can't calculate fines</td>
+</tr>
+<tr>
+<td><strong>Library</strong></td>
+<td>Central thread-safe coordinator</td>
+<td>No atomic borrow/return; race conditions on last copy</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-search-books"><strong>1. Search Books</strong></h4>
+<pre class="codehilite"><code class="language-python">def search_books(title: str) -&gt; List[BookItem]:
+    &quot;&quot;&quot;
+    Find all physical copies whose title contains the search string (case-insensitive).
+    Returns: List of BookItem objects (all statuses included).
+    Response Time: &lt;200ms (indexed on title)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="2-borrow-book-critical"><strong>2. Borrow Book</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def borrow_book(member_id: str, book_id: str) -&gt; Optional[str]:
+    &quot;&quot;&quot;
+    Check out a specific physical copy to a member.
+
+    Preconditions:
+      - member.status == ACTIVE
+      - member.fine_balance &lt;= $50
+      - len(member.active_borrows) &lt; 5
+      - book.status == AVAILABLE
+
+    Postconditions:
+      - book.status == BORROWED
+      - Borrowing record created with due_date = now + 14 days
+      - Borrowing appended to member.active_borrows
+
+    Returns: borrowing_id (str) on success, None on failure.
+
+    Failure causes:
+      - Member not found / suspended / borrow limit reached
+      - Book not found / already borrowed / reserved
+      - Fine balance &gt; $50 (treated as suspension)
+
+    Concurrency: THREAD-SAFE (guarded by RLock)
+    Response Time: &lt;200ms
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="3-return-book-critical"><strong>3. Return Book</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def return_book(borrowing_id: str) -&gt; float:
+    &quot;&quot;&quot;
+    Return a book and calculate any late fine.
+
+    Postconditions:
+      - book.status == AVAILABLE
+      - borrowing.return_date = now
+      - fine = min(days_late × 0.50, 10.0) added to member.fine_balance
+      - Borrowing removed from member.active_borrows
+
+    Returns: fine amount charged (0.0 if on time).
+
+    Failure causes:
+      - borrowing_id not found → returns 0.0
+
+    Side Effects: Member suspended if fine_balance &gt; $50 after this return
+    Concurrency: THREAD-SAFE
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="4-renew-book"><strong>4. Renew Book</strong></h4>
+<pre class="codehilite"><code class="language-python">def renew_book(borrowing_id: str) -&gt; bool:
+    &quot;&quot;&quot;
+    Extend due date by 14 more days.
+
+    Preconditions: borrowing exists, renewal_count &lt; 2, no reservation on copy
+
+    Postcondition: borrowing.due_date += 14 days, renewal_count += 1
+
+    Returns: True on success, False if renewal blocked.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="5-reserve-book"><strong>5. Reserve Book</strong></h4>
+<pre class="codehilite"><code class="language-python">def reserve_book(member_id: str, isbn: str) -&gt; bool:
+    &quot;&quot;&quot;
+    Reserve the first borrowed copy of an ISBN for a member.
+
+    Precondition: No available copies of the ISBN exist (all BORROWED)
+    Postcondition: First borrowed copy marked RESERVED for this member
+
+    Returns: True if reservation created, False if copies available (borrow instead)
+    or no copies exist.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-32-failure-model">Step 3.2: Failure Model</h3>
+<p>The implementation returns <code>None</code> / <code>False</code> / <code>0.0</code> rather than raising exceptions to keep the demo concise. A production version would use a typed hierarchy:</p>
+<pre class="codehilite"><code class="language-python">class LibraryException(Exception): ...
+class BorrowLimitExceededError(LibraryException): ...
+class MemberSuspendedError(LibraryException): ...
+class BookNotAvailableError(LibraryException): ...
+class RenewalNotAllowedError(LibraryException): ...
+class BorrowingNotFoundError(LibraryException): ...
+</code></pre>
+
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">lib = Library()
+
+# Setup
+lib.add_book(&quot;978-0&quot;, &quot;1984&quot;, &quot;George Orwell&quot;, copies=2)
+lib.register_member(&quot;M1&quot;, &quot;Jane&quot;, &quot;jane@email.com&quot;)
+
+# Search
+copies = lib.search_books(&quot;1984&quot;)
+
+# Borrow
+borrow_id = lib.borrow_book(&quot;M1&quot;, copies[0].book_id)
+
+# Return (fine if late)
+fine = lib.return_book(borrow_id)
+
+# Reserve when all copies out
+lib.reserve_book(&quot;M2&quot;, &quot;978-0&quot;)
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and association. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>Library HAS-A books (1:N Composition)
+  └─ Library owns all physical BookItem records
+
+Library HAS-A members (1:N Composition)
+  └─ Library owns all Member accounts
+
+Library HAS-A borrowings (1:N Composition)
+  └─ Library owns all Borrowing transaction records
+
+Member HAS-A active_borrows (1:N Composition)
+  └─ Member tracks its own current checkouts
+
+Borrowing REFERENCES book_id (1:1 Association)
+  └─ Links to specific physical copy (no ownership)
+
+Borrowing REFERENCES member_id (1:1 Association)
+  └─ Links to the member who borrowed (no ownership)
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌──────────────────────────────────────┐
+│       Library (Singleton)            │
+├──────────────────────────────────────┤
+│ - _instance: Library                 │
+│ - books: Dict[str, BookItem]         │
+│ - members: Dict[str, Member]         │
+│ - borrowings: Dict[str, Borrowing]   │
+│ - book_counter: int                  │
+│ - borrowing_counter: int             │
+│ - lock: threading.RLock              │
+├──────────────────────────────────────┤
+│ + add_book(isbn, title, author,      │
+│            copies, branch)           │
+│ + register_member(...): Member       │
+│ + search_books(title): List[Book]    │
+│ + borrow_book(member_id,             │
+│               book_id): Optional[str]│
+│ + return_book(borrowing_id): float   │
+│ + renew_book(borrowing_id): bool     │
+│ + reserve_book(member_id,            │
+│                isbn): bool           │
+│ + display_member_account(member_id)  │
+└──────────────┬───────────────────────┘
+        manages 1:N
+   ┌──────────┼──────────────┐
+   ▼          ▼              ▼
+┌──────────┐ ┌────────────┐ ┌───────────┐
+│ BookItem │ │   Member   │ │ Borrowing │
+├──────────┤ ├────────────┤ ├───────────┤
+│ book_id  │ │ member_id  │ │borrow_id  │
+│ isbn     │ │ name       │ │book_id    │
+│ title    │ │ email      │ │member_id  │
+│ author   │ │ status     │ │checkout   │
+│ status   │ │ fine_bal   │ │due_date   │
+│ branch   │ │ borrows[]  │ │return_date│
+└──────────┘ └────────────┘ │fine: float│
+                             └───────────┘
+
+Book Status Machine:
+AVAILABLE ──borrow──→ BORROWED ──return──→ AVAILABLE
+                          │
+                       reserve
+                          │
+                          ▼
+                       RESERVED ──pickup──→ BORROWED
+
+Borrowing State:
+┌──────────────────────────────┐
+│ Borrowing                    │
+├──────────────────────────────┤
+│ checkout_date                │
+│ due_date  (checkout + 14d)   │
+│ return_date (None until back)│
+│ fine (0 until returned)      │
+│ renewal_count (max 2)        │
+└──────────────────────────────┘
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Library → BookItems</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Library owns all physical copies</td>
+</tr>
+<tr>
+<td>Library → Members</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Library owns all member records</td>
+</tr>
+<tr>
+<td>Library → Borrowings</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Library owns all transaction records</td>
+</tr>
+<tr>
+<td>Member → active_borrows</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Member tracks its own checkouts</td>
+</tr>
+<tr>
+<td>Borrowing → BookItem</td>
+<td>N:1</td>
+<td>Association</td>
+<td>Many borrowings over time per copy</td>
+</tr>
+<tr>
+<td>Borrowing → Member</td>
+<td>N:1</td>
+<td>Association</td>
+<td>Many borrowings over time per member</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-singleton-for-library">Pattern 1: <strong>Singleton</strong> (For Library)</h3>
+<p><strong>Problem</strong>: Multiple threads need a single consistent view of inventory, members, and borrowings.</p>
+<p><strong>Solution</strong>: One global Library instance, thread-safe double-checked locking initialization.</p>
+<pre class="codehilite"><code class="language-python">class Library:
+    _instance = None
+    _class_lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            with cls._class_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+        self._initialized = True
+        self.lock = threading.RLock()  # Re-entrant: borrow_book calls internal helpers
+        ...
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Single source of truth, ✅ Thread-safe initialization (double-checked lock), ✅ Global access<br />
+<strong>Trade-off</strong>: ⚠️ Global state makes unit testing harder, ⚠️ Doesn't scale across multiple processes without a shared store</p>
+<hr />
+<h3 id="pattern-2-state-machine-for-book-status">Pattern 2: <strong>State Machine</strong> (For Book Status)</h3>
+<p><strong>Problem</strong>: A physical copy must follow strict transitions: AVAILABLE → BORROWED → AVAILABLE; BORROWED → RESERVED. Invalid states (borrowing an already-borrowed copy) must be caught.</p>
+<p><strong>Solution</strong>: <code>BookStatus</code> enum + guard checks on every status mutation.</p>
+<pre class="codehilite"><code class="language-python">class BookStatus(Enum):
+    AVAILABLE   = 1
+    BORROWED    = 2
+    RESERVED    = 3
+    MAINTENANCE = 4
+    LOST        = 5
+
+# Guard in borrow_book:
+if book.status != BookStatus.AVAILABLE:
+    print(f&quot;✗ Book {book_id} not available&quot;)
+    return None
+book.status = BookStatus.BORROWED
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Explicit lifecycle, ✅ Invalid transitions caught early<br />
+<strong>Trade-off</strong>: ⚠️ Must check state before every mutation; can grow complex with more states</p>
+<hr />
+<h3 id="pattern-3-observer-for-reservation-notifications">Pattern 3: <strong>Observer</strong> (For Reservation Notifications)</h3>
+<p><strong>Problem</strong>: When a reserved book is returned, the waiting member must be notified without coupling the return logic to notification channels.</p>
+<p><strong>Solution</strong>: Observer pattern — Library notifies registered observers on book-available events.</p>
+<pre class="codehilite"><code class="language-python">class LibraryObserver(ABC):
+    @abstractmethod
+    def on_book_available(self, member_id: str, book_title: str): pass
+
+class EmailNotifier(LibraryObserver):
+    def on_book_available(self, member_id: str, book_title: str):
+        print(f&quot;Email to {member_id}: '{book_title}' is now available!&quot;)
+
+# Usage: attach at startup
+library.add_observer(EmailNotifier())
+# On return when copy was RESERVED:
+library.notify_observers(reserved_member_id, book_title)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Loose coupling, ✅ Easy to add SMS, push, or in-app notifications<br />
+<strong>Trade-off</strong>: ⚠️ Observer lifecycle management; errors in one notifier can affect others</p>
+<hr />
+<h3 id="pattern-4-strategy-for-fine-calculation">Pattern 4: <strong>Strategy</strong> (For Fine Calculation)</h3>
+<p><strong>Problem</strong>: Fine policy may vary: flat-rate, tiered (escalating after 7 days), or membership-tier-based (premium members pay less).</p>
+<p><strong>Solution</strong>: Pluggable fine strategy injected into Library.</p>
+<pre class="codehilite"><code class="language-python">class FineStrategy(ABC):
+    @abstractmethod
+    def calculate(self, days_late: int) -&gt; float: pass
+
+class FlatRateFine(FineStrategy):
+    def calculate(self, days_late: int) -&gt; float:
+        return min(days_late * 0.50, 10.0)
+
+class TieredFine(FineStrategy):
+    def calculate(self, days_late: int) -&gt; float:
+        if days_late &lt;= 7:
+            return min(days_late * 0.50, 10.0)
+        return min(3.50 + (days_late - 7) * 1.00, 10.0)  # $1/day after a week
+
+# Usage: switch at runtime
+library.set_fine_strategy(TieredFine())
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Add new fine policies without touching return logic, ✅ Configurable per member tier<br />
+<strong>Trade-off</strong>: ⚠️ Extra abstraction layer for what could be a one-liner</p>
+<hr />
+<h3 id="pattern-5-factory-for-book-creation">Pattern 5: <strong>Factory</strong> (For Book Creation)</h3>
+<p><strong>Problem</strong>: Creating multiple physical copies of the same title requires consistent ID generation and initialization.</p>
+<p><strong>Solution</strong>: <code>add_book()</code> acts as a factory, creating N BookItem instances with auto-incremented IDs.</p>
+<pre class="codehilite"><code class="language-python">def add_book(self, isbn: str, title: str, author: str, copies: int = 1, branch: str = &quot;Main&quot;):
+    with self.lock:
+        for _ in range(copies):
+            self.book_counter += 1
+            book = BookItem(f&quot;BOOK_{self.book_counter}&quot;, isbn, title, author,
+                            BookStatus.AVAILABLE, branch)
+            self.books[book.book_id] = book
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Centralized, consistent copy creation, ✅ IDs guaranteed unique<br />
+<strong>Trade-off</strong>: ⚠️ If creation logic grows (e.g., digital vs physical), consider a proper Factory class</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>Single consistent inventory/member store</td>
+<td>No race on global state</td>
+</tr>
+<tr>
+<td><strong>State Machine</strong></td>
+<td>Book lifecycle transitions</td>
+<td>Invalid borrows caught at runtime</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Reservation notifications</td>
+<td>Decoupled, multi-channel alerts</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Pluggable fine calculation</td>
+<td>No change to return logic</td>
+</tr>
+<tr>
+<td><strong>Factory</strong></td>
+<td>Batch physical copy creation</td>
+<td>Consistent IDs and initialization</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+Library Management System - Interview Implementation
+Demonstrates:
+1. Book inventory management
+2. Borrowing and return tracking
+3. Late fine calculation
+4. Reservation queue
+5. Member account management
+&quot;&quot;&quot;
+
+from enum import Enum
+from typing import List, Optional, Dict
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+import threading
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class BookStatus(Enum):
+    AVAILABLE    = 1
+    BORROWED     = 2
+    RESERVED     = 3
+    MAINTENANCE  = 4
+    LOST         = 5
+
+class MemberStatus(Enum):
+    ACTIVE    = 1
+    SUSPENDED = 2
+
+# ============================================================================
+# DATA CLASSES
+# ============================================================================
+
+@dataclass
+class BookItem:
+    book_id: str
+    isbn: str
+    title: str
+    author: str
+    status: BookStatus = BookStatus.AVAILABLE
+    branch: str = &quot;Main&quot;
+
+@dataclass
+class Member:
+    member_id: str
+    name: str
+    email: str
+    status: MemberStatus = MemberStatus.ACTIVE
+    fine_balance: float = 0.0
+    active_borrows: List['Borrowing'] = field(default_factory=list)
+
+@dataclass
+class Borrowing:
+    borrowing_id: str
+    book_id: str
+    member_id: str
+    checkout_date: datetime
+    due_date: datetime
+    return_date: Optional[datetime] = None
+    fine: float = 0.0
+
+# ============================================================================
+# LIBRARY (SINGLETON)
+# ============================================================================
+
+class Library:
+    _instance = None
+    _class_lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        # Accept (and ignore) any constructor args so __init__ is reached cleanly
+        if cls._instance is None:
+            with cls._class_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+        self._initialized = True
+        self.books: Dict[str, BookItem] = {}
+        self.members: Dict[str, Member] = {}
+        self.borrowings: Dict[str, Borrowing] = {}
+        self.book_counter = 0
+        self.borrowing_counter = 0
+        # RLock (re-entrant): borrow_book holds the lock and calls search_books internally
+        self.lock = threading.RLock()
+
+    def add_book(self, isbn: str, title: str, author: str, copies: int = 1, branch: str = &quot;Main&quot;):
+        with self.lock:
+            for _ in range(copies):
+                self.book_counter += 1
+                book = BookItem(f&quot;BOOK_{self.book_counter}&quot;, isbn, title, author,
+                                BookStatus.AVAILABLE, branch)
+                self.books[book.book_id] = book
+            print(f&quot;  Added {copies} copies of '{title}' to {branch}&quot;)
+
+    def register_member(self, member_id: str, name: str, email: str) -&gt; Member:
+        with self.lock:
+            member = Member(member_id, name, email)
+            self.members[member_id] = member
+            print(f&quot;  Registered member: {name}&quot;)
+            return member
+
+    def search_books(self, title: str) -&gt; List[BookItem]:
+        with self.lock:
+            return [b for b in self.books.values() if title.lower() in b.title.lower()]
+
+    def borrow_book(self, member_id: str, book_id: str) -&gt; Optional[str]:
+        with self.lock:
+            if member_id not in self.members or book_id not in self.books:
+                return None
+
+            member = self.members[member_id]
+            book = self.books[book_id]
+
+            # Check borrow limit
+            if len(member.active_borrows) &gt;= 5:
+                print(f&quot;  Member {member.name} has reached borrow limit&quot;)
+                return None
+
+            # Check suspension due to fines
+            if member.fine_balance &gt; 50:
+                print(f&quot;  Member {member.name} suspended (fines: ${member.fine_balance:.2f})&quot;)
+                return None
+
+            # Check book availability
+            if book.status != BookStatus.AVAILABLE:
+                print(f&quot;  Book {book_id} not available (status: {book.status.name})&quot;)
+                return None
+
+            # Create borrowing record
+            self.borrowing_counter += 1
+            checkout = datetime.now()
+            due = checkout + timedelta(days=14)
+
+            borrowing = Borrowing(
+                f&quot;BORROW_{self.borrowing_counter}&quot;,
+                book_id,
+                member_id,
+                checkout,
+                due
+            )
+
+            self.borrowings[borrowing.borrowing_id] = borrowing
+            member.active_borrows.append(borrowing)
+            book.status = BookStatus.BORROWED
+
+            print(f&quot;  {member.name} borrowed '{book.title}' (Due: {due.date()})&quot;)
+            return borrowing.borrowing_id
+
+    def return_book(self, borrowing_id: str) -&gt; float:
+        with self.lock:
+            if borrowing_id not in self.borrowings:
+                return 0.0
+
+            borrowing = self.borrowings[borrowing_id]
+
+            # Only set return_date if not already set (simulate late return tests)
+            if borrowing.return_date is None:
+                borrowing.return_date = datetime.now()
+
+            # Calculate fine
+            days_late = max(0, (borrowing.return_date - borrowing.due_date).days)
+            fine = min(days_late * 0.50, 10.0)
+            borrowing.fine = fine
+
+            # Update member
+            member = self.members[borrowing.member_id]
+            if borrowing in member.active_borrows:
+                member.active_borrows.remove(borrowing)
+            member.fine_balance += fine
+            if member.fine_balance &gt; 50:
+                member.status = MemberStatus.SUSPENDED
+
+            # Release book
+            book = self.books[borrowing.book_id]
+            book.status = BookStatus.AVAILABLE
+
+            print(f&quot;  {member.name} returned '{book.title}'&quot;)
+            if fine &gt; 0:
+                print(f&quot;  Fine: ${fine:.2f}&quot;)
+
+            return fine
+
+    def renew_book(self, borrowing_id: str) -&gt; bool:
+        with self.lock:
+            if borrowing_id not in self.borrowings:
+                return False
+
+            borrowing = self.borrowings[borrowing_id]
+            borrowing.due_date = borrowing.due_date + timedelta(days=14)
+
+            member = self.members[borrowing.member_id]
+            book = self.books[borrowing.book_id]
+
+            print(f&quot;  {member.name} renewed '{book.title}'&quot;)
+            print(f&quot;  New due date: {borrowing.due_date.date()}&quot;)
+            return True
+
+    def reserve_book(self, member_id: str, isbn: str) -&gt; bool:
+        with self.lock:
+            if member_id not in self.members:
+                return False
+
+            # Find all copies
+            copies = [b for b in self.books.values() if b.isbn == isbn]
+            available = [c for c in copies if c.status == BookStatus.AVAILABLE]
+
+            if available:
+                print(f&quot;  Copies available — borrow instead of reserving&quot;)
+                return False
+
+            # Mark first borrowed copy as reserved
+            if copies:
+                copies[0].status = BookStatus.RESERVED
+                member = self.members[member_id]
+                print(f&quot;  {member.name} reserved '{copies[0].title}'&quot;)
+                return True
+
+            return False
+
+    def display_member_account(self, member_id: str):
+        with self.lock:
+            if member_id not in self.members:
+                return
+
+            member = self.members[member_id]
+            print(f&quot;  Member:        {member.name}&quot;)
+            print(f&quot;  Active borrows:{len(member.active_borrows)}&quot;)
+            print(f&quot;  Fine balance:  ${member.fine_balance:.2f}&quot;)
+            print(f&quot;  Status:        {member.status.name}&quot;)
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def demo_1_borrow_return():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 1: BORROW &amp; RETURN&quot;)
+    print(&quot;=&quot;*70)
+
+    lib = Library()
+    lib.add_book(&quot;978-0&quot;, &quot;1984&quot;, &quot;George Orwell&quot;, 2)
+    lib.register_member(&quot;M1&quot;, &quot;John&quot;, &quot;john@email.com&quot;)
+
+    books = lib.search_books(&quot;1984&quot;)
+    if books:
+        borrow_id = lib.borrow_book(&quot;M1&quot;, books[0].book_id)
+        if borrow_id:
+            fine = lib.return_book(borrow_id)
+            print(f&quot;  Return fine: ${fine:.2f}&quot;)
+
+def demo_2_fine_calculation():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 2: LATE RETURN &amp; FINE&quot;)
+    print(&quot;=&quot;*70)
+
+    lib = Library()
+    lib.add_book(&quot;978-1&quot;, &quot;The Hobbit&quot;, &quot;J.R.R. Tolkien&quot;, 1)
+    lib.register_member(&quot;M2&quot;, &quot;Sarah&quot;, &quot;sarah@email.com&quot;)
+
+    books = lib.search_books(&quot;The Hobbit&quot;)
+    if books:
+        borrow_id = lib.borrow_book(&quot;M2&quot;, books[0].book_id)
+        if borrow_id:
+            # Simulate 3-day-late return
+            lib.borrowings[borrow_id].return_date = (
+                lib.borrowings[borrow_id].due_date + timedelta(days=3)
+            )
+            fine = lib.return_book(borrow_id)
+            print(f&quot;  Expected fine: $1.50, Actual: ${fine:.2f}&quot;)
+
+def demo_3_reservation():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 3: BOOK RESERVATION&quot;)
+    print(&quot;=&quot;*70)
+
+    lib = Library()
+    lib.add_book(&quot;978-2&quot;, &quot;Dune&quot;, &quot;Frank Herbert&quot;, 2)
+    lib.register_member(&quot;M3&quot;, &quot;Mike&quot;, &quot;mike@email.com&quot;)
+    lib.register_member(&quot;M4&quot;, &quot;Lisa&quot;, &quot;lisa@email.com&quot;)
+
+    # Borrow all copies
+    for book_id, book in list(lib.books.items()):
+        if book.isbn == &quot;978-2&quot;:
+            lib.borrow_book(&quot;M3&quot;, book_id)
+
+    # Try to reserve
+    lib.reserve_book(&quot;M4&quot;, &quot;978-2&quot;)
+
+def demo_4_member_account():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 4: MEMBER ACCOUNT STATUS&quot;)
+    print(&quot;=&quot;*70)
+
+    lib = Library()
+    lib.add_book(&quot;978-3&quot;, &quot;Python Guide&quot;, &quot;Various&quot;, 1)
+    lib.register_member(&quot;M5&quot;, &quot;Alex&quot;, &quot;alex@email.com&quot;)
+
+    books = lib.search_books(&quot;Python&quot;)
+    if books:
+        lib.borrow_book(&quot;M5&quot;, books[0].book_id)
+
+    lib.display_member_account(&quot;M5&quot;)
+
+def demo_5_multiple_books():
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;DEMO 5: MULTIPLE BORROWINGS&quot;)
+    print(&quot;=&quot;*70)
+
+    lib = Library()
+    lib.add_book(&quot;978-4&quot;, &quot;Book A&quot;, &quot;Author A&quot;, 1)
+    lib.add_book(&quot;978-5&quot;, &quot;Book B&quot;, &quot;Author B&quot;, 1)
+    lib.add_book(&quot;978-6&quot;, &quot;Book C&quot;, &quot;Author C&quot;, 1)
+
+    lib.register_member(&quot;M6&quot;, &quot;Bob&quot;, &quot;bob@email.com&quot;)
+
+    for book_id, book in list(lib.books.items()):
+        lib.borrow_book(&quot;M6&quot;, book_id)
+
+    lib.display_member_account(&quot;M6&quot;)
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if True:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;LIBRARY MANAGEMENT SYSTEM - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_borrow_return()
+    demo_2_fine_calculation()
+    demo_3_reservation()
+    demo_4_member_account()
+    demo_5_multiple_books()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;ALL DEMOS COMPLETED&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>borrow_book</strong></td>
+<td>RLock on Library</td>
+<td>Atomic: check limit + check status + create borrowing</td>
+</tr>
+<tr>
+<td><strong>return_book</strong></td>
+<td>RLock on Library</td>
+<td>Atomic: set return_date + compute fine + release book</td>
+</tr>
+<tr>
+<td><strong>reserve_book</strong></td>
+<td>RLock on Library</td>
+<td>Atomic: check availability + mark RESERVED</td>
+</tr>
+<tr>
+<td><strong>renew_book</strong></td>
+<td>RLock on Library</td>
+<td>Atomic: extend due date</td>
+</tr>
+<tr>
+<td><strong>Singleton init</strong></td>
+<td>Class-level Lock</td>
+<td>Double-checked locking, single instance</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. ✅ <code>threading.RLock</code> (re-entrant) allows the same thread to re-enter locked sections (e.g., <code>search_books</code> called from within <code>borrow_book</code>)
+2. ✅ Singleton uses a separate <code>_class_lock</code> so <code>__new__</code> never deadlocks with the instance lock
+3. ✅ All mutations to books, members, and borrowings happen inside the same lock, preventing partial updates
+4. ✅ Fine balance and member status updated atomically with book release</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="scenario-1-borrow-return-on-time">Scenario 1: Borrow &amp; Return (on time)</h3>
+<pre class="codehilite"><code>Added 2 copies of '1984' to Main
+Registered member: John
+John borrowed '1984' (Due: 2025-xx-xx)
+John returned '1984'
+Return fine: $0.00
+</code></pre>
+
+<h3 id="scenario-2-late-return-fine">Scenario 2: Late Return + Fine</h3>
+<pre class="codehilite"><code>- Member John returns &quot;The Hobbit&quot; 3 days late
+- Fine calculation: 3 days × $0.50 = $1.50
+- John's fine balance: $1.50
+- New borrow allowed (below $50 limit)
+</code></pre>
+
+<h3 id="scenario-3-reservation">Scenario 3: Reservation</h3>
+<pre class="codehilite"><code>- Member Bob wants &quot;Dune&quot; (all 2 copies borrowed)
+- Creates reservation
+- First borrowed copy marked RESERVED
+- Bob notified when returned; has 2 days to pick up
+</code></pre>
+
+<h3 id="scenario-4-member-account-status">Scenario 4: Member Account Status</h3>
+<pre class="codehilite"><code>- Member Alex has 1 active borrow
+- Fine balance: $0.00
+- Status: ACTIVE
+</code></pre>
+
+<h3 id="scenario-5-multiple-borrowings">Scenario 5: Multiple Borrowings</h3>
+<pre class="codehilite"><code>- Member Bob borrows Book A, B, and C
+- Active borrows: 3/5
+- Fine balance: $0.00
+- Status: ACTIVE
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-level">Basic Level</h3>
+<p><strong>Q1: How do you prevent overborrowing?</strong>
+A: Check borrowing limit (5 books max). On new borrow: count active borrowings. If count &gt;= 5, reject. Also check fine balance: if &gt; $50, suspend borrowing privileges.</p>
+<p><strong>Q2: What's the fine calculation policy?</strong>
+A: Fine = min($0.50 × days_late, $10). If returns 2 days late: 2 × $0.50 = $1.00. If 21+ days late: capped at $10. If total fine balance reaches $50: suspend membership. Forgive on first return for regular members.</p>
+<p><strong>Q3: How do you handle book reservations?</strong>
+A: When all copies borrowed, allow member to reserve. Store in queue: first to reserve = first to be notified when available. On return: check reservation queue, notify next member, hold for 2 days.</p>
+<p><strong>Q4: What's the difference between Book and Borrowing?</strong>
+A: <strong>BookItem</strong>: Physical inventory (ISBN, title, author, status). <strong>Borrowing</strong>: Transaction (member, book, dates, fine). One book can have multiple Borrowing records (over time). Multiple physical copies of same book = multiple BookItem entries.</p>
+<h3 id="intermediate-level">Intermediate Level</h3>
+<p><strong>Q5: How to handle multiple copies of same book?</strong>
+A: Each physical copy = separate BookItem record (different ID). Same ISBN/title. Query: "find all available copies of ISBN 123". Borrow = pick any available copy. Return = update that specific copy's status.</p>
+<p><strong>Q6: How to support renewals?</strong>
+A: On renewal request: (1) Check if borrowed by member, (2) Check if no reservations, (3) Extend due date by 14 days, (4) Log renewal. Limit to 2 renewals per borrow (prevent indefinite holds).</p>
+<p><strong>Q7: How to handle overdue notifications?</strong>
+A: Scheduled job: daily at 8 AM, find all overdue borrowings. Send email/SMS to member: "Your book X is due today" or "You have $5 in fines". Reminder 1 day before due + on due date + 1 day after.</p>
+<p><strong>Q8: What if member loses book?</strong>
+A: (1) Report loss, (2) Charge replacement cost ($20-50 depending on book), (3) Return fine obligation, (4) Mark book as LOST in system. After 1 year: delete LOST books from inventory (assume replaced).</p>
+<h3 id="advanced-level">Advanced Level</h3>
+<p><strong>Q9: How to handle multi-branch requests?</strong>
+A: Member in Branch A needs book at Branch B. Request → Reserve at Branch B. Notify when available → Transfer book to Branch A. Member picks up from Branch A. Transfers tracked + cost allocation.</p>
+<p><strong>Q10: How to optimize search for 1M books?</strong>
+A: Index on (ISBN, title, author). Use full-text search (Elasticsearch). Cache popular books. Prefix search: "Book starts with 'The'" efficient with B-trees. Expected: &lt;100ms query.</p>
+<p><strong>Q11: How to prevent system abuse?</strong>
+A: (1) Limit borrows per day (max 5 new borrows), (2) Track patterns (same person reserves immediately after return), (3) Fine accumulation: if &gt; $50, suspend, (4) Report duplicate accounts to admin.</p>
+<p><strong>Q12: How to generate insights from borrowing data?</strong>
+A: Analytics: (1) Most borrowed books, (2) Member behavior (avid reader?), (3) Fine patterns, (4) Peak lending times. Use for: acquisition strategy (buy more popular books), fine structure adjustments.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<p><strong>Q1: Can you handle 100K members, 1M books?</strong>
+A: Yes. Index on ISBN + member_id + status. Query: "find available copies" → index lookup O(log n). Partition by branch if needed. Expected: &lt;100ms per query.</p>
+<p><strong>Q2: How to handle real-time availability?</strong>
+A: Cache availability (Redis). On borrow: decrement cache. On return: increment cache. Cache miss = query DB. Accuracy: eventual consistency (couple seconds lag).</p>
+<p><strong>Q3: How to prevent race condition on last copy?</strong>
+A: Last copy available, 2 members try to borrow simultaneously. Use pessimistic lock: reserve, check status again, borrow or reject. Or optimistic lock: version number on book status.</p>
+<p><strong>Q4: How to optimize fine calculations?</strong>
+A: Store due_date, return_date in DB. Fine calculated on query (not stored initially). Store only if charged. Batch nightly job: calculate all overdue fines, store in batch.</p>
+<p><strong>Q5: Can you support digital books (no physical limit)?</strong>
+A: Yes. Digital books: unlimited borrows (no inventory limit). Store separate status (digital vs physical). Lending period same. Digital expires automatically (DRM) at due date.</p>
+<p><strong>Q6: How to handle inter-library loans?</strong>
+A: Network of libraries: central catalog. Member in Library A searches catalog (includes all libraries). Request → routed to Library B → transferred → member picks up from Library A. 3-5 days delay.</p>
+<p><strong>Q7: How to migrate to multi-branch from single-branch?</strong>
+A: Phase 1: Add branch field to all records. Phase 2: Data migration (assign all books to branch 1). Phase 3: Update queries (add branch filter). Phase 4: Enable branch creation for new library.</p>
+<p><strong>Q8: How to prevent fine inflation?</strong>
+A: Cap daily fine at $10 total (per book). Alternative: $0.50 per day, max 20 days = $10 cap. Clear fines after 1 year (forgiveness policy). Prevents debt spiral.</p>
+<p><strong>Q9: Can you support membership tiers (premium)?</strong>
+A: Premium: borrow 10 books, 21-day period, 4 renewals, $0 fines first month. Regular: 5 books, 14 days, 2 renewals, $0.50/day fine. Student: 3 books, 7 days, 1 renewal. Flexible implementation.</p>
+<p><strong>Q10: How to optimize reservation queue?</strong>
+A: Use priority queue (first-reserved = highest priority). When book available: notify top N members (in case some don't respond). Maintain sorted structure efficiently.</p>
+<p><strong>Q11: How to handle book damage reports?</strong>
+A: Member reports damage on return. Assess: if severe (unusable) = charge member repair cost. If minor = accept &amp; repair later. Track damage patterns (e.g., repeated by same member).</p>
+<p><strong>Q12: Can you support reading recommendations?</strong>
+A: ML model: user's borrowing history → similar books → recommend. Books often borrowed together → suggest. Popular in member's age group/interests. Display on member dashboard.</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw UML class diagram with all relationships (Library, BookItem, Member, Borrowing)</li>
+<li>[ ] Walk through borrow → return → fine lifecycle</li>
+<li>[ ] Explain overborrowing prevention (limit check + fine balance check, both atomic)</li>
+<li>[ ] Explain reservation flow and queue notification</li>
+<li>[ ] Explain fine calculation: $0.50/day, $10 cap, $50 suspension threshold</li>
+<li>[ ] Explain why RLock is used instead of Lock (re-entrant needed within same thread)</li>
+<li>[ ] Run complete implementation (5 demos) without errors</li>
+<li>[ ] Answer 5+ scaling Q&amp;A questions</li>
+<li>[ ] Discuss trade-offs: in-memory vs DB, pessimistic vs optimistic locking, single branch vs multi-branch</li>
+</ul>
+<hr />
+<p><strong>Ready for interview? Check out some books!</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

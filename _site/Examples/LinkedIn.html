@@ -1,0 +1,2170 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LinkedIn - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="linkedin-complete-design-guide">LinkedIn — Complete Design Guide</h1>
+<blockquote>
+<p>Professional networking platform with profiles, connections, job postings, content feed, messaging, and match recommendations.</p>
+</blockquote>
+<p><strong>Scale</strong>: 500M+ DAU, 10M+ jobs, 1B messages/day, 99.9% uptime<br />
+<strong>Duration</strong>: 75-minute interview guide<br />
+<strong>Focus</strong>: Connection state machine, job-matching strategy, event-driven feed, observer-based notifications</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>Users create professional profiles → connect with peers → publish content (factory-created posts) → consume a ranked feed → discover and apply for jobs via pluggable matching strategies → message connections. Every event notifies subscribers via Observer pattern. The entire system is coordinated through a single thread-safe Singleton.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>Create Profile → Add Skills / Experience → Send Connection Request
+    → PENDING → Accept → ACCEPTED (state machine)
+         ↓
+    Create Post (Factory) → Notify Followers (Observer) → Ranked Feed
+         ↓
+    Post Job → Set Matcher Strategy → Apply → Match Score Calculated
+         ↓
+    Send Message → MessageNotifier → Recipient notified
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Single machine or distributed?</strong> → "Single-process demo; production is distributed microservices"</li>
+<li><strong>Real payment / identity verification?</strong> → "Out of scope; mock data only"</li>
+<li><strong>What post types to support?</strong> → "Text, Image, Video, Article — extensible via Factory"</li>
+<li><strong>How are feeds ranked?</strong> → "Engagement × recency × connection-strength score"</li>
+<li><strong>Job matching algorithm fixed or pluggable?</strong> → "Pluggable Strategy pattern; skill/location/experience/hybrid"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>User (Professional)</strong></td>
+<td>Create profile, connect, post, apply for jobs</td>
+<td>Add skills, send connection request, publish post, apply</td>
+</tr>
+<tr>
+<td><strong>Recruiter / Company</strong></td>
+<td>Post jobs, find candidates</td>
+<td>Post job listing, browse matching candidates</td>
+</tr>
+<tr>
+<td><strong>System</strong></td>
+<td>Coordinator &amp; notifier</td>
+<td>Rank feed, emit events, notify observers, recommend connections</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Profile Management</strong>
+  - Create user profile with name, headline, location
+  - Add skills and work experiences
+  - Track connections and followers</p>
+<p>✅ <strong>Connection System</strong>
+  - Send connection requests (Pending state)
+  - Accept or reject requests (state transitions)
+  - Query mutual connections
+  - Recommend new connections based on network + skill overlap</p>
+<p>✅ <strong>Content Feed</strong>
+  - Create posts (TextPost, ImagePost, VideoPost, ArticlePost) via Factory
+  - Like, comment, share posts
+  - Generate personalized ranked feed (engagement × recency × connection strength)</p>
+<p>✅ <strong>Job Management</strong>
+  - Post jobs with required skills, location, experience level
+  - Apply for jobs
+  - Match candidates using pluggable strategy (skill / location / experience / hybrid)
+  - Swap matching algorithm at runtime</p>
+<p>✅ <strong>Messaging</strong>
+  - Send direct messages between users
+  - Track read/unread status</p>
+<p>✅ <strong>Notifications (Observer)</strong>
+  - FeedNotifier, ConnectionNotifier, JobNotifier, MessageNotifier
+  - Decouple event producers from consumers</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Concurrency</strong>: Thread-safe Singleton; RLock on shared state<br />
+✅ <strong>Feed Latency</strong>: &lt; 500ms feed generation (in-memory demo)<br />
+✅ <strong>Search Latency</strong>: &lt; 200ms (production: Elasticsearch)<br />
+✅ <strong>Message Delivery</strong>: &lt; 1s (production: WebSocket + Kafka)<br />
+✅ <strong>Availability</strong>: 99.9% uptime<br />
+✅ <strong>Consistency</strong>: Eventual consistency for feeds; strong for connections  </p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Storage</strong></td>
+<td>In-memory for demo (production: PostgreSQL + Redis + Elasticsearch)</td>
+</tr>
+<tr>
+<td><strong>Auth / Security</strong></td>
+<td>Out of scope</td>
+</tr>
+<tr>
+<td><strong>Real payments</strong></td>
+<td>NO — mock service</td>
+</tr>
+<tr>
+<td><strong>Post types extensible?</strong></td>
+<td>YES — Factory pattern</td>
+</tr>
+<tr>
+<td><strong>Matching algorithm fixed?</strong></td>
+<td>NO — Strategy pattern, runtime-swappable</td>
+</tr>
+<tr>
+<td><strong>Connection requests</strong></td>
+<td>One pending request per pair</td>
+</tr>
+<tr>
+<td><strong>Feed size</strong></td>
+<td>Return top 20 posts per request</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on the whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<pre class="codehilite"><code>User, Connection, Post (TextPost/ImagePost/VideoPost/ArticlePost),
+Job, Company, Message, Feed, Skill, Experience, Location, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="user-professional-profile"><strong>User</strong> — Professional profile</h4>
+<pre class="codehilite"><code>Properties:
+  - user_id: str
+  - name: str
+  - headline: str
+  - location: Location
+  - skills: List[Skill]
+  - experiences: List[Experience]
+  - connections: Set[str]  (user_ids of 1st-degree connections)
+  - followers: Set[str]
+
+Behaviors:
+  - add_skill(skill): Add unique skill
+  - add_experience(exp): Append work experience
+  - total_experience_years(): Sum all experience durations
+</code></pre>
+
+<h4 id="connection-relationship-with-state-machine"><strong>Connection</strong> — Relationship with state machine</h4>
+<pre class="codehilite"><code>Properties:
+  - connection_id: str
+  - from_user_id: str
+  - to_user_id: str
+  - status: ConnectionStatus (PENDING, ACCEPTED, REJECTED, WITHDRAWN)
+  - message: str
+  - created_at: datetime
+
+Behaviors:
+  - (transitions controlled by LinkedInSystem)
+  - Valid: PENDING → ACCEPTED or REJECTED
+</code></pre>
+
+<h4 id="post-base-content-class-polymorphic-via-factory"><strong>Post</strong> — Base content class (polymorphic via Factory)</h4>
+<pre class="codehilite"><code>Properties:
+  - post_id: str
+  - author_id: str
+  - content: str
+  - visibility: Visibility (PUBLIC, CONNECTIONS, PRIVATE)
+  - likes: Set[str]
+  - comments: List[Dict]
+  - shares: List[Dict]
+  - created_at: datetime
+
+Behaviors:
+  - post_type(): Return PostType enum
+  - engagement_score(): likes + 3×comments + 5×shares
+
+Subtypes: TextPost, ImagePost (image_urls), VideoPost (video_url), ArticlePost (full_text)
+</code></pre>
+
+<h4 id="job-job-posting"><strong>Job</strong> — Job posting</h4>
+<pre class="codehilite"><code>Properties:
+  - job_id: str
+  - company_id: str
+  - title: str
+  - description: str
+  - location: Location
+  - required_skills: List[str]
+  - required_experience_years: int
+  - job_type: JobType
+  - applications: List[str]  (user_ids)
+
+Behaviors:
+  - (data holder; matching logic in Strategy)
+</code></pre>
+
+<h4 id="message-direct-message-between-users"><strong>Message</strong> — Direct message between users</h4>
+<pre class="codehilite"><code>Properties:
+  - message_id: str
+  - sender_id: str
+  - receiver_id: str
+  - content: str
+  - is_read: bool
+  - created_at: datetime
+</code></pre>
+
+<h4 id="linkedinsystem-main-controller-singleton"><strong>LinkedInSystem</strong> — Main controller (Singleton)</h4>
+<pre class="codehilite"><code>Properties:
+  - users: Dict[str, User]
+  - connections: Dict[str, Connection]
+  - posts: Dict[str, Post]
+  - jobs: Dict[str, Job]
+  - messages: Dict[str, Message]
+  - job_matcher: JobMatchingStrategy
+  - observers: List[LinkedInObserver]
+  - _lock: threading.RLock
+
+Behaviors:
+  - create_user / get_user
+  - send_connection_request / accept_connection / reject_connection
+  - create_post / like_post / generate_feed
+  - post_job / apply_for_job / get_matching_candidates / set_job_matcher
+  - send_message
+  - recommend_connections
+  - register_observer / _emit
+</code></pre>
+
+<h3 id="step-23-define-enumerations-state-type">Step 2.3: Define Enumerations (State &amp; Type)</h3>
+<pre class="codehilite"><code class="language-python">class ConnectionStatus(Enum):
+    PENDING = &quot;pending&quot;       # Request sent, awaiting response
+    ACCEPTED = &quot;accepted&quot;     # Both parties connected
+    REJECTED = &quot;rejected&quot;     # Request declined
+    WITHDRAWN = &quot;withdrawn&quot;   # Sender withdrew request
+
+class PostType(Enum):
+    TEXT = &quot;text&quot;
+    IMAGE = &quot;image&quot;
+    VIDEO = &quot;video&quot;
+    ARTICLE = &quot;article&quot;
+
+class Visibility(Enum):
+    PUBLIC = &quot;public&quot;          # Anyone can see
+    CONNECTIONS = &quot;connections&quot; # 1st-degree only
+    PRIVATE = &quot;private&quot;        # Owner only
+
+class JobType(Enum):
+    FULL_TIME = &quot;full_time&quot;
+    PART_TIME = &quot;part_time&quot;
+    CONTRACT = &quot;contract&quot;
+    INTERNSHIP = &quot;internship&quot;
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>User</strong></td>
+<td>Core identity; holds skills, experiences, connections</td>
+<td>No profile, no network</td>
+</tr>
+<tr>
+<td><strong>Connection</strong></td>
+<td>State machine for relationship lifecycle</td>
+<td>No PENDING → ACCEPTED guard; invalid transitions</td>
+</tr>
+<tr>
+<td><strong>Post + subtypes</strong></td>
+<td>Polymorphic content; Factory extensibility</td>
+<td>Rigid post creation, hard to add types</td>
+</tr>
+<tr>
+<td><strong>Job</strong></td>
+<td>Job posting data + applicant list</td>
+<td>No job board</td>
+</tr>
+<tr>
+<td><strong>Message</strong></td>
+<td>Conversation history + read status</td>
+<td>No messaging</td>
+</tr>
+<tr>
+<td><strong>LinkedInSystem</strong></td>
+<td>Thread-safe single coordinator</td>
+<td>Inconsistent state across threads</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-create-user"><strong>1. Create User</strong></h4>
+<pre class="codehilite"><code class="language-python">def create_user(user_id: str, name: str, headline: str, location: Location) -&gt; User:
+    &quot;&quot;&quot;
+    Register a new professional profile.
+    Returns: User object.
+    Side Effects: Emits &quot;user_created&quot; event.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="2-send-connection-request-critical"><strong>2. Send Connection Request</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def send_connection_request(from_user_id: str, to_user_id: str, message: str = &quot;&quot;) -&gt; Connection:
+    &quot;&quot;&quot;
+    Create a PENDING connection between two users.
+    Precondition: No active connection between the pair.
+    Returns: Connection with status=PENDING.
+    Side Effects: Emits &quot;connection_requested&quot; event.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="3-accept-reject-connection-critical"><strong>3. Accept / Reject Connection</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def accept_connection(connection_id: str) -&gt; bool:
+    &quot;&quot;&quot;
+    Transition PENDING → ACCEPTED. Adds each user to the other's connections set.
+    Raises: Returns False if connection not found or not in PENDING state.
+    Side Effects: Emits &quot;connection_accepted&quot;.
+    &quot;&quot;&quot;
+    pass
+
+def reject_connection(connection_id: str) -&gt; bool:
+    &quot;&quot;&quot;
+    Transition PENDING → REJECTED.
+    Returns False if not found or not PENDING.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="4-create-post-factory-entry-point-critical"><strong>4. Create Post (Factory Entry Point)</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def create_post(post_id: str, author_id: str, post_type: PostType,
+                content: str, visibility: Visibility = Visibility.PUBLIC, **kwargs) -&gt; Post:
+    &quot;&quot;&quot;
+    Factory-style creation of the correct Post subclass.
+    kwargs: image_urls (ImagePost), video_url (VideoPost), full_text (ArticlePost)
+    Returns: Appropriate Post subclass.
+    Side Effects: Emits &quot;post_created&quot;, notifies followers.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="5-generate-feed"><strong>5. Generate Feed</strong></h4>
+<pre class="codehilite"><code class="language-python">def generate_feed(user_id: str, limit: int = 20) -&gt; List[Post]:
+    &quot;&quot;&quot;
+    Return top-N ranked posts for the user.
+    Score = engagement_score × exp(-age_seconds / 86400) × connection_strength
+    Filters by visibility rules.
+    Response Time: O(P log P) where P = total posts.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="6-post-job-apply-critical"><strong>6. Post Job &amp; Apply</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def post_job(job_id: str, company_id: str, title: str, description: str,
+             location: Location, required_skills: List[str],
+             required_experience_years: int) -&gt; Job:
+    &quot;&quot;&quot;Post a new job listing. Emits &quot;job_posted&quot;.&quot;&quot;&quot;
+    pass
+
+def apply_for_job(job_id: str, user_id: str) -&gt; bool:
+    &quot;&quot;&quot;
+    Record application. Calculate match score using active strategy.
+    Returns False if job not found or already applied.
+    Emits &quot;job_applied&quot; with match_score.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="7-set-job-matching-strategy"><strong>7. Set Job Matching Strategy</strong></h4>
+<pre class="codehilite"><code class="language-python">def set_job_matcher(strategy: JobMatchingStrategy) -&gt; None:
+    &quot;&quot;&quot;
+    Swap job matching algorithm at runtime.
+    New strategy applied on next apply_for_job / get_matching_candidates call.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="8-register-observer"><strong>8. Register Observer</strong></h4>
+<pre class="codehilite"><code class="language-python">def register_observer(observer: LinkedInObserver) -&gt; None:
+    &quot;&quot;&quot;
+    Subscribe to all system events.
+    Events: user_created, connection_requested, connection_accepted,
+            post_created, post_liked, job_posted, job_applied, message_sent, ...
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-32-failure-model">Step 3.2: Failure Model</h3>
+<pre class="codehilite"><code class="language-python">class LinkedInException(Exception): ...
+class UserNotFoundError(LinkedInException): ...
+class ConnectionNotFoundError(LinkedInException): ...
+class InvalidStateTransitionError(LinkedInException): ...
+class JobNotFoundError(LinkedInException): ...
+class DuplicateApplicationError(LinkedInException): ...
+</code></pre>
+
+<blockquote>
+<p>Demo code returns <code>False</code> / <code>None</code> for brevity; production code raises typed exceptions.</p>
+</blockquote>
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">system = LinkedInSystem()   # returns singleton
+
+# Setup
+loc = Location(&quot;San Francisco&quot;, &quot;USA&quot;, 37.7749, -122.4194)
+alice = system.create_user(&quot;alice_1&quot;, &quot;Alice&quot;, &quot;Engineer @ Google&quot;, loc)
+alice.add_skill(Skill(&quot;s1&quot;, &quot;Python&quot;, &quot;Programming&quot;))
+
+bob = system.create_user(&quot;bob_1&quot;, &quot;Bob&quot;, &quot;PM @ Meta&quot;, loc)
+
+# Connect
+conn = system.send_connection_request(&quot;alice_1&quot;, &quot;bob_1&quot;)
+system.accept_connection(conn.connection_id)
+
+# Post
+post = system.create_post(&quot;p1&quot;, &quot;alice_1&quot;, PostType.TEXT, &quot;Hello LinkedIn!&quot;)
+system.like_post(&quot;p1&quot;, &quot;bob_1&quot;)
+
+# Feed
+feed = system.generate_feed(&quot;bob_1&quot;, limit=10)
+
+# Job
+job = system.post_job(&quot;j1&quot;, &quot;google&quot;, &quot;SWE&quot;, &quot;Build things&quot;, loc, [&quot;Python&quot;], 3)
+system.set_job_matcher(HybridMatcher())
+system.apply_for_job(&quot;j1&quot;, &quot;alice_1&quot;)
+candidates = system.get_matching_candidates(&quot;j1&quot;, threshold=70)
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and association. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>LinkedInSystem HAS-A users / connections / posts / jobs / messages (1:N Composition)
+  └─ System owns lifecycle of all domain objects
+
+User HAS-A skills (1:N Composition)
+  └─ Skills list owned by User
+
+User HAS-A experiences (1:N Composition)
+  └─ Experience history owned by User
+
+Connection REFERENCES from_user / to_user (1:1 Association)
+  └─ Connection links User entities (no ownership)
+
+Post REFERENCES author (1:1 Association)
+  └─ Post links to User (no ownership)
+
+Post IS-A TextPost / ImagePost / VideoPost / ArticlePost (Inheritance)
+  └─ Factory creates appropriate subclass
+
+LinkedInSystem USES-A JobMatchingStrategy (1:1 Composition, swappable)
+  └─ Strategy algorithm owned but replaceable at runtime
+
+LinkedInSystem NOTIFIES LinkedInObserver (1:N Association)
+  └─ Multiple observers listen to events
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌────────────────────────────────────────────────────────────┐
+│           LinkedInSystem (Singleton)                       │
+├────────────────────────────────────────────────────────────┤
+│ - _instance: LinkedInSystem                                │
+│ - users: Dict[str, User]                                   │
+│ - connections: Dict[str, Connection]                       │
+│ - posts: Dict[str, Post]                                   │
+│ - jobs: Dict[str, Job]                                     │
+│ - messages: Dict[str, Message]                             │
+│ - job_matcher: JobMatchingStrategy                         │
+│ - observers: List[LinkedInObserver]                        │
+│ - _lock: threading.RLock                                   │
+├────────────────────────────────────────────────────────────┤
+│ + create_user(...): User                                   │
+│ + send_connection_request(...): Connection                 │
+│ + accept_connection(id): bool                             │
+│ + reject_connection(id): bool                             │
+│ + create_post(...): Post                                   │
+│ + like_post(id, user_id): bool                            │
+│ + generate_feed(user_id, limit): List[Post]               │
+│ + post_job(...): Job                                       │
+│ + apply_for_job(job_id, user_id): bool                    │
+│ + get_matching_candidates(job_id, threshold): List[Tuple] │
+│ + set_job_matcher(strategy): void                         │
+│ + send_message(...): Message                               │
+│ + recommend_connections(user_id, limit): List[Tuple]      │
+│ + register_observer(observer): void                       │
+└──────────┬────────────────────────────────────────────────┘
+           │ manages 1:N
+    ┌──────┼──────────────┬──────────────┬──────────────┐
+    ▼      ▼              ▼              ▼              ▼
+┌────────┐ ┌──────────┐ ┌────────┐ ┌────────┐ ┌──────────┐
+│  User  │ │Connection│ │  Post  │ │  Job   │ │ Message  │
+├────────┤ ├──────────┤ ├────────┤ ├────────┤ ├──────────┤
+│user_id │ │conn_id   │ │post_id │ │job_id  │ │msg_id    │
+│name    │ │from_user │ │author  │ │company │ │sender    │
+│headline│ │to_user   │ │content │ │skills[]│ │receiver  │
+│location│ │status:   │ │type    │ │exp_req │ │content   │
+│skills[]│ │ PENDING  │ │likes{} │ │apps[]  │ │is_read   │
+│exps[]  │ │ ACCEPTED │ │comments│ └────────┘ └──────────┘
+│conns{} │ │ REJECTED │ │shares  │
+│followers│ │ WITHDRAWN│ │created │
+└────────┘ └──────────┘ └───┬────┘
+                             │ subclasses (Factory)
+                    ┌────────┼────────────┐
+                    ▼        ▼            ▼            ▼
+               TextPost  ImagePost   VideoPost   ArticlePost
+               (content) (image_urls)(video_url) (full_text)
+
+STRATEGY PATTERN (Job Matching):
+┌──────────────────────────────────────────┐
+│ JobMatchingStrategy (Abstract)           │
+├──────────────────────────────────────────┤
+│ + calculate_match_score(job, user): float│
+└──┬───────────────────────────────────────┘
+   │ implemented by
+   ├─→ SkillBasedMatcher    (% required skills matched)
+   ├─→ LocationBasedMatcher (distance &lt; 50km → 100%)
+   ├─→ ExperienceBasedMatcher (years diff × 10 penalty)
+   └─→ HybridMatcher        (0.5×skill + 0.3×location + 0.2×exp)
+
+OBSERVER PATTERN (Notifications):
+┌──────────────────────────────────────────┐
+│ LinkedInObserver (Abstract)              │
+├──────────────────────────────────────────┤
+│ + update(event, payload): void           │
+└──┬───────────────────────────────────────┘
+   │ implemented by
+   ├─→ FeedNotifier         (post_created events)
+   ├─→ ConnectionNotifier   (connection_accepted events)
+   ├─→ JobNotifier          (job_posted events)
+   └─→ MessageNotifier      (message_sent events)
+
+CONNECTION STATE MACHINE:
+PENDING ──accept()──→ ACCEPTED
+PENDING ──reject()──→ REJECTED
+PENDING ──withdraw()─→ WITHDRAWN
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LinkedInSystem → Users</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System owns all users</td>
+</tr>
+<tr>
+<td>LinkedInSystem → Connections</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System owns all connections</td>
+</tr>
+<tr>
+<td>LinkedInSystem → Posts</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System owns all posts</td>
+</tr>
+<tr>
+<td>LinkedInSystem → Jobs</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System owns all jobs</td>
+</tr>
+<tr>
+<td>LinkedInSystem → Messages</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System owns all messages</td>
+</tr>
+<tr>
+<td>User → Skills</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>User owns skill list</td>
+</tr>
+<tr>
+<td>User → Experiences</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>User owns experience history</td>
+</tr>
+<tr>
+<td>Connection → Users</td>
+<td>1:1 × 2</td>
+<td>Association</td>
+<td>Connection links two Users</td>
+</tr>
+<tr>
+<td>Post → User (author)</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Post references author</td>
+</tr>
+<tr>
+<td>Job → User (applicants)</td>
+<td>1:N</td>
+<td>Association</td>
+<td>Job references applicant IDs</td>
+</tr>
+<tr>
+<td>LinkedInSystem → JobMatchingStrategy</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>System owns active strategy</td>
+</tr>
+<tr>
+<td>LinkedInSystem → Observers</td>
+<td>1:N</td>
+<td>Association</td>
+<td>System notifies many listeners</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-singleton-for-linkedinsystem">Pattern 1: <strong>Singleton</strong> (For LinkedInSystem)</h3>
+<p><strong>Problem</strong>: Multiple threads need one consistent view of users, connections, posts, jobs.</p>
+<p><strong>Solution</strong>: One global LinkedInSystem instance with thread-safe double-checked locking.</p>
+<pre class="codehilite"><code class="language-python">class LinkedInSystem:
+    _instance = None
+    _lock = threading.RLock()
+
+    def __new__(cls, *args, **kwargs):       # *args/**kwargs: accept (and ignore) any init args
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+        self._initialized = True
+        self._data_lock = threading.RLock()  # RLock: re-entrant, no self-deadlock
+        # ... initialize dicts ...
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Single source of truth, ✅ Thread-safe (double-checked lock), ✅ Global access<br />
+<strong>Trade-off</strong>: ⚠️ Global state (harder to unit-test), ⚠️ Harder to scale across machines</p>
+<hr />
+<h3 id="pattern-2-strategy-for-job-matching">Pattern 2: <strong>Strategy</strong> (For Job Matching)</h3>
+<p><strong>Problem</strong>: Job matching criteria vary (skill overlap, location proximity, experience level) and may change at runtime.</p>
+<p><strong>Solution</strong>: Pluggable <code>JobMatchingStrategy</code> ABC; swap algorithm without modifying core booking logic.</p>
+<pre class="codehilite"><code class="language-python">class JobMatchingStrategy(ABC):
+    @abstractmethod
+    def calculate_match_score(self, job: Job, user: User) -&gt; float:
+        pass
+
+class SkillBasedMatcher(JobMatchingStrategy):
+    def calculate_match_score(self, job: Job, user: User) -&gt; float:
+        user_skills = {s.name.lower() for s in user.skills}
+        matched = sum(1 for r in job.required_skills if r.lower() in user_skills)
+        return (matched / len(job.required_skills)) * 100 if job.required_skills else 0.0
+
+class HybridMatcher(JobMatchingStrategy):
+    def calculate_match_score(self, job: Job, user: User) -&gt; float:
+        s = SkillBasedMatcher().calculate_match_score(job, user)
+        l = LocationBasedMatcher().calculate_match_score(job, user)
+        e = ExperienceBasedMatcher().calculate_match_score(job, user)
+        return s * 0.5 + l * 0.3 + e * 0.2
+
+# Runtime swap:
+system.set_job_matcher(HybridMatcher())
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Easy to add new matchers (salary-based, industry-based), ✅ No core-logic change<br />
+<strong>Trade-off</strong>: ⚠️ Extra abstraction layer</p>
+<hr />
+<h3 id="pattern-3-observer-for-notifications">Pattern 3: <strong>Observer</strong> (For Notifications)</h3>
+<p><strong>Problem</strong>: Post creation, connection acceptance, job posting, and messaging each need to trigger different notifications without coupling.</p>
+<p><strong>Solution</strong>: <code>LinkedInObserver</code> ABC; event producer calls <code>_emit(event, payload)</code>; each observer reacts independently.</p>
+<pre class="codehilite"><code class="language-python">class LinkedInObserver(ABC):
+    @abstractmethod
+    def update(self, event: str, payload: dict) -&gt; None: pass
+
+class FeedNotifier(LinkedInObserver):
+    def update(self, event: str, payload: dict) -&gt; None:
+        if event == &quot;post_created&quot;:
+            print(f&quot;  [FEED] New post from {payload['author_id']}&quot;)
+
+class ConnectionNotifier(LinkedInObserver):
+    def update(self, event: str, payload: dict) -&gt; None:
+        if event == &quot;connection_accepted&quot;:
+            print(f&quot;  [CONNECTION] {payload['user1']} ↔ {payload['user2']} connected&quot;)
+
+# Usage: Add multiple observers
+system.register_observer(FeedNotifier())
+system.register_observer(ConnectionNotifier())
+system._emit(&quot;post_created&quot;, {&quot;author_id&quot;: &quot;alice_1&quot;, &quot;content&quot;: &quot;Hello!&quot;})
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Loose coupling, ✅ Easy to add new channels (SMS, Push, Slack)<br />
+<strong>Trade-off</strong>: ⚠️ Observer lifecycle management, ⚠️ Unhandled exceptions in one observer affect others</p>
+<hr />
+<h3 id="pattern-4-factory-for-post-types">Pattern 4: <strong>Factory</strong> (For Post Types)</h3>
+<p><strong>Problem</strong>: Creating posts requires selecting the right subclass (TextPost, ImagePost, VideoPost, ArticlePost) and initializing type-specific fields.</p>
+<p><strong>Solution</strong>: <code>create_post()</code> acts as a factory method; caller passes <code>PostType</code> enum; factory returns correct subclass.</p>
+<pre class="codehilite"><code class="language-python">def create_post(self, post_id, author_id, post_type, content, **kwargs) -&gt; Post:
+    if post_type == PostType.TEXT:
+        return TextPost(post_id, author_id, content)
+    elif post_type == PostType.IMAGE:
+        return ImagePost(post_id, author_id, content,
+                         image_urls=kwargs.get('image_urls', []))
+    elif post_type == PostType.VIDEO:
+        return VideoPost(post_id, author_id, content,
+                         video_url=kwargs.get('video_url', ''))
+    else:  # ARTICLE
+        return ArticlePost(post_id, author_id, content,
+                           full_text=kwargs.get('full_text', ''))
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Centralized creation, ✅ Easy to add new post types<br />
+<strong>Trade-off</strong>: ⚠️ Factory method grows; consider dedicated <code>PostFactory</code> class if many types</p>
+<hr />
+<h3 id="pattern-5-state-machine-for-connection-lifecycle">Pattern 5: <strong>State Machine</strong> (For Connection Lifecycle)</h3>
+<p><strong>Problem</strong>: A connection can be PENDING, ACCEPTED, REJECTED, or WITHDRAWN. Invalid transitions (e.g., accept after reject) must be blocked.</p>
+<p><strong>Solution</strong>: <code>ConnectionStatus</code> enum enforces valid transitions at the application level.</p>
+<pre class="codehilite"><code class="language-python">def accept_connection(self, connection_id: str) -&gt; bool:
+    conn = self.connections.get(connection_id)
+    if not conn or conn.status != ConnectionStatus.PENDING:
+        return False   # Invalid transition blocked
+    conn.status = ConnectionStatus.ACCEPTED
+    self.users[conn.from_user_id].connections.add(conn.to_user_id)
+    self.users[conn.to_user_id].connections.add(conn.from_user_id)
+    return True
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Explicit lifecycle, ✅ Invalid transitions caught at runtime<br />
+<strong>Trade-off</strong>: ⚠️ State logic spread across methods; can graduate to full State pattern if more states added</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>One global LinkedInSystem</td>
+<td>Consistent state across all clients</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Varying job-matching algorithms</td>
+<td>Pluggable, runtime-swappable</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Events trigger notifications</td>
+<td>Loose coupling, event-driven</td>
+</tr>
+<tr>
+<td><strong>Factory</strong></td>
+<td>Correct Post subclass creation</td>
+<td>Centralized, easy to extend</td>
+</tr>
+<tr>
+<td><strong>State Machine</strong></td>
+<td>Connection lifecycle correctness</td>
+<td>Invalid transitions prevented</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+LinkedIn System - Interview Implementation
+Demonstrates:
+1. Singleton pattern (one system instance, RLock for re-entrancy safety)
+2. Factory pattern (create different post types)
+3. Strategy pattern (pluggable job matching algorithms)
+4. Observer pattern (event notifications)
+5. State machine pattern (connection lifecycle)
+
+Bug fixes applied vs original:
+  - LinkedInSystem.__new__ now accepts *args, **kwargs to avoid TypeError
+    when Python calls __new__(cls) during singleton creation via __init__.
+  - threading.Lock replaced with threading.RLock throughout to prevent
+    self-deadlock when methods re-enter the same lock (e.g. notify inside lock).
+  - Demo functions call LinkedInSystem() (the correct singleton accessor)
+    instead of the non-existent LinkedInSystem.instance() class method.
+&quot;&quot;&quot;
+
+from __future__ import annotations
+from enum import Enum
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Set, Tuple
+from datetime import datetime
+import threading
+import math
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class ConnectionStatus(Enum):
+    PENDING = &quot;pending&quot;
+    ACCEPTED = &quot;accepted&quot;
+    REJECTED = &quot;rejected&quot;
+    WITHDRAWN = &quot;withdrawn&quot;
+
+class PostType(Enum):
+    TEXT = &quot;text&quot;
+    IMAGE = &quot;image&quot;
+    VIDEO = &quot;video&quot;
+    ARTICLE = &quot;article&quot;
+
+class Visibility(Enum):
+    PUBLIC = &quot;public&quot;
+    CONNECTIONS = &quot;connections&quot;
+    PRIVATE = &quot;private&quot;
+
+class JobType(Enum):
+    FULL_TIME = &quot;full_time&quot;
+    PART_TIME = &quot;part_time&quot;
+    CONTRACT = &quot;contract&quot;
+    INTERNSHIP = &quot;internship&quot;
+
+# ============================================================================
+# SUPPORTING CLASSES
+# ============================================================================
+
+@dataclass
+class Skill:
+    skill_id: str
+    name: str
+    category: str
+
+@dataclass
+class Experience:
+    company: str
+    title: str
+    start_date: datetime
+    end_date: Optional[datetime] = None
+
+    def duration_years(self) -&gt; float:
+        end = self.end_date or datetime.now()
+        return (end - self.start_date).days / 365.25
+
+@dataclass
+class Location:
+    city: str
+    country: str
+    lat: float
+    lon: float
+
+    def distance_to(self, other: Location) -&gt; float:
+        &quot;&quot;&quot;Haversine distance in km&quot;&quot;&quot;
+        R = 6371
+        lat1, lon1 = math.radians(self.lat), math.radians(self.lon)
+        lat2, lon2 = math.radians(other.lat), math.radians(other.lon)
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+        c = 2 * math.asin(math.sqrt(a))
+        return R * c
+
+# ============================================================================
+# CORE ENTITIES
+# ============================================================================
+
+@dataclass
+class User:
+    &quot;&quot;&quot;Professional user profile&quot;&quot;&quot;
+    user_id: str
+    name: str
+    headline: str
+    location: Location
+    skills: List[Skill] = field(default_factory=list)
+    experiences: List[Experience] = field(default_factory=list)
+    connections: Set[str] = field(default_factory=set)
+    followers: Set[str] = field(default_factory=set)
+
+    def add_skill(self, skill: Skill) -&gt; None:
+        if not any(s.skill_id == skill.skill_id for s in self.skills):
+            self.skills.append(skill)
+
+    def add_experience(self, exp: Experience) -&gt; None:
+        self.experiences.append(exp)
+
+    def total_experience_years(self) -&gt; float:
+        return sum(exp.duration_years() for exp in self.experiences)
+
+@dataclass
+class Connection:
+    &quot;&quot;&quot;Connection between two users with state machine&quot;&quot;&quot;
+    connection_id: str
+    from_user_id: str
+    to_user_id: str
+    status: ConnectionStatus = ConnectionStatus.PENDING
+    message: str = &quot;&quot;
+    created_at: datetime = field(default_factory=datetime.now)
+
+@dataclass
+class Post:
+    &quot;&quot;&quot;Base post class&quot;&quot;&quot;
+    post_id: str
+    author_id: str
+    content: str
+    visibility: Visibility = Visibility.PUBLIC
+    likes: Set[str] = field(default_factory=set)
+    comments: List[Dict] = field(default_factory=list)
+    shares: List[Dict] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.now)
+
+    def post_type(self) -&gt; PostType:
+        raise NotImplementedError
+
+    def engagement_score(self) -&gt; int:
+        return len(self.likes) + 3 * len(self.comments) + 5 * len(self.shares)
+
+@dataclass
+class TextPost(Post):
+    def post_type(self) -&gt; PostType:
+        return PostType.TEXT
+
+@dataclass
+class ImagePost(Post):
+    image_urls: List[str] = field(default_factory=list)
+
+    def post_type(self) -&gt; PostType:
+        return PostType.IMAGE
+
+@dataclass
+class VideoPost(Post):
+    video_url: str = &quot;&quot;
+
+    def post_type(self) -&gt; PostType:
+        return PostType.VIDEO
+
+@dataclass
+class ArticlePost(Post):
+    full_text: str = &quot;&quot;
+
+    def post_type(self) -&gt; PostType:
+        return PostType.ARTICLE
+
+@dataclass
+class Job:
+    &quot;&quot;&quot;Job posting&quot;&quot;&quot;
+    job_id: str
+    company_id: str
+    title: str
+    description: str
+    location: Location
+    required_skills: List[str] = field(default_factory=list)
+    required_experience_years: int = 0
+    job_type: JobType = JobType.FULL_TIME
+    applications: List[str] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.now)
+
+@dataclass
+class Message:
+    &quot;&quot;&quot;Direct message&quot;&quot;&quot;
+    message_id: str
+    sender_id: str
+    receiver_id: str
+    content: str
+    is_read: bool = False
+    created_at: datetime = field(default_factory=datetime.now)
+
+# ============================================================================
+# JOB MATCHING STRATEGIES (STRATEGY PATTERN)
+# ============================================================================
+
+class JobMatchingStrategy(ABC):
+    &quot;&quot;&quot;Abstract strategy for job matching&quot;&quot;&quot;
+
+    @abstractmethod
+    def calculate_match_score(self, job: Job, user: User) -&gt; float:
+        raise NotImplementedError
+
+    def name(self) -&gt; str:
+        return self.__class__.__name__
+
+class SkillBasedMatcher(JobMatchingStrategy):
+    &quot;&quot;&quot;Match based on skill overlap&quot;&quot;&quot;
+
+    def calculate_match_score(self, job: Job, user: User) -&gt; float:
+        if not job.required_skills:
+            return 0.0
+        user_skill_names = {s.name.lower() for s in user.skills}
+        matched = sum(1 for req in job.required_skills if req.lower() in user_skill_names)
+        return (matched / len(job.required_skills)) * 100
+
+class LocationBasedMatcher(JobMatchingStrategy):
+    &quot;&quot;&quot;Match based on location proximity&quot;&quot;&quot;
+
+    def calculate_match_score(self, job: Job, user: User) -&gt; float:
+        distance = user.location.distance_to(job.location)
+        return 100.0 if distance &lt; 50 else 50.0
+
+class ExperienceBasedMatcher(JobMatchingStrategy):
+    &quot;&quot;&quot;Match based on years of experience&quot;&quot;&quot;
+
+    def calculate_match_score(self, job: Job, user: User) -&gt; float:
+        user_years = user.total_experience_years()
+        diff = abs(user_years - job.required_experience_years)
+        return max(0, 100 - (diff * 10))
+
+class HybridMatcher(JobMatchingStrategy):
+    &quot;&quot;&quot;Combine multiple strategies with weights&quot;&quot;&quot;
+
+    def __init__(self, skill_weight=0.5, location_weight=0.3, exp_weight=0.2):
+        self.skill_matcher = SkillBasedMatcher()
+        self.location_matcher = LocationBasedMatcher()
+        self.exp_matcher = ExperienceBasedMatcher()
+        self.weights = (skill_weight, location_weight, exp_weight)
+
+    def calculate_match_score(self, job: Job, user: User) -&gt; float:
+        skill_score = self.skill_matcher.calculate_match_score(job, user)
+        location_score = self.location_matcher.calculate_match_score(job, user)
+        exp_score = self.exp_matcher.calculate_match_score(job, user)
+        return (skill_score * self.weights[0] +
+                location_score * self.weights[1] +
+                exp_score * self.weights[2])
+
+# ============================================================================
+# OBSERVER PATTERN
+# ============================================================================
+
+class LinkedInObserver(ABC):
+    &quot;&quot;&quot;Abstract observer for events&quot;&quot;&quot;
+
+    @abstractmethod
+    def update(self, event: str, payload: Dict) -&gt; None:
+        raise NotImplementedError
+
+class FeedNotifier(LinkedInObserver):
+    &quot;&quot;&quot;Notifies about feed updates&quot;&quot;&quot;
+
+    def update(self, event: str, payload: Dict) -&gt; None:
+        if event == &quot;post_created&quot;:
+            print(f&quot;  [FEED] New post from {payload['author_id']}: {payload['content'][:50]}&quot;)
+
+class ConnectionNotifier(LinkedInObserver):
+    &quot;&quot;&quot;Notifies about connection changes&quot;&quot;&quot;
+
+    def update(self, event: str, payload: Dict) -&gt; None:
+        if event == &quot;connection_accepted&quot;:
+            print(f&quot;  [CONNECTION] {payload['user1']} and {payload['user2']} are now connected&quot;)
+
+class JobNotifier(LinkedInObserver):
+    &quot;&quot;&quot;Notifies about job events&quot;&quot;&quot;
+
+    def update(self, event: str, payload: Dict) -&gt; None:
+        if event == &quot;job_posted&quot;:
+            print(f&quot;  [JOB] New job posted: {payload['title']}&quot;)
+
+class MessageNotifier(LinkedInObserver):
+    &quot;&quot;&quot;Notifies about messages&quot;&quot;&quot;
+
+    def update(self, event: str, payload: Dict) -&gt; None:
+        if event == &quot;message_sent&quot;:
+            print(f&quot;  [MSG] {payload['sender']} -&gt; {payload['receiver']}: message delivered&quot;)
+
+# ============================================================================
+# LINKEDIN SYSTEM (SINGLETON)
+# ============================================================================
+
+class LinkedInSystem:
+    &quot;&quot;&quot;Centralized LinkedIn system (thread-safe Singleton)&quot;&quot;&quot;
+
+    _instance: Optional[LinkedInSystem] = None
+    _lock = threading.RLock()   # RLock: avoids self-deadlock in re-entrant calls
+
+    def __new__(cls, *args, **kwargs) -&gt; LinkedInSystem:
+        # *args / **kwargs required so Python does not raise TypeError when
+        # __init__ signature differs from __new__ during first construction.
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self) -&gt; None:
+        if hasattr(self, '_initialized'):
+            return
+        self._initialized = True
+        self.users: Dict[str, User] = {}
+        self.connections: Dict[str, Connection] = {}
+        self.posts: Dict[str, Post] = {}
+        self.jobs: Dict[str, Job] = {}
+        self.messages: Dict[str, Message] = {}
+        self.job_matcher: JobMatchingStrategy = HybridMatcher()
+        self.observers: List[LinkedInObserver] = []
+        self._data_lock = threading.RLock()   # RLock: safe for re-entrant acquisition
+        print(&quot;LinkedIn System initialized&quot;)
+
+    def register_observer(self, observer: LinkedInObserver) -&gt; None:
+        self.observers.append(observer)
+
+    def _emit(self, event: str, payload: Dict) -&gt; None:
+        for observer in self.observers:
+            observer.update(event, payload)
+
+    # ---- USER MANAGEMENT ----
+
+    def create_user(self, user_id: str, name: str, headline: str, location: Location) -&gt; User:
+        user = User(user_id, name, headline, location)
+        with self._data_lock:
+            self.users[user_id] = user
+        self._emit(&quot;user_created&quot;, {&quot;user_id&quot;: user_id, &quot;name&quot;: name})
+        return user
+
+    def get_user(self, user_id: str) -&gt; Optional[User]:
+        return self.users.get(user_id)
+
+    # ---- CONNECTION MANAGEMENT ----
+
+    def send_connection_request(self, from_user_id: str, to_user_id: str,
+                                message: str = &quot;&quot;) -&gt; Connection:
+        conn_id = f&quot;conn_{from_user_id}_{to_user_id}&quot;
+        conn = Connection(conn_id, from_user_id, to_user_id, message=message)
+        with self._data_lock:
+            self.connections[conn_id] = conn
+        self._emit(&quot;connection_requested&quot;, {&quot;from&quot;: from_user_id, &quot;to&quot;: to_user_id})
+        return conn
+
+    def accept_connection(self, connection_id: str) -&gt; bool:
+        with self._data_lock:
+            if connection_id not in self.connections:
+                return False
+            conn = self.connections[connection_id]
+            if conn.status != ConnectionStatus.PENDING:
+                return False
+            conn.status = ConnectionStatus.ACCEPTED
+            self.users[conn.from_user_id].connections.add(conn.to_user_id)
+            self.users[conn.to_user_id].connections.add(conn.from_user_id)
+        self._emit(&quot;connection_accepted&quot;, {&quot;user1&quot;: conn.from_user_id, &quot;user2&quot;: conn.to_user_id})
+        return True
+
+    def reject_connection(self, connection_id: str) -&gt; bool:
+        with self._data_lock:
+            if connection_id not in self.connections:
+                return False
+            conn = self.connections[connection_id]
+            if conn.status != ConnectionStatus.PENDING:
+                return False
+            conn.status = ConnectionStatus.REJECTED
+        self._emit(&quot;connection_rejected&quot;, {&quot;from&quot;: conn.from_user_id, &quot;to&quot;: conn.to_user_id})
+        return True
+
+    def get_mutual_connections(self, user1_id: str, user2_id: str) -&gt; Set[str]:
+        u1 = self.users.get(user1_id)
+        u2 = self.users.get(user2_id)
+        if not u1 or not u2:
+            return set()
+        return u1.connections &amp; u2.connections
+
+    # ---- POST MANAGEMENT (Factory) ----
+
+    def create_post(self, post_id: str, author_id: str, post_type: PostType,
+                    content: str, visibility: Visibility = Visibility.PUBLIC,
+                    **kwargs) -&gt; Post:
+        if post_type == PostType.TEXT:
+            post = TextPost(post_id, author_id, content, visibility)
+        elif post_type == PostType.IMAGE:
+            post = ImagePost(post_id, author_id, content, visibility,
+                             image_urls=kwargs.get('image_urls', []))
+        elif post_type == PostType.VIDEO:
+            post = VideoPost(post_id, author_id, content, visibility,
+                             video_url=kwargs.get('video_url', ''))
+        else:  # ARTICLE
+            post = ArticlePost(post_id, author_id, content, visibility,
+                               full_text=kwargs.get('full_text', ''))
+
+        with self._data_lock:
+            self.posts[post_id] = post
+
+        self._emit(&quot;post_created&quot;, {
+            &quot;post_id&quot;: post_id, &quot;author_id&quot;: author_id, &quot;content&quot;: content[:50]
+        })
+        return post
+
+    def like_post(self, post_id: str, user_id: str) -&gt; bool:
+        post = self.posts.get(post_id)
+        if not post:
+            return False
+        post.likes.add(user_id)
+        self._emit(&quot;post_liked&quot;, {&quot;post_id&quot;: post_id, &quot;user_id&quot;: user_id})
+        return True
+
+    def generate_feed(self, user_id: str, limit: int = 20) -&gt; List[Post]:
+        user = self.users.get(user_id)
+        if not user:
+            return []
+
+        feed_posts = []
+        now = datetime.now()
+
+        for post in self.posts.values():
+            if post.visibility == Visibility.PRIVATE and post.author_id != user_id:
+                continue
+            if post.visibility == Visibility.CONNECTIONS:
+                if post.author_id not in user.connections and post.author_id != user_id:
+                    continue
+
+            engagement = post.engagement_score()
+            recency = math.exp(-(now - post.created_at).total_seconds() / (24 * 3600))
+            connection_strength = 1.0 if post.author_id in user.connections else 0.5
+            score = engagement * recency * connection_strength
+            feed_posts.append((score, post))
+
+        feed_posts.sort(reverse=True, key=lambda x: x[0])
+        return [p for _, p in feed_posts[:limit]]
+
+    # ---- JOB MANAGEMENT ----
+
+    def post_job(self, job_id: str, company_id: str, title: str, description: str,
+                 location: Location, required_skills: List[str],
+                 required_experience_years: int) -&gt; Job:
+        job = Job(job_id, company_id, title, description, location,
+                  required_skills, required_experience_years)
+        with self._data_lock:
+            self.jobs[job_id] = job
+        self._emit(&quot;job_posted&quot;, {&quot;job_id&quot;: job_id, &quot;title&quot;: title})
+        return job
+
+    def apply_for_job(self, job_id: str, user_id: str) -&gt; bool:
+        job = self.jobs.get(job_id)
+        if not job or user_id in job.applications:
+            return False
+        job.applications.append(user_id)
+        score = self.job_matcher.calculate_match_score(job, self.users[user_id])
+        self._emit(&quot;job_applied&quot;, {&quot;job_id&quot;: job_id, &quot;user_id&quot;: user_id, &quot;match_score&quot;: score})
+        return True
+
+    def get_matching_candidates(self, job_id: str, threshold: float = 70.0) -&gt; List[Tuple[str, float]]:
+        job = self.jobs.get(job_id)
+        if not job:
+            return []
+        candidates = []
+        for user_id, user in self.users.items():
+            score = self.job_matcher.calculate_match_score(job, user)
+            if score &gt;= threshold:
+                candidates.append((user_id, score))
+        candidates.sort(reverse=True, key=lambda x: x[1])
+        return candidates
+
+    def set_job_matcher(self, strategy: JobMatchingStrategy) -&gt; None:
+        old = self.job_matcher.name()
+        with self._data_lock:
+            self.job_matcher = strategy
+        self._emit(&quot;matcher_changed&quot;, {&quot;from&quot;: old, &quot;to&quot;: strategy.name()})
+
+    # ---- MESSAGING ----
+
+    def send_message(self, msg_id: str, sender_id: str, receiver_id: str,
+                     content: str) -&gt; Message:
+        msg = Message(msg_id, sender_id, receiver_id, content)
+        with self._data_lock:
+            self.messages[msg_id] = msg
+        self._emit(&quot;message_sent&quot;, {&quot;sender&quot;: sender_id, &quot;receiver&quot;: receiver_id})
+        return msg
+
+    # ---- RECOMMENDATIONS ----
+
+    def recommend_connections(self, user_id: str, limit: int = 10) -&gt; List[Tuple[str, int]]:
+        user = self.users.get(user_id)
+        if not user:
+            return []
+
+        scores: Dict[str, int] = {}
+
+        # Mutual-connection score
+        for conn_id in user.connections:
+            for potential_id in self.users[conn_id].connections:
+                if potential_id != user_id and potential_id not in user.connections:
+                    scores[potential_id] = scores.get(potential_id, 0) + 10
+
+        # Skill overlap score
+        user_skill_names = {s.name for s in user.skills}
+        for other_id, other_user in self.users.items():
+            if other_id == user_id or other_id in user.connections:
+                continue
+            common = len(user_skill_names &amp; {s.name for s in other_user.skills})
+            scores[other_id] = scores.get(other_id, 0) + common * 5
+
+        sorted_recs = sorted(scores.items(), reverse=True, key=lambda x: x[1])
+        return sorted_recs[:limit]
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def print_section(title: str) -&gt; None:
+    print(f&quot;\n{'='*70}&quot;)
+    print(f&quot;  {title}&quot;)
+    print(f&quot;{'='*70}&quot;)
+
+def demo_1_profiles_and_connections() -&gt; None:
+    print_section(&quot;DEMO 1: USER PROFILES &amp; CONNECTION REQUEST&quot;)
+
+    linkedin = LinkedInSystem()   # singleton — same instance each call
+    linkedin.register_observer(ConnectionNotifier())
+
+    loc_sf = Location(&quot;San Francisco&quot;, &quot;USA&quot;, 37.7749, -122.4194)
+    loc_la = Location(&quot;Los Angeles&quot;, &quot;USA&quot;, 34.0522, -118.2437)
+
+    alice = linkedin.create_user(&quot;alice_1&quot;, &quot;Alice Johnson&quot;, &quot;Senior Engineer @ Google&quot;, loc_sf)
+    bob   = linkedin.create_user(&quot;bob_1&quot;,   &quot;Bob Smith&quot;,     &quot;Product Manager @ Meta&quot;,  loc_la)
+
+    alice.add_skill(Skill(&quot;skill_py&quot;,   &quot;Python&quot;, &quot;Programming&quot;))
+    alice.add_skill(Skill(&quot;skill_java&quot;, &quot;Java&quot;,   &quot;Programming&quot;))
+    alice.add_skill(Skill(&quot;skill_aws&quot;,  &quot;AWS&quot;,    &quot;Cloud&quot;))
+
+    bob.add_skill(Skill(&quot;skill_py&quot;,  &quot;Python&quot;, &quot;Programming&quot;))
+    bob.add_skill(Skill(&quot;skill_sql&quot;, &quot;SQL&quot;,    &quot;Database&quot;))
+
+    alice.add_experience(Experience(&quot;Google&quot;, &quot;Senior Engineer&quot;, datetime(2019, 1, 1)))
+    bob.add_experience(Experience(&quot;Meta&quot;, &quot;PM&quot;, datetime(2020, 6, 1)))
+
+    print(f&quot;\n  Alice: {alice.total_experience_years():.1f} years experience&quot;)
+    print(f&quot;  Bob:   {bob.total_experience_years():.1f} years experience&quot;)
+
+    conn = linkedin.send_connection_request(&quot;alice_1&quot;, &quot;bob_1&quot;, &quot;Great to connect!&quot;)
+    print(f&quot;\n  Connection status: {conn.status.value}&quot;)
+
+    linkedin.accept_connection(conn.connection_id)
+    print(f&quot;  After acceptance:  {conn.status.value}&quot;)
+    print(f&quot;  Alice connections: {len(alice.connections)}&quot;)
+    print(f&quot;  Bob connections:   {len(bob.connections)}&quot;)
+
+def demo_2_factory_pattern_posts() -&gt; None:
+    print_section(&quot;DEMO 2: FACTORY PATTERN - CREATE POST TYPES&quot;)
+
+    linkedin = LinkedInSystem()
+    linkedin.register_observer(FeedNotifier())
+
+    text_post    = linkedin.create_post(&quot;post_1&quot;, &quot;alice_1&quot;, PostType.TEXT,
+                                        &quot;Excited to share my thoughts on cloud architecture!&quot;)
+    image_post   = linkedin.create_post(&quot;post_2&quot;, &quot;alice_1&quot;, PostType.IMAGE,
+                                        &quot;Team photo from our summit&quot;,
+                                        image_urls=[&quot;url1&quot;, &quot;url2&quot;])
+    article_post = linkedin.create_post(&quot;post_3&quot;, &quot;alice_1&quot;, PostType.ARTICLE,
+                                        &quot;Advanced Python Techniques&quot;,
+                                        full_text=&quot;Full article content here...&quot;)
+
+    print(f&quot;\n  TextPost type:    {text_post.post_type().value}&quot;)
+    print(f&quot;  ImagePost type:   {image_post.post_type().value}&quot;)
+    print(f&quot;  ArticlePost type: {article_post.post_type().value}&quot;)
+
+def demo_3_strategy_pattern_job_matching() -&gt; None:
+    print_section(&quot;DEMO 3: STRATEGY PATTERN - JOB MATCHING&quot;)
+
+    linkedin = LinkedInSystem()
+    linkedin.register_observer(JobNotifier())
+
+    alice = linkedin.get_user(&quot;alice_1&quot;)
+    bob   = linkedin.get_user(&quot;bob_1&quot;)
+
+    loc_sf = Location(&quot;San Francisco&quot;, &quot;USA&quot;, 37.7749, -122.4194)
+
+    job = linkedin.post_job(&quot;job_1&quot;, &quot;comp_google&quot;, &quot;Senior Python Engineer&quot;,
+                            &quot;Build amazing systems&quot;, loc_sf,
+                            required_skills=[&quot;Python&quot;, &quot;Java&quot;, &quot;AWS&quot;],
+                            required_experience_years=5)
+
+    strategies = [SkillBasedMatcher(), LocationBasedMatcher(), HybridMatcher()]
+    print(f&quot;\n  Job requires: {', '.join(job.required_skills)}, {job.required_experience_years}+ yrs\n&quot;)
+
+    for strategy in strategies:
+        linkedin.set_job_matcher(strategy)
+        alice_score = strategy.calculate_match_score(job, alice)
+        bob_score   = strategy.calculate_match_score(job, bob)
+        print(f&quot;  {strategy.name():25} Alice={alice_score:.0f}%  Bob={bob_score:.0f}%&quot;)
+
+def demo_4_observer_pattern_feed() -&gt; None:
+    print_section(&quot;DEMO 4: OBSERVER PATTERN - FEED &amp; ENGAGEMENT&quot;)
+
+    linkedin = LinkedInSystem()
+
+    post = linkedin.create_post(&quot;post_feed&quot;, &quot;alice_1&quot;, PostType.TEXT, &quot;Great insights!&quot;)
+    linkedin.like_post(&quot;post_feed&quot;, &quot;bob_1&quot;)
+    print(f&quot;\n  Post engagement score: {post.engagement_score()}&quot;)
+
+    feed = linkedin.generate_feed(&quot;bob_1&quot;, limit=5)
+    print(f&quot;  Bob's feed: {len(feed)} posts&quot;)
+    for i, p in enumerate(feed, 1):
+        print(f&quot;    {i}. {p.content[:40]} (engagement: {p.engagement_score()})&quot;)
+
+def demo_5_recommendations() -&gt; None:
+    print_section(&quot;DEMO 5: CONNECTION RECOMMENDATIONS&quot;)
+
+    linkedin = LinkedInSystem()
+
+    loc_sf  = Location(&quot;San Francisco&quot;, &quot;USA&quot;, 37.7749, -122.4194)
+    charlie = linkedin.create_user(&quot;charlie_1&quot;, &quot;Charlie Brown&quot;, &quot;ML Engineer&quot;, loc_sf)
+    charlie.add_skill(Skill(&quot;skill_py&quot;, &quot;Python&quot;,          &quot;Programming&quot;))
+    charlie.add_skill(Skill(&quot;skill_ml&quot;, &quot;Machine Learning&quot;,&quot;AI&quot;))
+
+    conn2 = linkedin.send_connection_request(&quot;charlie_1&quot;, &quot;bob_1&quot;)
+    linkedin.accept_connection(conn2.connection_id)
+
+    recs = linkedin.recommend_connections(&quot;alice_1&quot;, limit=5)
+    print(f&quot;\n  Recommendations for Alice:&quot;)
+    for user_id, score in recs:
+        user = linkedin.get_user(user_id)
+        print(f&quot;    - {user.name} (score: {score})&quot;)
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;LINKEDIN SYSTEM - 5 DEMO SCENARIOS&quot;)
+    print(&quot;=&quot;*70)
+
+    demo_1_profiles_and_connections()
+    demo_2_factory_pattern_posts()
+    demo_3_strategy_pattern_job_matching()
+    demo_4_observer_pattern_feed()
+    demo_5_recommendations()
+
+    print(&quot;\n&quot; + &quot;=&quot;*70)
+    print(&quot;ALL DEMOS COMPLETED SUCCESSFULLY&quot;)
+    print(&quot;=&quot;*70 + &quot;\n&quot;)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>create_user</strong></td>
+<td>RLock on data</td>
+<td>Atomic insertion into users dict</td>
+</tr>
+<tr>
+<td><strong>accept_connection</strong></td>
+<td>RLock on data</td>
+<td>Atomic: check PENDING status + mutual connection add</td>
+</tr>
+<tr>
+<td><strong>create_post</strong></td>
+<td>RLock on data</td>
+<td>Atomic insertion; notify fires outside lock</td>
+</tr>
+<tr>
+<td><strong>set_job_matcher</strong></td>
+<td>RLock on data</td>
+<td>Atomic strategy swap</td>
+</tr>
+<tr>
+<td><strong>Singleton init</strong></td>
+<td>Class-level RLock</td>
+<td>Double-checked locking, single instance</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. ✅ <code>threading.RLock</code> used throughout (re-entrant — no self-deadlock when methods call each other)
+2. ✅ Notifications fire <strong>outside</strong> the data lock (keeps critical sections short)
+3. ✅ Double-checked locking for Singleton
+4. ✅ <code>__new__</code> accepts <code>*args, **kwargs</code> to avoid <code>TypeError</code> during construction</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="scenario-1-user-profile-connection-request">Scenario 1: User Profile &amp; Connection Request</h3>
+<pre class="codehilite"><code>Create Alice (Python, Java, AWS — 5+ years) and Bob (Python, SQL)
+Alice sends connection request → status: pending
+Bob accepts → status: accepted
+Both appear in each other's connections set
+  [CONNECTION] alice_1 and bob_1 are now connected
+</code></pre>
+
+<h3 id="scenario-2-factory-pattern-create-different-post-types">Scenario 2: Factory Pattern — Create Different Post Types</h3>
+<pre class="codehilite"><code>TextPost:    type = text
+ImagePost:   type = image   (image_urls attached)
+ArticlePost: type = article (full_text attached)
+All subtypes share: engagement_score(), likes, comments, shares
+  [FEED] New post from alice_1: Excited to share my thoughts...
+</code></pre>
+
+<h3 id="scenario-3-strategy-pattern-job-matching">Scenario 3: Strategy Pattern — Job Matching</h3>
+<pre class="codehilite"><code>Job: Senior Python Engineer | Requires: Python, Java, AWS | 5+ years | SF
+
+SkillBasedMatcher:      Alice=100%  Bob=33%
+LocationBasedMatcher:   Alice=100%  Bob=50%   (Bob in LA, &gt;50km)
+HybridMatcher:          Alice=100%  Bob=43%
+</code></pre>
+
+<h3 id="scenario-4-observer-pattern-feed-engagement">Scenario 4: Observer Pattern — Feed &amp; Engagement</h3>
+<pre class="codehilite"><code>Alice posts &quot;Great insights!&quot;
+Bob likes the post → engagement_score = 1
+Bob's feed: 1+ posts ranked by score
+</code></pre>
+
+<h3 id="scenario-5-recommendation-engine">Scenario 5: Recommendation Engine</h3>
+<pre class="codehilite"><code>Network: Alice ↔ Bob ↔ Charlie
+Charlie has [Python, ML]
+Recommendations for Alice:
+  - Charlie Brown (score: 15)  ← mutual connection (Bob) + skill overlap (Python)
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-questions">Basic Questions</h3>
+<p><strong>Q1: How does the Singleton pattern ensure one LinkedInSystem instance?</strong></p>
+<p>A: <code>LinkedInSystem</code> uses <code>__new__</code> with thread-safe double-checked locking. <code>_instance</code> class variable holds the single instance. On the first call, the lock is acquired and the instance created; subsequent calls return the same instance without locking.</p>
+<p><strong>Q2: How does the Factory pattern work for creating posts?</strong></p>
+<p>A: <code>create_post(post_type, content, **kwargs)</code> selects the correct subclass based on <code>PostType</code> enum — returning <code>TextPost</code>, <code>ImagePost</code>, <code>VideoPost</code>, or <code>ArticlePost</code>. This centralizes creation logic and makes adding new post types easy without changing callers.</p>
+<p><strong>Q3: What's the Connection state machine lifecycle?</strong></p>
+<p>A: Connection starts in <code>PENDING</code>. From PENDING: <code>accept_connection()</code> → <code>ACCEPTED</code> (bilateral connection added), <code>reject_connection()</code> → <code>REJECTED</code>. State check in the method body prevents invalid transitions (e.g., cannot accept after reject).</p>
+<p><strong>Q4: How does Observer pattern notify followers of new posts?</strong></p>
+<p>A: Post creation triggers <code>_emit("post_created", {...})</code>. Each registered observer (FeedNotifier, ConnectionNotifier, etc.) receives the event and reacts independently. Producer is fully decoupled from consumers.</p>
+<p><strong>Q5: How do the three job matching strategies differ?</strong></p>
+<p>A: <code>SkillBasedMatcher</code> scores the percentage of required skills matched. <code>LocationBasedMatcher</code> scores 100% if distance &lt; 50km, else 50%. <code>ExperienceBasedMatcher</code> scores 100 minus 10× the year-count delta. <code>HybridMatcher</code> combines all three with configurable weights (default 0.5 / 0.3 / 0.2).</p>
+<h3 id="intermediate-questions">Intermediate Questions</h3>
+<p><strong>Q6: How does feed ranking balance engagement, recency, and connection strength?</strong></p>
+<p>A: <code>score = engagement_score × exp(−age_seconds / 86400) × connection_strength</code>. Engagement weighs interactions (shares weight 5×). Recency exponentially decays old posts (half-life ≈ 17 hours). Connection strength (1.0 for 1st-degree, 0.5 otherwise) personalises the ranking.</p>
+<p><strong>Q7: How do you handle connection recommendations efficiently?</strong></p>
+<p>A: Iterate the user's 1st-degree connections, collect their connections as candidates (excluding existing connections). Score each candidate: mutual connections × 10 + common skills × 5. Return top 10. Complexity O(D×M) where D = degree, M = mutual set size — manageable in demo; production uses pre-computed graphs.</p>
+<p><strong>Q8: Why use State pattern instead of simple status enum?</strong></p>
+<p>A: The <code>ConnectionStatus</code> enum explicitly models lifecycle. State-transition methods (<code>accept_connection</code>, <code>reject_connection</code>) guard against invalid transitions at the method level — no scattered if-statements. Can graduate to a full State-class pattern if transitions carry complex behaviour.</p>
+<p><strong>Q9: How do you ensure message delivery between users?</strong></p>
+<p>A: Message stored in <code>self.messages</code>. Observer pattern (<code>MessageNotifier</code>) sends a real-time notification. In production: WebSocket for real-time delivery, Kafka for durability, read-receipt batching for eventual consistency.</p>
+<p><strong>Q10: How does the feed generation algorithm scale?</strong></p>
+<p>A: Collect posts (filtered by visibility), score each, sort in O(P log P). Production strategy: fan-out on write (push to followers' Redis lists), cache feeds for 30 min, use Elasticsearch for full-text search. For celebrity accounts (millions of followers) use pull-based hybrid.</p>
+<h3 id="advanced-questions">Advanced Questions</h3>
+<p><strong>Q11: How would you distribute the system across multiple servers?</strong></p>
+<p>A: Shard users by <code>user_id</code> hash. Connections sharded by <code>from_user_id</code>. Posts sharded by <code>author_id</code>. Jobs sharded by <code>company_id</code>. Cross-shard queries (feed generation) fan out to relevant shards and aggregate. Consistency: eventual for feeds, strong for balance-sensitive operations.</p>
+<p><strong>Q12: How to handle 500M daily active users efficiently?</strong></p>
+<p>A: Decompose into microservices: UserService, ConnectionService, FeedService, JobService, MessageService. Cache layers: Redis for user profiles (1h TTL), posts (30m TTL), connection graph. Elasticsearch for job search. Kafka for async processing (feed generation, notifications). PostgreSQL with read replicas for most reads; sharded writes.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<p><strong>Q1: Can you handle 1B users with in-memory storage?</strong>
+A: No. 1B users × 100 bytes = 100GB metadata alone. Production: PostgreSQL (sharded) for users, Neo4j for the connection graph, Elasticsearch for jobs. In-memory: cache only hot data (top 10K users, feeds for active users). TTL-based invalidation.</p>
+<p><strong>Q2: How to generate personalized feed for 500M DAU in real-time?</strong>
+A: Fan-out on write — when a user posts, asynchronously push to followers' feed caches (Redis lists). Hybrid approach: fan-out for accounts with &lt;10K followers, pull-based for celebrities. Pre-compute feeds during low traffic. Cache TTL 30 min. Paginate at 20–50 posts per request.</p>
+<p><strong>Q3: How to make job matching efficient with 10M jobs and 100M users?</strong>
+A: Pre-index jobs by (skills, location, experience) in Elasticsearch. Batch 100 applications per background job. Calculate scores in parallel. For recommendations: only consider jobs posted in the last 10 days per user. Score threshold: show only &gt;70% matches.</p>
+<p><strong>Q4: What's the memory footprint if you cache all posts?</strong>
+A: 1B posts × 2KB each = 2TB. Unacceptable for in-memory. Cache only recent 1M posts (~20GB). Archive older posts in S3. Elasticsearch indexes searchable metadata. Hot cache stores trending posts only.</p>
+<p><strong>Q5: How to handle 100K concurrent WebSocket connections for messaging?</strong>
+A: Connection pooling on server (1000–5000 connections per server). Load-balance across 20+ servers. Kafka for reliable delivery. Redis for presence (online status). Read receipts batch-update (eventual consistency).</p>
+<p><strong>Q6: Can you support recommendations for all users continuously?</strong>
+A: Compute on-demand for DAU; batch-compute overnight for inactive users. Cache top 10 recommendations per user. Invalidate on new connection. O(n²) cold-start solved by: pre-computing mutual connections, skill indexing, and incremental updates.</p>
+<p><strong>Q7: How to ensure consistency when a user accepts a connection from two sources?</strong>
+A: Optimistic locking with version numbers. <code>Connection.version</code> increments on state change. Accept checks: if version != expected → conflict detected. Either retry or use distributed locks (Redis SETNX). Eventual consistency acceptable: "accepted" eventually visible everywhere.</p>
+<p><strong>Q8: How to handle geographic distribution (US, EU, APAC) without high latency?</strong>
+A: Multi-region deployment. Regional databases (us-east, eu-west, ap-southeast). Home region is authoritative. Cross-region sync lag &lt;5 min. Users route to closest region. Cross-region friends served via CDN-cached feeds.</p>
+<p><strong>Q9: How much storage for 1 year of posts (1B users, 5 posts/user/year)?</strong>
+A: 5B posts × 2KB = 10TB uncompressed. With zlib compression: ~3TB. Sharded across 30 servers = 100GB each. Archive posts &gt;1 year old to cold storage (S3 Glacier = $0.004/GB/month).</p>
+<p><strong>Q10: How to prevent spam and bot accounts creating fake connections?</strong>
+A: Rate limiting (max 100 connection requests/day). Honeypot fields. CAPTCHA after 5 failed logins. Review queue for flagged accounts. ML model: detect bot patterns (same message blasted to many users, instant accepts).</p>
+<p><strong>Q11: How to compute recommendations for 500M users?</strong>
+A: Nightly batch: 500M ÷ 100 machines = 5M users/machine. 5M × 5ms = 25K seconds ≈ 7 hours. Parallel Spark job. Cache in Redis (compressed). Invalidate incrementally on new connections.</p>
+<p><strong>Q12: How to scale messaging to 1B messages/day?</strong>
+A: 1B/day ÷ 86400s ≈ 11.5K msg/sec. Kafka handles 1M msg/sec per cluster. Partition by <code>conversation_id</code>. 100 Kafka partitions × 10K msg/sec = 1M msg/sec (safe headroom). Hot messages (7 days) in PostgreSQL; cold in S3. Replication factor 3 for durability.</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw UML class diagram with all relationships and cardinalities</li>
+<li>[ ] Walk through the connection state machine (PENDING → ACCEPTED/REJECTED)</li>
+<li>[ ] Explain feed ranking formula: engagement × recency × connection strength</li>
+<li>[ ] Demonstrate Strategy pattern — swap job matcher at runtime</li>
+<li>[ ] Explain Factory pattern — create TextPost / ImagePost / ArticlePost</li>
+<li>[ ] Explain Observer pattern — decouple post events from notification channels</li>
+<li>[ ] Run complete implementation (5 demos) without errors</li>
+<li>[ ] Answer 5+ scaling Q&amp;A questions</li>
+<li>[ ] Mention thread safety: RLock, double-checked Singleton, notifications outside lock</li>
+<li>[ ] Discuss trade-offs (in-memory vs distributed, fan-out on write vs pull-based feed)</li>
+</ul>
+<hr />
+<p><strong>Ready for interview? Build your network and land that job.</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

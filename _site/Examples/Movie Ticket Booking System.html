@@ -1,0 +1,2539 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movie Ticket Booking System - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="movie-ticket-booking-system-complete-design-guide">Movie Ticket Booking System — Complete Design Guide</h1>
+<blockquote>
+<p>Multi-theater booking platform for browsing, seat selection, dynamic pricing, and reservation management.</p>
+</blockquote>
+<p><strong>Scale</strong>: 1,000+ concurrent users, 100+ theaters, 10K+ bookings/day, 99.9% uptime<br />
+<strong>Duration</strong>: 75-minute interview guide<br />
+<strong>Focus</strong>: Seat locking, dynamic pricing, booking lifecycle, state management</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>Customers browse movies → select shows → lock seats (temporary 10-min reservation) → pay → confirm booking → receive confirmation. Prevent double-booking through atomic seat locking and status transitions.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>Browse Movies → Select Show → LOCK SEATS (10 min) → PAYMENT → CONFIRM (permanent)
+                                      ↓ or timeout
+                                  AUTO-UNLOCK (seats released)
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Single theater or multi-theater?</strong> → "Multi-theater, 100+ theaters"</li>
+<li><strong>Multiple seat types?</strong> → "Yes — Regular, Premium, VIP with different price multipliers"</li>
+<li><strong>Real payment processing?</strong> → "Mock payment service for interview"</li>
+<li><strong>Cancellations after confirmation?</strong> → "Yes, time-based refund policy"</li>
+<li><strong>Single machine or distributed?</strong> → "Distributed system with 1,000+ concurrent users"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Customer/User</strong></td>
+<td>Browse &amp; book tickets</td>
+<td>Search movies, select seats, lock, pay, confirm, cancel</td>
+</tr>
+<tr>
+<td><strong>Theater Admin</strong></td>
+<td>Manage shows &amp; halls</td>
+<td>Create shows, configure halls, set base prices</td>
+</tr>
+<tr>
+<td><strong>System</strong></td>
+<td>Controller &amp; notifier</td>
+<td>Auto-expire locks, send notifications, update seat status</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Movie Listings &amp; Search</strong>
+  - Search movies by title, genre, language
+  - Browse shows by movie with available seat counts</p>
+<p>✅ <strong>Seat Layout &amp; Selection</strong>
+  - 2D grid layout (rows A-F, seats 1-10, types: Regular/Premium/VIP)
+  - Real-time availability check per show</p>
+<p>✅ <strong>Seat Locking (Hold)</strong>
+  - Temporarily lock seats for 10 minutes during checkout
+  - Atomic lock — prevent double-booking of same seat
+  - Auto-expire lock if user abandons checkout</p>
+<p>✅ <strong>Dynamic Pricing</strong>
+  - Regular weekday: base price × seat multiplier
+  - Weekend: base × 1.5 surcharge
+  - Holiday: base × 2.0 surcharge</p>
+<p>✅ <strong>Payment &amp; Booking Confirmation</strong>
+  - Process payment (mock) and confirm booking
+  - Permanently mark seats as BOOKED on success
+  - Release locks and cancel booking on payment failure</p>
+<p>✅ <strong>Cancellation</strong>
+  - Cancel confirmed booking with time-based refund
+  - Release seats back to AVAILABLE</p>
+<p>✅ <strong>Notifications</strong>
+  - Notify on lock success, booking confirmation, cancellation
+  - Support Email, SMS, Console channels</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Concurrency</strong>: Support 1,000+ simultaneous users locking/confirming seats<br />
+✅ <strong>Consistency</strong>: No double-selling (atomic locking with auto-expiry)<br />
+✅ <strong>Availability</strong>: Real-time seat status, &lt;100ms search, &lt;500ms lock response<br />
+✅ <strong>Uptime</strong>: 99.9% (8.6 hours downtime/month allowed)<br />
+✅ <strong>Lock Expiry Accuracy</strong>: ±1 min tolerance acceptable  </p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Distributed?</strong></td>
+<td>YES - multi-region with load-balanced replicas</td>
+</tr>
+<tr>
+<td><strong>Single theater?</strong></td>
+<td>NO - 100+ theaters, sharded by theater_id</td>
+</tr>
+<tr>
+<td><strong>Real payment?</strong></td>
+<td>NO - mock service (failure path still tested)</td>
+</tr>
+<tr>
+<td><strong>Overbooking allowed?</strong></td>
+<td>NO - atomic lock prevents overselling</td>
+</tr>
+<tr>
+<td><strong>Seat lock timeout</strong></td>
+<td>Fixed 10 minutes</td>
+</tr>
+<tr>
+<td><strong>Cancellation fee?</strong></td>
+<td>Time-based: Full refund if &gt;6h, 50% if &gt;2h, 25% if &gt;30min, 0% otherwise</td>
+</tr>
+<tr>
+<td><strong>Food/beverages?</strong></td>
+<td>Out of scope</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<p>From the requirements above, identify nouns:</p>
+<pre class="codehilite"><code>Movie, Cinema/Theater, Hall, Show, Seat, Booking, Payment, User, BookingSystem, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="movie-a-film-with-metadata"><strong>Movie</strong> — A film with metadata</h4>
+<pre class="codehilite"><code>Properties:
+  - movie_id: str (e.g., &quot;MOV001&quot;)
+  - title: str (e.g., &quot;Inception&quot;)
+  - duration: int (minutes)
+  - genre: List[str] (e.g., [&quot;Sci-Fi&quot;, &quot;Thriller&quot;])
+  - language: str
+  - rating: str (e.g., &quot;PG-13&quot;)
+
+Behaviors:
+  - get_duration_formatted(): Return &quot;2h 28m&quot; style string
+</code></pre>
+
+<h4 id="theater-a-physical-cinema-venue"><strong>Theater</strong> — A physical cinema venue</h4>
+<pre class="codehilite"><code>Properties:
+  - theater_id: str
+  - name: str
+  - location: str
+  - city: str
+  - halls: Dict[str, Hall]
+
+Behaviors:
+  - add_hall(hall): Register a hall in this theater
+</code></pre>
+
+<h4 id="hall-a-screening-room-inside-a-theater"><strong>Hall</strong> — A screening room inside a theater</h4>
+<pre class="codehilite"><code>Properties:
+  - hall_id: str
+  - hall_number: str
+  - capacity: int
+  - seat_layout: List[List[Seat]] (2D grid)
+
+Behaviors:
+  - generate_seat_layout(rows, cols): Create rows × cols seats with type assignment
+  - get_seat(seat_id): Retrieve a seat by ID
+  - get_available_seats(): Return all currently AVAILABLE seats
+</code></pre>
+
+<h4 id="show-a-specific-screening-of-a-movie-in-a-hall"><strong>Show</strong> — A specific screening of a movie in a hall</h4>
+<pre class="codehilite"><code>Properties:
+  - show_id: str
+  - movie: Movie
+  - hall: Hall
+  - start_time: datetime
+  - end_time: datetime (computed from movie duration)
+  - base_price: float
+
+Behaviors:
+  - get_available_seats(): Delegate to hall
+</code></pre>
+
+<h4 id="seat-a-single-seat-in-a-hall-for-a-show"><strong>Seat</strong> — A single seat in a hall for a show</h4>
+<pre class="codehilite"><code>Properties:
+  - seat_id: str (e.g., &quot;A1&quot;, &quot;C5&quot;)
+  - row: str
+  - number: int
+  - seat_type: SeatType (REGULAR, PREMIUM, VIP)
+  - status: SeatStatus (AVAILABLE, LOCKED, BOOKED)
+  - locked_until: Optional[datetime]
+  - locked_by: Optional[str]
+  - price_multiplier: float (1.0 / 1.3 / 1.5)
+
+Behaviors:
+  - is_available(): Check status + auto-expire stale lock
+  - lock(user_id, duration_minutes): Transition to LOCKED
+  - unlock(): Transition back to AVAILABLE
+  - book(): Transition to BOOKED (permanent)
+</code></pre>
+
+<h4 id="booking-a-reservation-linking-user-show-and-seats"><strong>Booking</strong> — A reservation linking user, show, and seats</h4>
+<pre class="codehilite"><code>Properties:
+  - booking_id: str
+  - user: User
+  - show: Show
+  - seats: List[Seat]
+  - status: BookingStatus (PENDING, LOCKED, CONFIRMED, CANCELLED, COMPLETED)
+  - total_amount: float
+  - payment: Optional[Payment]
+
+Behaviors:
+  - calculate_total(strategy): Sum prices across all booked seats
+  - confirm(): Mark CONFIRMED, book all seats permanently
+  - cancel(): Mark CANCELLED, unlock all seats
+</code></pre>
+
+<h4 id="payment-a-payment-transaction-for-a-booking"><strong>Payment</strong> — A payment transaction for a booking</h4>
+<pre class="codehilite"><code>Properties:
+  - payment_id: str
+  - amount: float
+  - payment_method: PaymentMethod
+  - status: PaymentStatus (PENDING, SUCCESS, FAILED)
+
+Behaviors:
+  - process(): Simulate payment; return True on success
+</code></pre>
+
+<h4 id="user-a-registered-customer"><strong>User</strong> — A registered customer</h4>
+<pre class="codehilite"><code>Properties:
+  - user_id: str
+  - name: str
+  - email: str
+  - phone: str
+  - bookings: List[Booking]
+
+Behaviors:
+  - (data holder; bookings tracked by system)
+</code></pre>
+
+<h4 id="bookingsystem-main-controller-singleton"><strong>BookingSystem</strong> — Main controller (Singleton)</h4>
+<pre class="codehilite"><code>Properties:
+  - movies: Dict[str, Movie]
+  - theaters: Dict[str, Theater]
+  - shows: Dict[str, Show]
+  - bookings: Dict[str, Booking]
+  - users: Dict[str, User]
+  - pricing_strategy: PricingStrategy
+  - observers: List[BookingObserver]
+
+Behaviors:
+  - search_movies(query, genre): Filter movie catalog
+  - lock_seats(user_id, show_id, seat_ids): Atomically lock seats, create booking
+  - confirm_booking(booking_id, method): Process payment and confirm
+  - cancel_booking(booking_id): Release seats and mark cancelled
+  - set_pricing_strategy(strategy): Swap pricing algorithm at runtime
+  - notify_observers(event, booking): Broadcast event to all listeners
+</code></pre>
+
+<h3 id="step-23-define-enumerations-state-type">Step 2.3: Define Enumerations (State &amp; Type)</h3>
+<pre class="codehilite"><code class="language-python">class SeatType(Enum):
+    REGULAR = 1        # price_multiplier = 1.0
+    PREMIUM = 2        # price_multiplier = 1.3
+    VIP = 3            # price_multiplier = 1.5
+
+class SeatStatus(Enum):
+    AVAILABLE = &quot;available&quot;   # Can be locked
+    LOCKED = &quot;locked&quot;         # Temporarily reserved (10-min window)
+    BOOKED = &quot;booked&quot;         # Permanently booked after payment
+
+class BookingStatus(Enum):
+    PENDING = &quot;pending&quot;       # Created but not yet locked
+    LOCKED = &quot;locked&quot;         # Seats locked; user in checkout
+    CONFIRMED = &quot;confirmed&quot;   # Payment succeeded; booking permanent
+    CANCELLED = &quot;cancelled&quot;   # User cancelled or payment failed
+    COMPLETED = &quot;completed&quot;   # Show has passed
+
+class PaymentMethod(Enum):
+    CREDIT_CARD = &quot;credit_card&quot;
+    UPI = &quot;upi&quot;
+    WALLET = &quot;wallet&quot;
+
+class PaymentStatus(Enum):
+    PENDING = &quot;pending&quot;
+    SUCCESS = &quot;success&quot;
+    FAILED = &quot;failed&quot;
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Movie</strong></td>
+<td>Searchable catalog item</td>
+<td>Can't browse or filter shows</td>
+</tr>
+<tr>
+<td><strong>Theater</strong></td>
+<td>Groups halls by venue</td>
+<td>Can't organize inventory geographically</td>
+</tr>
+<tr>
+<td><strong>Hall</strong></td>
+<td>Owns the 2D seat grid</td>
+<td>Can't represent physical seating</td>
+</tr>
+<tr>
+<td><strong>Show</strong></td>
+<td>Links movie + hall + time</td>
+<td>Can't schedule or price a screening</td>
+</tr>
+<tr>
+<td><strong>Seat</strong></td>
+<td>Granular lock &amp; booking target</td>
+<td>Can't prevent double-booking</td>
+</tr>
+<tr>
+<td><strong>Booking</strong></td>
+<td>Lock/confirm lifecycle</td>
+<td>Can't manage holds or payment state</td>
+</tr>
+<tr>
+<td><strong>Payment</strong></td>
+<td>Tracks payment status</td>
+<td>Can't distinguish paid from abandoned</td>
+</tr>
+<tr>
+<td><strong>User</strong></td>
+<td>Associates bookings to person</td>
+<td>Can't send notifications or cancel</td>
+</tr>
+<tr>
+<td><strong>BookingSystem</strong></td>
+<td>Central thread-safe controller</td>
+<td>No coordinated concurrency control</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-search-movies"><strong>1. Search Movies</strong></h4>
+<pre class="codehilite"><code class="language-python">def search_movies(query: str = &quot;&quot;, genre: str = &quot;&quot;) -&gt; List[Movie]:
+    &quot;&quot;&quot;
+    Find movies matching title substring and/or genre.
+    Returns: List of Movie objects.
+    Response Time: &lt;100ms (cached)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="2-get-shows-for-a-movie"><strong>2. Get Shows for a Movie</strong></h4>
+<pre class="codehilite"><code class="language-python">def get_shows_by_movie(movie_id: str) -&gt; List[Show]:
+    &quot;&quot;&quot;
+    Return all upcoming shows for a given movie.
+    Returns: List of Show objects with available seat counts.
+    Raises: MovieNotFoundError if movie_id invalid.
+    Response Time: &lt;100ms
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="3-lock-seats-critical"><strong>3. Lock Seats</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def lock_seats(user_id: str, show_id: str, seat_ids: List[str],
+               lock_minutes: int = 10) -&gt; Booking:
+    &quot;&quot;&quot;
+    Atomically reserve a set of seats for 10 minutes.
+
+    Precondition: all seats.status == AVAILABLE
+    Postcondition: all seats.status == LOCKED, booking.status == LOCKED
+
+    Returns: Booking object with booking_id, total_amount, lock expiry.
+
+    Raises:
+      - SeatNotAvailableError: One or more seats already locked/booked
+      - ShowNotFoundError: show_id invalid
+      - UserNotFoundError: user_id not registered
+      - SeatNotFoundError: seat_id not in hall
+
+    Concurrency: THREAD-SAFE with all-or-nothing rollback
+    Response Time: &lt;500ms
+    Idempotency: NO (retrying creates a new booking)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="4-confirm-booking-critical"><strong>4. Confirm Booking</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def confirm_booking(booking_id: str, method: PaymentMethod) -&gt; bool:
+    &quot;&quot;&quot;
+    Process payment and permanently confirm a LOCKED booking.
+
+    Precondition: booking.status == LOCKED
+    Postcondition: booking.status == CONFIRMED, seats.status == BOOKED
+
+    Returns: True if success, False if payment failed or lock expired.
+
+    Raises:
+      - BookingNotFoundError: booking_id invalid
+      - BookingExpiredError: Lock window closed before confirmation
+      - BookingNotLockedError: Booking not in LOCKED state
+
+    Side Effects: Sends confirmation notification to user (email/SMS)
+    Response Time: &lt;500ms
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="5-cancel-booking"><strong>5. Cancel Booking</strong></h4>
+<pre class="codehilite"><code class="language-python">def cancel_booking(booking_id: str) -&gt; bool:
+    &quot;&quot;&quot;
+    Cancel a booking and release seats back to AVAILABLE.
+
+    Precondition: booking.status in [LOCKED, CONFIRMED]
+    Postcondition: booking.status == CANCELLED, seats.status == AVAILABLE
+
+    Returns: True if cancelled, False otherwise.
+
+    Raises:
+      - BookingNotFoundError: booking_id invalid
+
+    Side Effects:
+      - Calculates refund based on time_until_show
+      - Sends cancellation notification
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="6-set-pricing-strategy"><strong>6. Set Pricing Strategy</strong></h4>
+<pre class="codehilite"><code class="language-python">def set_pricing_strategy(strategy: PricingStrategy) -&gt; None:
+    &quot;&quot;&quot;
+    Dynamically switch pricing algorithm at runtime.
+    New pricing applies to all subsequent lock_seats() calls.
+
+    Strategy: Pluggable (RegularPricing, WeekendPricing, HolidayPricing)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="7-register-observer-for-notifications"><strong>7. Register Observer</strong> (For Notifications)</h4>
+<pre class="codehilite"><code class="language-python">def add_observer(observer: BookingObserver) -&gt; None:
+    &quot;&quot;&quot;
+    Register a callback for booking lifecycle events.
+
+    Events: &quot;seats_locked&quot;, &quot;booking_confirmed&quot;, &quot;booking_cancelled&quot;
+    Observer called as: observer.update(event, booking)
+
+    Example: Add EmailNotifier and SMSNotifier for multi-channel alerts.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-32-exception-hierarchy">Step 3.2: Exception Hierarchy</h3>
+<pre class="codehilite"><code class="language-python">class BookingException(Exception):
+    &quot;&quot;&quot;Base exception for all booking errors&quot;&quot;&quot;
+    pass
+
+class SeatNotAvailableError(BookingException):
+    &quot;&quot;&quot;One or more seats already locked or booked&quot;&quot;&quot;
+    pass
+
+class BookingExpiredError(BookingException):
+    &quot;&quot;&quot;Lock window closed before confirmation&quot;&quot;&quot;
+    pass
+
+class ShowNotFoundError(BookingException):
+    &quot;&quot;&quot;Show ID does not exist&quot;&quot;&quot;
+    pass
+
+class UserNotFoundError(BookingException):
+    &quot;&quot;&quot;User not registered in system&quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python">system = BookingSystem.get_instance()
+
+# 1. Search movies
+movies = system.search_movies(query=&quot;Inception&quot;)
+
+# 2. Find shows
+shows = system.get_shows_by_movie(&quot;MOV001&quot;)
+show = shows[0]
+
+# 3. LOCK seats
+booking = system.lock_seats(
+    user_id=&quot;USR001&quot;,
+    show_id=&quot;SHW001&quot;,
+    seat_ids=[&quot;A1&quot;, &quot;A2&quot;]
+)
+print(f&quot;Booking ID: {booking.booking_id}, Total: ${booking.total_amount:.2f}&quot;)
+
+# 4. CONFIRM booking
+success = system.confirm_booking(booking.booking_id, PaymentMethod.CREDIT_CARD)
+
+# 5. CANCEL booking (if needed)
+system.cancel_booking(booking.booking_id)
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and inheritance. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>BookingSystem HAS-A movies (1:N Composition)
+  └─ BookingSystem owns all movies; movies die if system resets
+
+BookingSystem HAS-A theaters (1:N Composition)
+  └─ BookingSystem owns all theater objects
+
+Theater HAS-A halls (1:N Composition)
+  └─ Theater contains and owns multiple Hall objects
+
+Hall HAS-A seat_layout (1:N Composition)
+  └─ Hall owns the 2D grid of Seat objects
+
+Show REFERENCES movie (1:1 Association)
+  └─ Show links to Movie (no ownership; movie outlives show)
+
+Show REFERENCES hall (1:1 Association)
+  └─ Show uses a Hall (no ownership)
+
+Booking REFERENCES user (1:1 Association)
+  └─ Booking links to User (no ownership)
+
+Booking REFERENCES show (1:1 Association)
+  └─ Booking links to Show (no ownership)
+
+Booking REFERENCES seats (1:N Association)
+  └─ Booking links multiple Seat objects (no ownership)
+
+BookingSystem USES-A PricingStrategy (1:1 Composition)
+  └─ BookingSystem owns and manages current pricing algorithm
+
+BookingSystem NOTIFIES BookingObserver (1:N Association)
+  └─ Multiple observers listen to booking lifecycle events
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌─────────────────────────────────────────┐
+│      BookingSystem (Singleton)          │
+├─────────────────────────────────────────┤
+│ - _instance: BookingSystem              │
+│ - movies: Dict[str, Movie]              │
+│ - theaters: Dict[str, Theater]          │
+│ - shows: Dict[str, Show]                │
+│ - bookings: Dict[str, Booking]          │
+│ - users: Dict[str, User]                │
+│ - pricing_strategy: PricingStrategy     │
+│ - observers: List[BookingObserver]      │
+├─────────────────────────────────────────┤
+│ + get_instance(): BookingSystem         │
+│ + search_movies(query, genre)           │
+│ + get_shows_by_movie(movie_id)          │
+│ + lock_seats(user, show, seat_ids)      │
+│ + confirm_booking(booking_id, method)   │
+│ + cancel_booking(booking_id)            │
+│ + set_pricing_strategy(strategy)        │
+│ + notify_observers(event, booking)      │
+└─────────────────────────────────────────┘
+           │ orchestrates
+           ▼
+    ┌────────────────────┐
+    │     Movie          │
+    ├────────────────────┤
+    │ - movie_id: str    │
+    │ - title: str       │
+    │ - duration: int    │
+    │ - genre: [str]     │
+    │ - language: str    │
+    │ - rating: str      │
+    └────────────────────┘
+           │ screened in
+           ▼
+    ┌────────────────────┐
+    │     Theater        │
+    ├────────────────────┤
+    │ - theater_id: str  │
+    │ - name: str        │
+    │ - location: str    │
+    │ - city: str        │
+    │ - halls: Dict      │
+    └────────────────────┘
+           │ contains
+           ▼
+    ┌────────────────────┐
+    │      Hall          │
+    ├────────────────────┤
+    │ - hall_id: str     │
+    │ - capacity: int    │
+    │ - seat_layout[][]  │
+    └────────────────────┘
+           │ has
+           ▼
+    ┌────────────────────┐
+    │      Show          │
+    ├────────────────────┤
+    │ - show_id: str     │
+    │ - movie: Movie     │
+    │ - hall: Hall       │
+    │ - start_time: dt   │
+    │ - base_price: float│
+    └────────────────────┘
+           │ contains
+           ▼
+    ┌────────────────────────────────┐
+    │         Seat                   │
+    ├────────────────────────────────┤
+    │ - seat_id: str (e.g., &quot;A1&quot;)    │
+    │ - row: str                     │
+    │ - number: int                  │
+    │ - seat_type: SeatType          │
+    │ - status: SeatStatus           │
+    │ - locked_until: datetime       │
+    │ - price_multiplier: float      │
+    ├────────────────────────────────┤
+    │ + is_available(): bool         │
+    │ + lock(user_id): void          │
+    │ + unlock(): void               │
+    │ + book(): void                 │
+    └────────────────────────────────┘
+           │ linked in
+           ▼
+    ┌────────────────────────────────┐
+    │        Booking                 │
+    ├────────────────────────────────┤
+    │ - booking_id: str              │
+    │ - user: User                   │
+    │ - show: Show                   │
+    │ - seats: List[Seat]            │
+    │ - status: BookingStatus        │
+    │ - total_amount: float          │
+    │ - payment: Payment             │
+    ├────────────────────────────────┤
+    │ + calculate_total(strategy)    │
+    │ + confirm(): void              │
+    │ + cancel(): void               │
+    └────────────────────────────────┘
+
+STRATEGY PATTERN (Pricing):
+┌──────────────────────────────────┐
+│ PricingStrategy (Abstract)       │
+│ + calculate_price(base, seat)    │
+└──┬───────────────────────────────┘
+   │
+   ├─→ RegularPricing (base × multiplier)
+   ├─→ WeekendPricing (base × 1.5)
+   └─→ HolidayPricing (base × 2.0)
+
+OBSERVER PATTERN (Notifications):
+┌──────────────────────────────────┐
+│ BookingObserver (Abstract)       │
+│ + update(event, booking)         │
+└──┬───────────────────────────────┘
+   │
+   ├─→ EmailNotifier
+   ├─→ SMSNotifier
+   └─→ ConsoleObserver (logs)
+
+ENUMS:
+BookingStatus: PENDING → LOCKED → CONFIRMED → CANCELLED/COMPLETED
+SeatStatus: AVAILABLE → LOCKED → BOOKED
+SeatType: REGULAR (1.0×) | PREMIUM (1.3×) | VIP (1.5×)
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>BookingSystem → Movies</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System owns all movies</td>
+</tr>
+<tr>
+<td>BookingSystem → Theaters</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>System owns all theaters</td>
+</tr>
+<tr>
+<td>Theater → Halls</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Theater owns its halls</td>
+</tr>
+<tr>
+<td>Hall → Seats</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Hall owns the seat grid</td>
+</tr>
+<tr>
+<td>Show → Movie</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Show references a movie</td>
+</tr>
+<tr>
+<td>Show → Hall</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Show uses a hall</td>
+</tr>
+<tr>
+<td>Booking → User</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Booking references one user</td>
+</tr>
+<tr>
+<td>Booking → Show</td>
+<td>1:1</td>
+<td>Association</td>
+<td>Booking references one show</td>
+</tr>
+<tr>
+<td>Booking → Seats</td>
+<td>1:N</td>
+<td>Association</td>
+<td>Booking reserves multiple seats</td>
+</tr>
+<tr>
+<td>BookingSystem → PricingStrategy</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>System owns pricing rule</td>
+</tr>
+<tr>
+<td>BookingSystem → Observers</td>
+<td>1:N</td>
+<td>Association</td>
+<td>System notifies multiple listeners</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-singleton-for-bookingsystem">Pattern 1: <strong>Singleton</strong> (For BookingSystem)</h3>
+<p><strong>Problem</strong>: Multiple threads need a single consistent view of shows, bookings, and seat inventory.</p>
+<p><strong>Solution</strong>: One global BookingSystem instance, thread-safe initialization with double-checked locking.</p>
+<pre class="codehilite"><code class="language-python">class BookingSystem:
+    _instance = None
+    _lock = threading.RLock()   # RLock allows re-entrant acquisition
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if not hasattr(self, 'initialized'):
+            self.movies: Dict[str, Movie] = {}
+            # ... other fields
+            self.initialized = True
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Single source of truth, ✅ Thread-safe (double-checked lock), ✅ Global access<br />
+<strong>Trade-off</strong>: ⚠️ Global state (harder to unit-test), ⚠️ Harder to scale across machines</p>
+<hr />
+<h3 id="pattern-2-strategy-for-pricing">Pattern 2: <strong>Strategy</strong> (For Pricing)</h3>
+<p><strong>Problem</strong>: Ticket pricing varies by day/time/demand and must be swappable at runtime.</p>
+<p><strong>Solution</strong>: Pluggable pricing algorithms — Regular, Weekend, Holiday — with a common interface.</p>
+<pre class="codehilite"><code class="language-python">class PricingStrategy(ABC):
+    @abstractmethod
+    def calculate_price(self, base_price: float, seat: Seat) -&gt; float:
+        pass
+
+class RegularPricing(PricingStrategy):
+    def calculate_price(self, base_price: float, seat: Seat) -&gt; float:
+        return base_price * seat.price_multiplier
+
+class WeekendPricing(PricingStrategy):
+    def calculate_price(self, base_price: float, seat: Seat) -&gt; float:
+        return base_price * seat.price_multiplier * 1.5
+
+class HolidayPricing(PricingStrategy):
+    def calculate_price(self, base_price: float, seat: Seat) -&gt; float:
+        return base_price * seat.price_multiplier * 2.0
+
+# Usage: Switch algorithm at runtime
+system.set_pricing_strategy(WeekendPricing())
+total = booking.calculate_total(system.pricing_strategy)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Easy to add new strategies (SurgePricing, MemberDiscount, etc.), ✅ No booking logic change<br />
+<strong>Trade-off</strong>: ⚠️ Extra abstraction layer</p>
+<hr />
+<h3 id="pattern-3-observer-for-notifications">Pattern 3: <strong>Observer</strong> (For Notifications)</h3>
+<p><strong>Problem</strong>: Booking events (lock, confirm, cancel) need to trigger emails/SMS/logging.</p>
+<p><strong>Solution</strong>: Observer pattern decouples event producer (BookingSystem) from consumers (notifiers).</p>
+<pre class="codehilite"><code class="language-python">class BookingObserver(ABC):
+    @abstractmethod
+    def update(self, event: str, booking: Booking):
+        pass
+
+class EmailNotifier(BookingObserver):
+    def update(self, event: str, booking: Booking):
+        if event == &quot;booking_confirmed&quot;:
+            print(f&quot;Email: {booking.user.email} - Booking confirmed!&quot;)
+
+class SMSNotifier(BookingObserver):
+    def update(self, event: str, booking: Booking):
+        if event == &quot;booking_confirmed&quot;:
+            print(f&quot;SMS: {booking.user.phone} - Booking confirmed!&quot;)
+
+class ConsoleObserver(BookingObserver):
+    def update(self, event: str, booking: Booking):
+        seats = &quot;, &quot;.join([s.seat_id for s in booking.seats])
+        print(f&quot;[{event.upper()}] {booking.user.name} | Seats: {seats} | ${booking.total_amount:.2f}&quot;)
+
+# Usage
+system.add_observer(EmailNotifier())
+system.add_observer(SMSNotifier())
+system.notify_observers(&quot;booking_confirmed&quot;, booking)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Loose coupling, ✅ Easy to add new channels (Push, Slack)<br />
+<strong>Trade-off</strong>: ⚠️ Observer lifecycle management</p>
+<hr />
+<h3 id="pattern-4-state-for-seat-booking-lifecycle">Pattern 4: <strong>State</strong> (For Seat &amp; Booking Lifecycle)</h3>
+<p><strong>Problem</strong>: Seats and bookings move through explicit states; invalid transitions must be caught.</p>
+<p><strong>Solution</strong>: Enums represent states; transition methods enforce valid moves.</p>
+<pre class="codehilite"><code class="language-python">class SeatStatus(Enum):
+    AVAILABLE = &quot;available&quot;
+    LOCKED = &quot;locked&quot;
+    BOOKED = &quot;booked&quot;
+
+class BookingStatus(Enum):
+    PENDING = &quot;pending&quot;
+    LOCKED = &quot;locked&quot;
+    CONFIRMED = &quot;confirmed&quot;
+    CANCELLED = &quot;cancelled&quot;
+    COMPLETED = &quot;completed&quot;
+
+# Valid transitions enforced in methods:
+def lock(self, user_id: str, duration_minutes: int = 10):
+    if not self.is_available():          # Guards invalid transitions
+        raise ValueError(f&quot;Seat {self.seat_id} not available&quot;)
+    self.status = SeatStatus.LOCKED
+    self.locked_until = datetime.now() + timedelta(minutes=duration_minutes)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Explicit state, ✅ Invalid transitions caught at runtime<br />
+<strong>Trade-off</strong>: ⚠️ Need explicit transition logic in each method</p>
+<hr />
+<h3 id="pattern-5-factory-for-seat-layout-generation">Pattern 5: <strong>Factory</strong> (For Seat Layout Generation)</h3>
+<p><strong>Problem</strong>: Creating a full 2D seat grid with correct seat types requires coordination logic.</p>
+<p><strong>Solution</strong>: <code>generate_seat_layout()</code> factory method encapsulates creation.</p>
+<pre class="codehilite"><code class="language-python">def generate_seat_layout(self, rows: int, cols: int):
+    row_letters = [chr(65 + i) for i in range(rows)]
+    for idx, row in enumerate(row_letters):
+        row_seats = []
+        for num in range(1, cols + 1):
+            # Assign type based on row position
+            seat_type = (SeatType.VIP if idx &lt; 2
+                         else SeatType.PREMIUM if idx &lt; 4
+                         else SeatType.REGULAR)
+            seat = Seat(f&quot;{row}{num}&quot;, row, num, seat_type)
+            row_seats.append(seat)
+        self.seat_layout.append(row_seats)
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Centralized creation, ✅ Consistent type assignment across halls<br />
+<strong>Trade-off</strong>: ⚠️ If layouts grow complex, consider Builder pattern</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>Single global BookingSystem</td>
+<td>Consistent state across all clients</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Varying pricing algorithms</td>
+<td>Pluggable, easy to extend at runtime</td>
+</tr>
+<tr>
+<td><strong>Observer</strong></td>
+<td>Events trigger notifications</td>
+<td>Loose coupling, event-driven</td>
+</tr>
+<tr>
+<td><strong>State (Enum)</strong></td>
+<td>Seat &amp; booking lifecycle</td>
+<td>Invalid transitions prevented explicitly</td>
+</tr>
+<tr>
+<td><strong>Factory</strong></td>
+<td>2D seat layout generation</td>
+<td>Centralized, consistent initialization</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">from enum import Enum
+from abc import ABC, abstractmethod
+from typing import List, Dict, Optional
+from datetime import datetime, timedelta
+import threading
+
+# ============ ENUMERATIONS ============
+
+class SeatType(Enum):
+    REGULAR = 1
+    PREMIUM = 2
+    VIP = 3
+
+class SeatStatus(Enum):
+    AVAILABLE = &quot;available&quot;
+    LOCKED = &quot;locked&quot;
+    BOOKED = &quot;booked&quot;
+
+class BookingStatus(Enum):
+    PENDING = &quot;pending&quot;
+    LOCKED = &quot;locked&quot;
+    CONFIRMED = &quot;confirmed&quot;
+    CANCELLED = &quot;cancelled&quot;
+    COMPLETED = &quot;completed&quot;
+
+class PaymentMethod(Enum):
+    CREDIT_CARD = &quot;credit_card&quot;
+    UPI = &quot;upi&quot;
+    WALLET = &quot;wallet&quot;
+
+class PaymentStatus(Enum):
+    PENDING = &quot;pending&quot;
+    SUCCESS = &quot;success&quot;
+    FAILED = &quot;failed&quot;
+
+# ============ CORE ENTITIES ============
+
+class Movie:
+    def __init__(self, movie_id: str, title: str, duration: int,
+                 genre: List[str], language: str, rating: str):
+        self.movie_id = movie_id
+        self.title = title
+        self.duration = duration
+        self.genre = genre
+        self.language = language
+        self.rating = rating
+
+    def get_duration_formatted(self) -&gt; str:
+        hours, minutes = divmod(self.duration, 60)
+        return f&quot;{hours}h {minutes}m&quot;
+
+class Seat:
+    def __init__(self, seat_id: str, row: str, number: int, seat_type: SeatType):
+        self.seat_id = seat_id
+        self.row = row
+        self.number = number
+        self.seat_type = seat_type
+        self.status = SeatStatus.AVAILABLE
+        self.locked_until: Optional[datetime] = None
+        self.locked_by: Optional[str] = None
+        self.price_multiplier = self._get_multiplier()
+
+    def _get_multiplier(self) -&gt; float:
+        return {SeatType.REGULAR: 1.0, SeatType.PREMIUM: 1.3, SeatType.VIP: 1.5}[self.seat_type]
+
+    def is_available(self) -&gt; bool:
+        if self.status == SeatStatus.AVAILABLE:
+            return True
+        if self.status == SeatStatus.LOCKED and self.locked_until and datetime.now() &gt; self.locked_until:
+            self.unlock()  # Lazy auto-expiry
+            return True
+        return False
+
+    def lock(self, user_id: str, duration_minutes: int = 10):
+        if not self.is_available():
+            raise ValueError(f&quot;Seat {self.seat_id} not available&quot;)
+        self.status = SeatStatus.LOCKED
+        self.locked_by = user_id
+        self.locked_until = datetime.now() + timedelta(minutes=duration_minutes)
+
+    def unlock(self):
+        self.status = SeatStatus.AVAILABLE
+        self.locked_by = None
+        self.locked_until = None
+
+    def book(self):
+        self.status = SeatStatus.BOOKED
+
+class Hall:
+    def __init__(self, hall_id: str, hall_number: str, capacity: int):
+        self.hall_id = hall_id
+        self.hall_number = hall_number
+        self.capacity = capacity
+        self.seat_layout: List[List[Seat]] = []
+
+    def generate_seat_layout(self, rows: int, cols: int):
+        row_letters = [chr(65 + i) for i in range(rows)]
+        for idx, row in enumerate(row_letters):
+            row_seats = []
+            for num in range(1, cols + 1):
+                seat_type = (SeatType.VIP if idx &lt; 2
+                             else SeatType.PREMIUM if idx &lt; 4
+                             else SeatType.REGULAR)
+                seat = Seat(f&quot;{row}{num}&quot;, row, num, seat_type)
+                row_seats.append(seat)
+            self.seat_layout.append(row_seats)
+
+    def get_seat(self, seat_id: str) -&gt; Optional[Seat]:
+        for row in self.seat_layout:
+            for seat in row:
+                if seat.seat_id == seat_id:
+                    return seat
+        return None
+
+    def get_available_seats(self) -&gt; List[Seat]:
+        return [s for row in self.seat_layout for s in row if s.is_available()]
+
+class Theater:
+    def __init__(self, theater_id: str, name: str, location: str, city: str):
+        self.theater_id = theater_id
+        self.name = name
+        self.location = location
+        self.city = city
+        self.halls: Dict[str, Hall] = {}
+
+    def add_hall(self, hall: Hall):
+        self.halls[hall.hall_id] = hall
+
+class Show:
+    def __init__(self, show_id: str, movie: Movie, hall: Hall,
+                 start_time: datetime, base_price: float):
+        self.show_id = show_id
+        self.movie = movie
+        self.hall = hall
+        self.start_time = start_time
+        self.end_time = start_time + timedelta(minutes=movie.duration)
+        self.base_price = base_price
+
+    def get_available_seats(self) -&gt; List[Seat]:
+        return self.hall.get_available_seats()
+
+class User:
+    def __init__(self, user_id: str, name: str, email: str, phone: str):
+        self.user_id = user_id
+        self.name = name
+        self.email = email
+        self.phone = phone
+        self.bookings: List['Booking'] = []
+
+class Payment:
+    def __init__(self, payment_id: str, amount: float, method: PaymentMethod):
+        self.payment_id = payment_id
+        self.amount = amount
+        self.payment_method = method
+        self.status = PaymentStatus.PENDING
+
+    def process(self) -&gt; bool:
+        self.status = PaymentStatus.SUCCESS
+        return True
+
+class Booking:
+    def __init__(self, booking_id: str, user: User, show: Show, seats: List[Seat]):
+        self.booking_id = booking_id
+        self.user = user
+        self.show = show
+        self.seats = seats
+        self.status = BookingStatus.PENDING
+        self.total_amount = 0.0
+        self.payment: Optional[Payment] = None
+
+    def calculate_total(self, strategy: 'PricingStrategy') -&gt; float:
+        return sum(strategy.calculate_price(self.show.base_price, seat) for seat in self.seats)
+
+    def confirm(self):
+        self.status = BookingStatus.CONFIRMED
+        for seat in self.seats:
+            seat.book()
+
+    def cancel(self):
+        self.status = BookingStatus.CANCELLED
+        for seat in self.seats:
+            seat.unlock()
+
+# ============ STRATEGIES ============
+
+class PricingStrategy(ABC):
+    @abstractmethod
+    def calculate_price(self, base_price: float, seat: Seat) -&gt; float:
+        pass
+
+class RegularPricing(PricingStrategy):
+    def calculate_price(self, base_price: float, seat: Seat) -&gt; float:
+        return base_price * seat.price_multiplier
+
+class WeekendPricing(PricingStrategy):
+    def calculate_price(self, base_price: float, seat: Seat) -&gt; float:
+        return base_price * seat.price_multiplier * 1.5
+
+class HolidayPricing(PricingStrategy):
+    def calculate_price(self, base_price: float, seat: Seat) -&gt; float:
+        return base_price * seat.price_multiplier * 2.0
+
+# ============ OBSERVERS ============
+
+class BookingObserver(ABC):
+    @abstractmethod
+    def update(self, event: str, booking: Booking):
+        pass
+
+class EmailNotifier(BookingObserver):
+    def update(self, event: str, booking: Booking):
+        if event == &quot;booking_confirmed&quot;:
+            print(f&quot;Email: {booking.user.email} - Booking confirmed!&quot;)
+
+class SMSNotifier(BookingObserver):
+    def update(self, event: str, booking: Booking):
+        if event == &quot;booking_confirmed&quot;:
+            print(f&quot;SMS: {booking.user.phone} - Booking confirmed!&quot;)
+
+class ConsoleObserver(BookingObserver):
+    def update(self, event: str, booking: Booking):
+        seats = &quot;, &quot;.join([s.seat_id for s in booking.seats])
+        print(f&quot;[{event.upper()}] {booking.user.name} | Seats: {seats} | ${booking.total_amount:.2f}&quot;)
+
+# ============ SINGLETON CONTROLLER ============
+
+class BookingSystem:
+    _instance = None
+    _lock = threading.RLock()  # RLock: re-entrant safe
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if not hasattr(self, 'initialized'):
+            self.movies: Dict[str, Movie] = {}
+            self.theaters: Dict[str, Theater] = {}
+            self.shows: Dict[str, Show] = {}
+            self.bookings: Dict[str, Booking] = {}
+            self.users: Dict[str, User] = {}
+            self.observers: List[BookingObserver] = []
+            self.pricing_strategy: PricingStrategy = RegularPricing()
+            self._data_lock = threading.RLock()  # RLock for re-entrant safety
+            self.initialized = True
+
+    @staticmethod
+    def get_instance() -&gt; 'BookingSystem':
+        return BookingSystem()
+
+    def set_pricing_strategy(self, strategy: PricingStrategy):
+        with self._data_lock:
+            self.pricing_strategy = strategy
+
+    def add_observer(self, observer: BookingObserver):
+        with self._data_lock:
+            self.observers.append(observer)
+
+    def notify_observers(self, event: str, booking: Booking):
+        with self._data_lock:
+            observers_copy = list(self.observers)
+        for obs in observers_copy:
+            obs.update(event, booking)
+
+    def add_movie(self, movie: Movie):
+        with self._data_lock:
+            self.movies[movie.movie_id] = movie
+
+    def add_theater(self, theater: Theater):
+        with self._data_lock:
+            self.theaters[theater.theater_id] = theater
+
+    def add_show(self, show: Show):
+        with self._data_lock:
+            self.shows[show.show_id] = show
+
+    def register_user(self, user: User):
+        with self._data_lock:
+            self.users[user.user_id] = user
+
+    def search_movies(self, query: str = &quot;&quot;, genre: str = &quot;&quot;) -&gt; List[Movie]:
+        with self._data_lock:
+            results = list(self.movies.values())
+        if query:
+            results = [m for m in results if query.lower() in m.title.lower()]
+        if genre:
+            results = [m for m in results if genre in m.genre]
+        return results
+
+    def get_shows_by_movie(self, movie_id: str) -&gt; List[Show]:
+        with self._data_lock:
+            return [s for s in self.shows.values() if s.movie.movie_id == movie_id]
+
+    def lock_seats(self, user_id: str, show_id: str,
+                   seat_ids: List[str]) -&gt; Optional[Booking]:
+        with self._data_lock:
+            show = self.shows.get(show_id)
+            user = self.users.get(user_id)
+            if not show or not user:
+                print(f&quot;Show or user not found&quot;)
+                return None
+
+            seats = []
+            for sid in seat_ids:
+                seat = show.hall.get_seat(sid)
+                if not seat or not seat.is_available():
+                    print(f&quot;Seat {sid} not available&quot;)
+                    return None
+                seats.append(seat)
+
+            # All seats available — lock atomically
+            for seat in seats:
+                seat.lock(user_id)
+
+            booking_id = f&quot;BK{len(self.bookings)+1:04d}&quot;
+            booking = Booking(booking_id, user, show, seats)
+            booking.status = BookingStatus.LOCKED
+            booking.total_amount = booking.calculate_total(self.pricing_strategy)
+            self.bookings[booking_id] = booking
+            booking_to_notify = booking
+
+        self.notify_observers(&quot;seats_locked&quot;, booking_to_notify)
+        return booking
+
+    def confirm_booking(self, booking_id: str, method: PaymentMethod) -&gt; bool:
+        with self._data_lock:
+            booking = self.bookings.get(booking_id)
+            if not booking or booking.status != BookingStatus.LOCKED:
+                print(f&quot;Booking {booking_id} not found or not in LOCKED state&quot;)
+                return False
+
+            payment = Payment(f&quot;PAY{len(self.bookings)}&quot;, booking.total_amount, method)
+            if payment.process():
+                booking.payment = payment
+                booking.confirm()
+                booking_to_notify = booking
+            else:
+                return False
+
+        self.notify_observers(&quot;booking_confirmed&quot;, booking_to_notify)
+        return True
+
+    def cancel_booking(self, booking_id: str) -&gt; bool:
+        with self._data_lock:
+            booking = self.bookings.get(booking_id)
+            if not booking:
+                return False
+            booking.cancel()
+            booking_to_notify = booking
+
+        self.notify_observers(&quot;booking_cancelled&quot;, booking_to_notify)
+        return True
+
+    def expire_stale_locks(self):
+        &quot;&quot;&quot;Background job: eagerly release expired seat locks.&quot;&quot;&quot;
+        with self._data_lock:
+            for show in self.shows.values():
+                for row in show.hall.seat_layout:
+                    for seat in row:
+                        if (seat.status == SeatStatus.LOCKED
+                                and seat.locked_until
+                                and datetime.now() &gt; seat.locked_until):
+                            seat.unlock()
+
+# ============ DEMO ============
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;=&quot; * 70)
+    print(&quot;MOVIE TICKET BOOKING SYSTEM&quot;)
+    print(&quot;=&quot; * 70)
+
+    system = BookingSystem.get_instance()
+    # Reset state for clean demo
+    system.movies.clear()
+    system.theaters.clear()
+    system.shows.clear()
+    system.bookings.clear()
+    system.users.clear()
+    system.observers.clear()
+
+    system.add_observer(ConsoleObserver())
+    system.add_observer(EmailNotifier())
+    system.add_observer(SMSNotifier())
+
+    # --- Setup ---
+    movie = Movie(&quot;MOV001&quot;, &quot;Inception&quot;, 148, [&quot;Sci-Fi&quot;, &quot;Thriller&quot;], &quot;English&quot;, &quot;PG-13&quot;)
+    system.add_movie(movie)
+
+    theater = Theater(&quot;THR001&quot;, &quot;PVR Cinemas&quot;, &quot;Downtown&quot;, &quot;NYC&quot;)
+    hall = Hall(&quot;HALL001&quot;, &quot;Hall 1&quot;, 60)
+    hall.generate_seat_layout(6, 10)   # 6 rows x 10 seats = 60 seats
+    theater.add_hall(hall)
+    system.add_theater(theater)
+
+    show = Show(&quot;SHW001&quot;, movie, hall, datetime.now() + timedelta(hours=2), 15.0)
+    system.add_show(show)
+
+    user1 = User(&quot;USR001&quot;, &quot;Alice&quot;, &quot;alice@example.com&quot;, &quot;+1234567890&quot;)
+    user2 = User(&quot;USR002&quot;, &quot;Bob&quot;, &quot;bob@example.com&quot;, &quot;+0987654321&quot;)
+    system.register_user(user1)
+    system.register_user(user2)
+
+    print(f&quot;\nSetup: {movie.title} ({movie.get_duration_formatted()}) | &quot;
+          f&quot;Hall: {hall.hall_number} | Available: {len(hall.get_available_seats())} seats&quot;)
+
+    # --- Demo 1: Search &amp; Lock ---
+    print(&quot;\n[Demo 1] Search and lock seats:&quot;)
+    results = system.search_movies(query=&quot;Inception&quot;)
+    print(f&quot;  Found: {len(results)} movie(s)&quot;)
+
+    booking1 = system.lock_seats(&quot;USR001&quot;, &quot;SHW001&quot;, [&quot;A1&quot;, &quot;A2&quot;])
+    if booking1:
+        print(f&quot;  Locked booking {booking1.booking_id} | Total: ${booking1.total_amount:.2f}&quot;)
+
+    # --- Demo 2: Concurrent lock attempt ---
+    print(&quot;\n[Demo 2] Bob tries same seats (should fail):&quot;)
+    booking_fail = system.lock_seats(&quot;USR002&quot;, &quot;SHW001&quot;, [&quot;A1&quot;, &quot;A2&quot;])
+    if not booking_fail:
+        print(&quot;  Bob's lock rejected - seats already locked by Alice&quot;)
+
+    # --- Demo 3: Confirm booking ---
+    print(&quot;\n[Demo 3] Alice confirms booking:&quot;)
+    if booking1:
+        success = system.confirm_booking(booking1.booking_id, PaymentMethod.CREDIT_CARD)
+        print(f&quot;  Confirmation: {'SUCCESS' if success else 'FAILED'}&quot;)
+
+    # --- Demo 4: Dynamic pricing ---
+    print(&quot;\n[Demo 4] Dynamic pricing (Weekend):&quot;)
+    system.set_pricing_strategy(WeekendPricing())
+    booking2 = system.lock_seats(&quot;USR002&quot;, &quot;SHW001&quot;, [&quot;B1&quot;, &quot;B2&quot;])
+    if booking2:
+        print(f&quot;  Weekend price for B1,B2: ${booking2.total_amount:.2f}&quot;)
+        system.cancel_booking(booking2.booking_id)
+
+    # --- Demo 5: Holiday pricing ---
+    print(&quot;\n[Demo 5] Dynamic pricing (Holiday):&quot;)
+    system.set_pricing_strategy(HolidayPricing())
+    booking3 = system.lock_seats(&quot;USR002&quot;, &quot;SHW001&quot;, [&quot;C1&quot;])
+    if booking3:
+        print(f&quot;  Holiday price for C1: ${booking3.total_amount:.2f}&quot;)
+        system.cancel_booking(booking3.booking_id)
+
+    avail = len(hall.get_available_seats())
+    print(f&quot;\nDemo complete! Available seats remaining: {avail}&quot;)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>lock_seats</strong></td>
+<td>RLock on data (check + lock all-or-nothing)</td>
+<td>Only 1 user can hold any seat at a time</td>
+</tr>
+<tr>
+<td><strong>confirm_booking</strong></td>
+<td>RLock on data</td>
+<td>Atomic: check LOCKED state, process payment, transition</td>
+</tr>
+<tr>
+<td><strong>cancel_booking</strong></td>
+<td>RLock on data</td>
+<td>No double-cancel; seats safely released</td>
+</tr>
+<tr>
+<td><strong>expire_stale_locks</strong></td>
+<td>RLock on data</td>
+<td>Safe scan; no race with lock_seats</td>
+</tr>
+<tr>
+<td><strong>notify_observers</strong></td>
+<td>Copy observers under lock, notify outside</td>
+<td>No deadlock from observer calling back into system</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. ✅ <code>threading.RLock()</code> used throughout — prevents deadlock on re-entrant calls
+2. ✅ All-or-nothing seat locking — checks all seats before locking any
+3. ✅ Observers notified outside lock — prevents observer → system re-entry deadlock
+4. ✅ Double-checked locking for Singleton initialization
+5. ✅ Lazy auto-expiry in <code>is_available()</code> + eager <code>expire_stale_locks()</code> background job</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="demo-1-setup-create-entities">Demo 1: Setup - Create Entities</h3>
+<pre class="codehilite"><code class="language-python">def demo_1_setup():
+    system = BookingSystem.get_instance()
+    system.observers.clear()
+    system.add_observer(ConsoleObserver())
+
+    # Create movies
+    movie1 = Movie(&quot;MOV001&quot;, &quot;Inception&quot;, 148,
+                   [&quot;Sci-Fi&quot;, &quot;Thriller&quot;], &quot;English&quot;, &quot;PG-13&quot;)
+    movie2 = Movie(&quot;MOV002&quot;, &quot;The Dark Knight&quot;, 152,
+                   [&quot;Action&quot;, &quot;Crime&quot;], &quot;English&quot;, &quot;PG-13&quot;)
+    system.add_movie(movie1)
+    system.add_movie(movie2)
+
+    # Create theater with hall
+    theater = Theater(&quot;THR001&quot;, &quot;PVR Cinemas&quot;, &quot;Downtown&quot;, &quot;NYC&quot;)
+    hall = Hall(&quot;HALL001&quot;, &quot;Hall 1&quot;, 60)
+    hall.generate_seat_layout(6, 10)  # 6 rows x 10 seats
+    theater.add_hall(hall)
+    system.add_theater(theater)
+
+    # Create shows
+    show1 = Show(&quot;SHW001&quot;, movie1, hall,
+                datetime.now() + timedelta(hours=2), 15.0)
+    system.add_show(show1)
+
+    # Register users
+    user1 = User(&quot;USR001&quot;, &quot;Alice&quot;, &quot;alice@example.com&quot;, &quot;+1234567890&quot;)
+    user2 = User(&quot;USR002&quot;, &quot;Bob&quot;, &quot;bob@example.com&quot;, &quot;+0987654321&quot;)
+    system.register_user(user1)
+    system.register_user(user2)
+
+    print(&quot;Setup complete: 2 movies, 1 theater, 1 show, 2 users&quot;)
+</code></pre>
+
+<h3 id="demo-2-search-browse">Demo 2: Search &amp; Browse</h3>
+<pre class="codehilite"><code>Search: Inception
+Found: 1 movie (148 min, PG-13)
+
+Shows for Inception:
+  Show SHW001 at 02:00 PM - 60 seats available
+</code></pre>
+
+<h3 id="demo-3-seat-selection-locking">Demo 3: Seat Selection &amp; Locking</h3>
+<pre class="codehilite"><code>Alice selects seats A1, A2 (VIP) → Total: $45.00
+  Lock acquired until 02:15 PM
+
+Bob tries seats A1, A2 (same seats)
+  Seats unavailable (locked by Alice)
+
+Bob selects seats C5, C6 (Premium) → Total: $39.00
+  Lock acquired until 02:15 PM
+</code></pre>
+
+<h3 id="demo-4-dynamic-pricing">Demo 4: Dynamic Pricing</h3>
+<pre class="codehilite"><code>Regular pricing (weekday): A1=$15, A2=$15 = $30
+Switch to Weekend pricing (+50%): A1=$22.50, A2=$22.50 = $45
+Switch to Holiday pricing (+100%): A1=$30, A2=$30 = $60
+</code></pre>
+
+<h3 id="demo-5-full-booking-flow">Demo 5: Full Booking Flow</h3>
+<pre class="codehilite"><code>Alice browses → Finds Inception
+Alice selects A1, A2 (locks)
+Alice processes payment (Credit Card)
+Alice confirms booking
+Booking BK001 confirmed
+Email: Booking confirmation sent to alice@example.com
+SMS: Booking confirmed sent to +1234567890
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-questions">Basic Questions</h3>
+<p><strong>Q1: How do you prevent double-booking of the same seat?</strong></p>
+<p>A: Three layers:</p>
+<ol>
+<li><strong>Seat Status Enum</strong>: AVAILABLE → LOCKED → BOOKED (explicit state management)</li>
+<li><strong>Timestamp-based Locking</strong>: Each seat has <code>locked_until</code> field. When locking, set <code>locked_until = now + 10 min</code></li>
+<li><strong>Before any operation</strong>, check: if seat.status == LOCKED and now &gt; locked_until, auto-expire by calling unlock()</li>
+</ol>
+<pre class="codehilite"><code class="language-python">def is_available(self):
+    if self.status == SeatStatus.AVAILABLE:
+        return True
+    if self.status == SeatStatus.LOCKED and datetime.now() &gt; self.locked_until:
+        self.unlock()  # Auto-expire
+        return True
+    return False
+</code></pre>
+
+<p><strong>Q2: What's difference between LOCKED and CONFIRMED booking?</strong></p>
+<p>A:
+- <strong>LOCKED</strong>: Seats reserved temporarily (10 min). User is in checkout. Can be released if user abandons or payment fails.
+- <strong>CONFIRMED</strong>: Booking finalized after successful payment. Seats marked BOOKED permanently (until cancellation).</p>
+<p>Timeline: Browse → Lock seats (10 min window) → If no payment, auto-unlock → OR → Payment succeeds → Confirm (permanent)</p>
+<p><strong>Q3: Why use Strategy pattern for pricing?</strong></p>
+<p>A: Pricing varies by day/time/demand:
+- Regular weekday: Base price
+- Weekend: Base × 1.5 (50% markup)
+- Holiday: Base × 2.0 (100% markup)
+- Future: Surge, seasonal, member discounts</p>
+<p>Strategy lets us swap algorithms without modifying booking logic:</p>
+<pre class="codehilite"><code class="language-python">system.set_pricing_strategy(WeekendPricing())  # Change at runtime
+total = system.calculate_price(booking)  # Uses WeekendPricing
+</code></pre>
+
+<p><strong>Q4: How do you handle seat lock expiry?</strong></p>
+<p>A: Two approaches:</p>
+<ol>
+<li><strong>Lazy expiry</strong>: When querying availability, check <code>if now &gt; locked_until</code> and unlock if expired</li>
+<li><strong>Eager cleanup</strong>: Background job runs every minute, scans all LOCKED seats, releases expired ones</li>
+</ol>
+<p>For this system, use lazy + periodic cleanup every 5 minutes for consistency.</p>
+<hr />
+<h3 id="intermediate-questions">Intermediate Questions</h3>
+<p><strong>Q5: How would you scale this to 100 theaters, 10K bookings/day?</strong></p>
+<p>A: Multi-tier architecture:</p>
+<pre class="codehilite"><code>Layer 1: API Servers (5-10 load-balanced instances)
+  └─ BookingSystem replicas per region
+
+Layer 2: Caching (Redis)
+  └─ Popular movies cache (5-min TTL)
+  └─ Show times cache (10-min TTL)
+  └─ Distributed seat locks (with TTL auto-expire)
+
+Layer 3: Database (Sharded by theater_id)
+  ├─ Theater 1-10: Shard 1
+  ├─ Theater 11-20: Shard 2
+  ├─ Theater 21-30: Shard 3
+  └─ Theater 31+: Shard 4
+  └─ Each shard has read replicas
+
+Layer 4: Notifications (Async Queue)
+  └─ Kafka topic for booking events
+  └─ Email worker consumes → SendGrid
+  └─ SMS worker consumes → Twilio
+  └─ Non-blocking from checkout
+</code></pre>
+
+<p><strong>Q6: How to handle payment failures gracefully?</strong></p>
+<p>A:</p>
+<pre class="codehilite"><code>Booking locked (seats reserved)
+    ↓
+Call payment_gateway.charge(card)
+    ↓
+If fails → Retry with exponential backoff (3x)
+    ↓
+If all fail → Release seats, mark booking FAILED
+         → Send email: &quot;Payment declined, try again&quot;
+         → Log for manual review
+</code></pre>
+
+<p><strong>Q7: How to handle race condition: 2 users locking same seat simultaneously?</strong></p>
+<p>A: Use atomic operation:</p>
+<pre class="codehilite"><code class="language-python">def lock_seats(user_id, show_id, seat_ids):
+    # Atomic block
+    with lock.acquire(timeout=5):
+        for seat_id in seat_ids:
+            seat = show.hall.get_seat(seat_id)
+            if not seat.is_available():
+                # Rollback: release all previously locked
+                for s in seats_locked:
+                    s.unlock()
+                raise SeatNotAvailableError
+            seat.lock(user_id)
+</code></pre>
+
+<p>First user to acquire lock wins. Second user sees seat already LOCKED, gets error.</p>
+<p><strong>Q8: Why not persist locks to database?</strong></p>
+<p>A: Performance:</p>
+<ul>
+<li><strong>In-memory locks</strong>: O(1) lookup, microseconds</li>
+<li><strong>DB locks</strong>: Network latency (5-20ms), DB query overhead</li>
+</ul>
+<p>For 1,000 concurrent users with 10-min locks, in-memory + periodic flush to DB is better.</p>
+<hr />
+<h3 id="advanced-questions">Advanced Questions</h3>
+<p><strong>Q9: How do you prevent bots from hoarding tickets?</strong></p>
+<p>A: Multi-layer:</p>
+<ol>
+<li><strong>Rate limiting</strong>: Max 3 seat locks per minute per user</li>
+<li><strong>CAPTCHA</strong>: On booking page before payment</li>
+<li><strong>Require payment method</strong>: Force valid card before locking</li>
+<li><strong>Monitor patterns</strong>: Flag users with 5+ consecutive cancelled bookings</li>
+<li><strong>Blacklist</strong>: Temporarily ban IP after 10 failed attempts</li>
+<li><strong>User reputation</strong>: Penalize abandoned carts (lower priority in queue next time)</li>
+</ol>
+<p><strong>Q10: How to implement flexible cancellation policies?</strong></p>
+<p>A:</p>
+<pre class="codehilite"><code class="language-python">class CancellationPolicy:
+    FULL_REFUND = 0        # Cancel anytime
+    50_PERCENT = 1         # 50% refund if &lt; 6h before show
+    25_PERCENT = 2         # 25% refund if &lt; 2h before show
+    NON_REFUNDABLE = 3     # No refund if &lt; 30min before show
+
+def cancel_booking(booking_id):
+    booking = bookings[booking_id]
+    time_remaining = booking.show.start_time - datetime.now()
+
+    if time_remaining &gt; 6h:
+        refund_percent = 1.0  # 100%
+    elif time_remaining &gt; 2h:
+        refund_percent = 0.5  # 50%
+    elif time_remaining &gt; 30min:
+        refund_percent = 0.25  # 25%
+    else:
+        refund_percent = 0.0   # 0%
+
+    refund_amount = booking.total_amount * refund_percent
+    payment_service.refund(booking.payment_id, refund_amount)
+    booking.status = BookingStatus.CANCELLED
+</code></pre>
+
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<h3 id="q1-how-to-scale-to-1m-concurrent-users-with-100k-bookingsday">Q1: How to scale to 1M concurrent users with 100K bookings/day?</h3>
+<p><strong>Problem</strong>: Single BookingSystem instance can't handle 1M users, single database bottlenecks.</p>
+<p><strong>Solution</strong>: Distributed architecture:</p>
+<pre class="codehilite"><code>Tier 1: API Gateway (Nginx)
+  └─ Route requests by user_id hash (consistent hashing)
+
+Tier 2: BookingSystem Replicas (250K users each)
+  ├─ Instance 1 (users 0-250K)
+  ├─ Instance 2 (users 250K-500K)
+  ├─ Instance 3 (users 500K-750K)
+  └─ Instance 4 (users 750K-1M)
+  └─ Session affinity (same user → same instance)
+
+Tier 3: Distributed Locks (Redis Cluster)
+  ├─ Shard 1: Theater 1-25
+  ├─ Shard 2: Theater 26-50
+  ├─ Shard 3: Theater 51-75
+  └─ Shard 4: Theater 76-100
+  └─ Key: &quot;lock:theater_id:show_id:seat_id&quot; with TTL 15min
+
+Tier 4: Database (Postgres with Replication)
+  ├─ Shard by theater_id (horizontal scaling)
+  ├─ 4 shards handling 25 theaters each
+  ├─ Each shard: 1 primary + 2 read replicas
+  └─ Cross-region replication for disaster recovery
+
+Tier 5: Notifications (Kafka + Workers)
+  ├─ Topic: booking_events (1M+ messages/day)
+  ├─ Email partition: 100 msgs/sec
+  ├─ SMS partition: 50 msgs/sec
+  └─ Worker autoscale based on lag
+</code></pre>
+
+<p><strong>Metrics</strong>:
+- Lock lookup: 5ms (Redis)
+- Seat availability check: 50ms (distributed)
+- Booking confirmation: 200ms (distributed lock + DB write)
+- Concurrent throughput: 5,000 TPS</p>
+<hr />
+<h3 id="q2-how-to-prevent-overselling-with-10k-concurrent-lock-requests">Q2: How to prevent overselling with 10K concurrent lock requests?</h3>
+<p><strong>Problem</strong>: Two users lock same last seat, both think it's reserved.</p>
+<p><strong>Solution</strong>: Pessimistic locking with Redis:</p>
+<pre class="codehilite"><code class="language-python">def lock_seats_distributed(user_id, theater_id, show_id, seat_ids):
+    redis_client = get_redis_shard(theater_id)
+
+    # Acquire lock for each seat atomically
+    pipeline = redis_client.pipeline()
+    lock_acquired = True
+
+    for seat_id in seat_ids:
+        key = f&quot;lock:{show_id}:{seat_id}&quot;
+        # SET if not exists, with 15-min TTL
+        result = pipeline.set(key, user_id, nx=True, ex=900)
+
+    responses = pipeline.execute()
+
+    if not all(responses):
+        # Rollback: release all locks
+        for seat_id in seat_ids:
+            redis_client.delete(f&quot;lock:{show_id}:{seat_id}&quot;)
+        raise SeatNotAvailableError()
+
+    # All locks acquired successfully
+    return create_booking(user_id, show_id, seat_ids)
+</code></pre>
+
+<p><strong>Guarantees</strong>: Only one user per seat. TTL prevents deadlocks. Atomic pipeline ensures all-or-nothing.</p>
+<hr />
+<h3 id="q3-how-to-cache-popular-movies-without-stale-data">Q3: How to cache popular movies without stale data?</h3>
+<p><strong>Solution</strong>: Cache-aside with invalidation:</p>
+<pre class="codehilite"><code class="language-python">def search_movies(query, genre):
+    cache_key = f&quot;movies:{query}:{genre}&quot;
+
+    # Try cache first
+    cached = redis_client.get(cache_key)
+    if cached:
+        return json.loads(cached)
+
+    # Cache miss - fetch from DB
+    results = db.query_movies(query, genre)
+
+    # Cache with 5-minute TTL
+    redis_client.setex(cache_key, 300, json.dumps(results))
+
+    return results
+
+# Invalidate on new movie added
+def add_movie(movie):
+    db.insert(movie)
+    redis_client.delete(&quot;movies:*&quot;)  # Flush related cache
+</code></pre>
+
+<hr />
+<h3 id="q4-how-to-handle-show-scheduling-conflicts">Q4: How to handle show scheduling conflicts?</h3>
+<p><strong>Problem</strong>: Two managers book same hall at overlapping times.</p>
+<p><strong>Solution</strong>: Check occupancy before creating show:</p>
+<pre class="codehilite"><code class="language-python">def create_show(movie, hall, start_time):
+    duration_ms = movie.duration * 60 * 1000
+    buffer_ms = 30 * 60 * 1000  # 30-min cleanup buffer
+
+    proposed_end = start_time + duration_ms + buffer_ms
+
+    # Query: find all shows in hall between start_time and proposed_end
+    conflicts = db.query_shows(
+        hall_id=hall.id,
+        start_time__lt=proposed_end,
+        end_time__gt=start_time
+    )
+
+    if conflicts:
+        raise SchedulingConflictError(f&quot;Conflicts: {conflicts}&quot;)
+
+    show = Show(movie, hall, start_time)
+    db.insert(show)
+    return show
+</code></pre>
+
+<hr />
+<h3 id="q5-how-to-implement-real-time-availability-updates">Q5: How to implement real-time availability updates?</h3>
+<p><strong>Solution</strong>: WebSocket + Redis Pub/Sub:</p>
+<pre class="codehilite"><code class="language-python"># When seat status changes
+def lock_seats(user_id, show_id, seat_ids):
+    # ... locking logic ...
+
+    # Publish event to subscribers watching this show
+    redis_client.publish(
+        f&quot;show:{show_id}:updates&quot;,
+        json.dumps({
+            &quot;event&quot;: &quot;seats_locked&quot;,
+            &quot;seats&quot;: seat_ids,
+            &quot;user_id&quot;: user_id
+        })
+    )
+
+# Client side (WebSocket)
+def on_availability_change(event):
+    if event['event'] == 'seats_locked':
+        for seat_id in event['seats']:
+            mark_seat_locked(seat_id)  # UI update
+</code></pre>
+
+<p><strong>Benefits</strong>: Sub-second updates to all connected clients watching show.</p>
+<hr />
+<h3 id="q6-how-to-scale-notifications-to-1mday">Q6: How to scale notifications to 1M/day?</h3>
+<p><strong>Solution</strong>: Kafka + worker pool + batch processing:</p>
+<pre class="codehilite"><code>BookingService (publish event)
+    ↓
+Kafka Topic: booking_events (partitioned by theater_id)
+    ├─ Partition 0: Theater 1-25 events
+    ├─ Partition 1: Theater 26-50 events
+    ├─ Partition 2: Theater 51-75 events
+    └─ Partition 3: Theater 76-100 events
+    ↓
+EmailWorker (consume partition 0-3)
+    ├─ Batch 100 events
+    ├─ Deduplicate users
+    ├─ Send via SendGrid (100 msgs/sec)
+    ↓
+SMSWorker (consume partition 0-3)
+    ├─ Batch 50 events
+    ├─ Send via Twilio (50 msgs/sec)
+    ↓
+Monitoring: Lag &lt; 10 sec, Success rate &gt; 99.9%
+</code></pre>
+
+<p><strong>Throughput</strong>: 1M events/day = ~12 events/sec, easily handled.</p>
+<hr />
+<h3 id="q7-how-to-handle-database-replication-lag">Q7: How to handle database replication lag?</h3>
+<p><strong>Problem</strong>: User confirms booking on primary, reads from replica which doesn't have update yet → sees booking not confirmed.</p>
+<p><strong>Solution</strong>: Read consistency patterns:</p>
+<ol>
+<li><strong>Write-after-write</strong>: After writing to primary, read from primary for next 5 seconds</li>
+<li><strong>Eventual consistency</strong>: Accept 1-2 second lag for non-critical reads (movie list)</li>
+<li><strong>Read-your-writes</strong>: Store write timestamp in session, check replica lag</li>
+</ol>
+<pre class="codehilite"><code class="language-python">def confirm_booking(booking_id):
+    # Write to primary
+    db_primary.update(booking_id, status=CONFIRMED)
+
+    # Store write timestamp
+    session['last_write'] = datetime.now()
+
+    # Subsequent reads check lag
+    def read_booking(booking_id):
+        time_since_write = datetime.now() - session.get('last_write', datetime.now())
+
+        if time_since_write &lt; 5 sec:
+            # Use primary (strong consistency)
+            return db_primary.get(booking_id)
+        else:
+            # Use replica (eventual consistency acceptable)
+            return db_replica.get(booking_id)
+</code></pre>
+
+<hr />
+<h3 id="q8-how-to-monitor-system-health">Q8: How to monitor system health?</h3>
+<p><strong>Key Metrics</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Alert Threshold</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>API latency (p99)</td>
+<td>&gt; 1000ms</td>
+</tr>
+<tr>
+<td>Seat lock success rate</td>
+<td>&lt; 99%</td>
+</tr>
+<tr>
+<td>Payment success rate</td>
+<td>&lt; 95%</td>
+</tr>
+<tr>
+<td>Booking confirmation rate</td>
+<td>&lt; 98%</td>
+</tr>
+<tr>
+<td>Cache hit ratio</td>
+<td>&lt; 80%</td>
+</tr>
+<tr>
+<td>Redis connection pool</td>
+<td>&gt; 90% utilized</td>
+</tr>
+<tr>
+<td>Database query latency (p99)</td>
+<td>&gt; 200ms</td>
+</tr>
+<tr>
+<td>Kafka consumer lag</td>
+<td>&gt; 1 minute</td>
+</tr>
+<tr>
+<td>Notification delivery time</td>
+<td>&gt; 5 min</td>
+</tr>
+<tr>
+<td>Uptime</td>
+<td>&lt; 99.9%</td>
+</tr>
+</tbody>
+</table>
+<pre class="codehilite"><code class="language-python"># Monitoring with Prometheus
+booking_lock_attempts = Counter(
+    'booking_seat_locks_total', 'Total seat lock attempts'
+)
+booking_lock_failures = Counter(
+    'booking_seat_lock_failures_total', 'Failed seat locks'
+)
+
+try:
+    lock_seats(user_id, show_id, seat_ids)
+    booking_lock_attempts.inc()
+except SeatNotAvailableError:
+    booking_lock_failures.inc()
+</code></pre>
+
+<hr />
+<h3 id="q9-how-to-handle-user-requests-during-traffic-spike">Q9: How to handle user requests during traffic spike?</h3>
+<p><strong>Solution</strong>: Circuit breaker + graceful degradation:</p>
+<pre class="codehilite"><code class="language-python">def checkout_booking(booking_id):
+    # Check circuit breaker
+    if payment_service.is_open():
+        # Don't call payment service, fail fast
+        raise ServiceUnavailableError(&quot;Payment service temporarily unavailable&quot;)
+
+    try:
+        payment_service.charge(booking.amount)
+        circuit_breaker.record_success()
+        return confirm_booking(booking_id)
+    except PaymentServiceError:
+        circuit_breaker.record_failure()
+        if circuit_breaker.failure_count &gt; 5:
+            circuit_breaker.open()  # Stop trying for 30 sec
+        raise
+</code></pre>
+
+<p>Alternative: Queue requests:</p>
+<pre class="codehilite"><code class="language-python">if queue.length() &gt; 10000:
+    # Too many pending → tell user to try again in 30 sec
+    raise TooManyRequestsError(&quot;System busy&quot;)
+
+queue.enqueue_booking(user_id, show_id, seat_ids)
+return {&quot;status&quot;: &quot;queued&quot;, &quot;position&quot;: queue.length()}
+</code></pre>
+
+<hr />
+<h3 id="q10-how-to-implement-disaster-recovery">Q10: How to implement disaster recovery?</h3>
+<p><strong>Solution</strong>: Multi-region replication:</p>
+<pre class="codehilite"><code>Primary Region (US-East)
+  ├─ BookingSystem Replicas (active)
+  ├─ Primary Database
+  └─ Redis Cluster
+
+Secondary Region (US-West) - Standby
+  ├─ BookingSystem Replicas (warm standby)
+  ├─ Read-only database replica (from primary)
+  └─ Redis Cluster (replicated)
+
+Failover mechanism:
+  - Monitor primary health (heartbeat every 10 sec)
+  - If primary down for 30 sec:
+    - Promote secondary to primary
+    - Redirect traffic to US-West
+    - Alert on-call engineer
+  - RTO: 30 seconds
+  - RPO: &lt; 1 minute (database replication lag)
+</code></pre>
+
+<p><strong>Testing</strong>: Monthly failover drills to ensure readiness.</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw UML class diagram from memory with all 9 entities</li>
+<li>[ ] Walk through booking flow end-to-end (browse → lock → pay → confirm)</li>
+<li>[ ] Explain 5 design patterns in &lt; 1 minute each</li>
+<li>[ ] Discuss seat locking (10-min timeout, lazy + eager auto-expiry)</li>
+<li>[ ] Explain how to prevent double-booking (atomic lock, RLock thread safety)</li>
+<li>[ ] Run complete implementation without errors</li>
+<li>[ ] Answer 5+ scaling Q&amp;A questions</li>
+<li>[ ] Discuss trade-offs (in-memory vs DB locks, pessimistic vs optimistic locking)</li>
+<li>[ ] Mention monitoring (alert thresholds, metrics, health checks)</li>
+</ul>
+<blockquote>
+<p><strong>Interview Tips</strong><br />
+✅ <strong>Start with questions</strong>: Clarify single/multi-theater, seat types, scale<br />
+✅ <strong>Sketch first</strong>: Draw 2D seat grid, entity relationships<br />
+✅ <strong>Explain patterns</strong>: Singleton ensures consistency, Strategy enables pricing flexibility<br />
+✅ <strong>Handle edge cases</strong>: Lock expiry, concurrent bookings, payment failure<br />
+✅ <strong>Demo incrementally</strong>: Browse → Lock → Pay → Confirm<br />
+✅ <strong>Discuss trade-offs</strong>: In-memory vs DB locks, pessimistic vs optimistic locking<br />
+✅ <strong>Mention monitoring</strong>: Alert thresholds, metrics, health checks</p>
+</blockquote>
+<hr />
+<p><strong>Ready for interview? Let's go! Book some tickets!</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>

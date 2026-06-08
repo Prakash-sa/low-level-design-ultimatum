@@ -1,0 +1,1894 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Logging - Low-Level Design Ultimatum</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script>
+        // Prevent flash-of-wrong-theme
+        (function(){
+            var t = localStorage.getItem('lldu_theme') || 'light';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <style>
+        /* ── CSS Variables ─────────────────────────────── */
+        :root {
+            --bg-page:       #f5f7ff;
+            --bg-content:    #ffffff;
+            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-navbar:     #ffffff;
+            --text-primary:  #1a1a2e;
+            --text-muted:    #64748b;
+            --text-sidebar:  rgba(255,255,255,0.9);
+            --border:        #e2e8f0;
+            --accent:        #667eea;
+            --accent-dark:   #764ba2;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            --sidebar-width: 280px;
+            --topbar-height: 56px;
+            --progress-color:#667eea;
+        }
+        [data-theme="dark"] {
+            --bg-page:       #0f1117;
+            --bg-content:    #1a1c2a;
+            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-navbar:     #161824;
+            --text-primary:  #e2e8f0;
+            --text-muted:    #94a3b8;
+            --text-sidebar:  rgba(255,255,255,0.85);
+            --border:        #2d3148;
+            --accent:        #818cf8;
+            --accent-dark:   #a78bfa;
+            --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            --progress-color:#818cf8;
+        }
+
+        /* ── Reset ─────────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-page);
+            padding-top: var(--topbar-height);
+            transition: background .3s, color .3s;
+        }
+
+        /* ── Reading Progress Bar ──────────────────────── */
+        #reading-progress {
+            position: fixed;
+            top: 0; left: 0;
+            height: 3px;
+            width: 0%;
+            background: var(--progress-color);
+            z-index: 2000;
+            transition: width .1s linear;
+        }
+
+        /* ── Top Navbar ────────────────────────────────── */
+        .top-navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: var(--topbar-height);
+            background: var(--bg-navbar);
+            box-shadow: var(--navbar-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 18px;
+            gap: 10px;
+            z-index: 1100;
+            transition: background .3s;
+        }
+        .top-navbar .brand {
+            font-weight: 800;
+            font-size: 1.1em;
+            color: var(--accent);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .top-navbar .home-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: .88em;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 6px;
+            transition: background .2s, color .2s;
+        }
+        .top-navbar .home-link:hover {
+            background: rgba(102,126,234,0.1);
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .top-navbar .spacer { flex: 1; }
+        .top-navbar .icon-btn {
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .95em;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background .2s, border-color .2s, color .2s;
+            flex-shrink: 0;
+        }
+        .top-navbar .icon-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102,126,234,0.08);
+            text-decoration: none;
+        }
+        .hamburger {
+            display: none;
+            background: none;
+            border: 1.5px solid var(--border);
+            border-radius: 6px;
+            width: 34px; height: 34px;
+            cursor: pointer;
+            align-items: center; justify-content: center;
+            font-size: 1.1em;
+            color: var(--text-muted);
+        }
+        @media (max-width: 768px) { .hamburger { display: flex; } }
+
+        /* ── Layout ────────────────────────────────────── */
+        .wrapper {
+            display: flex;
+            min-height: calc(100vh - var(--topbar-height));
+        }
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            color: var(--text-sidebar);
+            padding: 20px 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            position: sticky;
+            top: var(--topbar-height);
+            height: calc(100vh - var(--topbar-height));
+            transition: transform .3s ease;
+            z-index: 900;
+        }
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(255,255,255,0.25);
+            color: white;
+        }
+
+        /* ── Sidebar Nav ───────────────────────────────── */
+        .sidebar ul { list-style: none; padding-left: 0; margin-left: 0; }
+        .sidebar li { margin: 4px 0; }
+        .nav-row { display: flex; align-items: center; gap: 6px; }
+        .nav-toggle {
+            width: 22px; height: 22px;
+            border: 1px solid rgba(255,255,255,0.5);
+            background: transparent;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background .2s;
+            flex-shrink: 0;
+        }
+        .nav-toggle:hover { background: rgba(255,255,255,0.2); }
+        .nav-folder[data-collapsed="true"] .nav-toggle::after { content: "▶"; }
+        .nav-folder[data-collapsed="false"] .nav-toggle::after { content: "▼"; }
+        .nav-folder[data-collapsed="true"] > .nav-children { display: none; }
+        .nav-folder > .nav-children { margin-top: 6px; }
+        .sidebar a {
+            display: block;
+            color: var(--text-sidebar);
+            text-decoration: none;
+            padding: 7px 10px;
+            border-radius: 5px;
+            transition: all .2s;
+            word-break: break-word;
+            font-size: .92em;
+        }
+        .sidebar a:hover {
+            background: rgba(255,255,255,0.18);
+            padding-left: 14px;
+            text-decoration: none;
+        }
+        .nav-file > a { padding-left: 30px; }
+        .nav-folder > .nav-row > a { font-weight: 600; }
+        .nav-children {
+            margin-left: 12px;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 8px;
+        }
+
+        /* ── Main Content ──────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 36px 48px;
+            background: var(--bg-content);
+            min-width: 0;
+            transition: background .3s;
+        }
+
+        /* ── Breadcrumbs ───────────────────────────────── */
+        .breadcrumbs {
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: .88em;
+            color: var(--text-muted);
+        }
+        .breadcrumbs a { color: var(--accent); text-decoration: none; margin: 0 4px; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: var(--text-muted); margin: 0 4px; }
+
+        /* ── Typography ────────────────────────────────── */
+        h1 { color: var(--accent); margin-bottom: 28px; font-size: 1.9em; line-height: 1.2; }
+        h2 {
+            color: var(--accent);
+            margin-top: 40px; margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--accent);
+            font-size: 1.4em;
+        }
+        h3 { color: var(--accent-dark); margin-top: 24px; margin-bottom: 10px; }
+
+        /* ── Inline code ───────────────────────────────── */
+        code {
+            background: rgba(102,126,234,0.10);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: .88em;
+            color: var(--accent-dark);
+        }
+
+        /* ── Code blocks (Prism) ───────────────────────── */
+        .code-block-wrapper {
+            position: relative;
+            margin: 18px 0;
+        }
+        pre {
+            border-radius: 8px !important;
+            overflow-x: auto;
+            margin: 0 !important;
+            font-size: .86em !important;
+            line-height: 1.5 !important;
+        }
+        pre code {
+            background: none !important;
+            padding: 0 !important;
+            color: inherit !important;
+            font-size: inherit !important;
+            border-radius: 0 !important;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            padding: 4px 10px;
+            font-size: .75em;
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background .2s, color .2s;
+            font-family: inherit;
+            z-index: 10;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.22); color: white; }
+        .copy-btn.copied { background: #22c55e; color: white; border-color: #22c55e; }
+
+        /* ── Blockquote, Table ─────────────────────────── */
+        blockquote {
+            border-left: 4px solid var(--accent);
+            padding: 10px 16px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            background: rgba(102,126,234,0.05);
+            border-radius: 0 6px 6px 0;
+        }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .95em; }
+        table th {
+            background: rgba(102,126,234,0.10);
+            color: var(--accent);
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 2px solid var(--accent);
+            font-weight: 600;
+        }
+        table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-primary); }
+        table tr:hover td { background: rgba(102,126,234,0.04); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .content { max-width: 860px; }
+        .content p { margin-bottom: 14px; color: var(--text-primary); }
+        .content ul, .content ol { margin-left: 22px; margin-bottom: 14px; }
+        .content li { margin-bottom: 6px; color: var(--text-primary); }
+
+        /* ── Mobile sidebar ────────────────────────────── */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1040;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: var(--topbar-height);
+                height: calc(100vh - var(--topbar-height));
+                transform: translateX(-100%);
+                z-index: 1050;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+            }
+            .sidebar.open { transform: translateX(0); }
+            main { padding: 20px 18px; }
+            h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="reading-progress"></div>
+
+    <div class="top-navbar">
+        <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">☰</button>
+        <a href="/low-level-design-ultimatum/" class="brand">🎯 LLD</a>
+        <a href="/low-level-design-ultimatum/" class="home-link">🏠 Home</a>
+        <div class="spacer"></div>
+        <a href="https://github.com/Prakash-sa/low-level-design-ultimatum"
+           target="_blank" rel="noopener" class="icon-btn" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 5.1 18 5.4 18 5.4c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/>
+            </svg>
+        </a>
+        <button class="icon-btn" id="darkModeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="wrapper">
+        <nav class="sidebar" id="sidebar">
+            <h2>🎯 LLD</h2>
+            <ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Introduction/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 📚 Introduction" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Introduction/">📚 Introduction</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Diagram.html">Class Diagram</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Class%20Variable%20vs%20Instance%20Variable.html">Class Variable vs Instance Variable</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Concurrency.html">Concurrency</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Interface%20vs%20Abstract%20Class.html">Interface vs Abstract Class</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/OOP%20Principles.html">OOP Principles</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Practice.html">Practice</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Python%20Built-in%20Exceptions.html">Python Built-in Exceptions</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/StaticMethod%20vs%20AbstractMethod%20vs%20ClassMethod.html">StaticMethod vs AbstractMethod vs ClassMethod</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Introduction/Synchronization%20Primitives.html">Synchronization Primitives</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏗️ Design Pattern" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/">🏗️ Design Pattern</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Behavioral/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Behavioral" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/">Behavioral</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Command.html">Command</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Iterator.html">Iterator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Observer.html">Observer</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Behavioral/Strategy.html">Strategy</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Circuit Breaker" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/">Circuit Breaker</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Circuit%20Breaker/Circuit%20Breaker.html">Circuit Breaker</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Creational/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Creational" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/">Creational</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/AbstractFactory.html">AbstractFactory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Builder.html">Builder</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Factory.html">Factory</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Creational/Singleton.html">Singleton</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Design%20Pattern/Structural/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Structural" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/">Structural</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Adapter.html">Adapter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Composite.html">Composite</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Decorator.html">Decorator</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Design%20Pattern/Structural/Facade.html">Facade</a></li></ul></div></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 💼 Examples" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/">💼 Examples</a></div><div class="nav-children"><ul><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Elevator System - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/">Elevator System - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Button.html">Button</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Direction.html">Direction</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Dispatcher.html">Dispatcher</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Display.html">Display</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/Door.html">Door</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorCar.html">ElevatorCar</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorPanel.html">ElevatorPanel</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorRequest.html">ElevatorRequest</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/ElevatorSystem.html">ElevatorSystem</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/FILES_CHECKLIST.html">FILES_CHECKLIST</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/INDEX.html">INDEX</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System%20-%20Detailed%20Code/QUICK_REFERENCE.html">QUICK_REFERENCE</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle Parking Lot - Detailed Code" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/">Parking Lot - Detailed Code</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Account.html">Account</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/DisplayBoard.html">DisplayBoard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Entrance.html">Entrance</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Enumeration.html">Enumeration</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/main.html">main</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingLot.html">ParkingLot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingSpot.html">ParkingSpot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/ParkingTicket.html">ParkingTicket</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Payment.html">Payment</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot%20-%20Detailed%20Code/Vehicle.html">Vehicle</a></li></ul></div></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Airline%20Management%20System.html">Airline Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Locker%20System.html">Amazon Locker System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Amazon%20Online%20Shopping%20System.html">Amazon Online Shopping System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/ATM.html">ATM</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Cache.html">Cache</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Car%20Rental%20System.html">Car Rental System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Chess%20Game.html">Chess Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Circinfo%20%28Ride%20Sharing%29.html">Circinfo (Ride Sharing)</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Design%20Hit%20Counter.html">Design Hit Counter</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Elevator%20System.html">Elevator System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Facebook.html">Facebook</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/File%20System.html">File System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Hotel%20Management%20System.html">Hotel Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Jigsaw%20Puzzle.html">Jigsaw Puzzle</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Leaderboard.html">Leaderboard</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Library%20Management%20System.html">Library Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/LinkedIn.html">LinkedIn</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Logging.html">Logging</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Meeting%20Scheduler.html">Meeting Scheduler</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Movie%20Ticket%20Booking%20System.html">Movie Ticket Booking System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Blackjack%20Game.html">Online Blackjack Game</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Online%20Stock%20Brokerage%20System.html">Online Stock Brokerage System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Parking%20Lot.html">Parking Lot</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Pub-Sub.html">Pub-Sub</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Restaurant%20Management%20System.html">Restaurant Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Stack%20Overflow.html">Stack Overflow</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Text%20Editor%20with%20Undo%20%26%20Redo.html">Text Editor with Undo & Redo</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Train%20Platform%20Management%20System.html">Train Platform Management System</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Examples/Vending%20Machine.html">Vending Machine</a></li></ul></div></li><li class="nav-folder" data-collapsed="true" data-path="/low-level-design-ultimatum/Company%20Tagged/"><div class="nav-row"><button class="nav-toggle" aria-label="Toggle 🏢 Company Tagged" aria-expanded="false"></button><a href="/low-level-design-ultimatum/Company%20Tagged/">🏢 Company Tagged</a></div><div class="nav-children"><ul><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Amazon.html">Amazon</a></li><li class="nav-file"><a href="/low-level-design-ultimatum/Company%20Tagged/Uber.html">Uber</a></li></ul></div></li></ul>
+        </nav>
+        <main>
+            <div class="breadcrumbs">
+                <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Examples/">Examples</a>
+            </div>
+            <div class="content">
+                <h1 id="logging-system-complete-design-guide">Logging System — Complete Design Guide</h1>
+<blockquote>
+<p>Centralized, thread-safe log capture, formatting, routing, and async dispatch across multiple output destinations with configurable severity filtering.</p>
+</blockquote>
+<p><strong>Scale</strong>: Millions of log events/day, 10+ concurrent services, 99.9% uptime<br />
+<strong>Duration</strong>: 75-minute interview guide<br />
+<strong>Focus</strong>: Async non-blocking writes, configurable appenders, log-level filtering, thread safety, log rotation</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#quick-start">Quick Start (5 min)</a></li>
+<li><a href="#step-01-the-setup--clarify-requirements">Step 01: The Setup — Clarify Requirements</a></li>
+<li><a href="#step-02-structure--define-entities">Step 02: Structure — Define Entities</a></li>
+<li><a href="#step-03-interface--apis--entry-points">Step 03: Interface — APIs &amp; Entry Points</a></li>
+<li><a href="#step-04-architecture--relationships--diagram">Step 04: Architecture — Relationships &amp; Diagram</a></li>
+<li><a href="#step-05-optimization--design-patterns">Step 05: Optimization — Design Patterns</a></li>
+<li><a href="#step-06-implementation--code--concurrency">Step 06: Implementation — Code &amp; Concurrency</a></li>
+<li><a href="#demo-scenarios">Demo Scenarios</a></li>
+<li><a href="#interview-qa">Interview Q&amp;A</a></li>
+<li><a href="#scaling-qa">Scaling Q&amp;A</a></li>
+<li><a href="#success-checklist">Success Checklist</a></li>
+</ol>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<p><strong>5-Minute Overview for Last-Minute Prep</strong></p>
+<h3 id="what-problem-are-we-solving">What Problem Are We Solving?</h3>
+<p>Applications produce log events continuously. Synchronous writes block the calling thread, single-destination logging is inflexible, and unchecked log files overflow disks. A good logging system queues events asynchronously, routes them to multiple sinks (console, file, cloud) through a pipeline of handlers, formats output with pluggable formatters, rotates files on size or time thresholds, and filters noise via log levels — all without measurable overhead on application threads.</p>
+<h3 id="core-flow">Core Flow</h3>
+<pre class="codehilite"><code>App thread        Logger          Async Queue        Worker thread        Appenders
+    │                │                 │                   │                  │
+    │── log(INFO) ──&gt;│                 │                   │                  │
+    │                │── enqueue() ───&gt;│                   │                  │
+    │&lt;── returns ────│                 │── dequeue ────────&gt;│                  │
+    │  (non-blocking)│                 │                   │── format ────────&gt;│
+    │                │                 │                   │                  │── write to console
+    │                │                 │                   │                  │── write to file
+    │                │                 │                   │                  │── send to cloud
+</code></pre>
+
+<hr />
+<h2 id="step-01-the-setup-clarify-requirements">Step 01: The Setup — Clarify Requirements</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Never code immediately. Ask clarifying questions first. Define scope, actors, and constraints.</p>
+</blockquote>
+<h3 id="questions-to-ask-30-seconds-each">Questions to Ask (30 seconds each)</h3>
+<ol>
+<li><strong>Single process or distributed?</strong> → "Distributed — multiple services send logs to shared infrastructure"</li>
+<li><strong>How many log destinations?</strong> → "Console, file, and cloud (Elasticsearch/CloudWatch)"</li>
+<li><strong>Synchronous or async writes?</strong> → "Async — must not block calling thread"</li>
+<li><strong>Log rotation needed?</strong> → "Yes — size-based and time-based (daily)"</li>
+<li><strong>Structured logging?</strong> → "Yes — key-value pairs for searchability"</li>
+</ol>
+<h3 id="actors-who-uses-the-system">Actors (Who uses the system?)</h3>
+<table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Role</th>
+<th>Example Actions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Application / Service</strong></td>
+<td>Emits log events</td>
+<td>Call <code>logger.info(...)</code>, <code>logger.error(...)</code></td>
+</tr>
+<tr>
+<td><strong>Ops / DevOps</strong></td>
+<td>Configures &amp; monitors logs</td>
+<td>Set log levels, add appenders, query logs</td>
+</tr>
+<tr>
+<td><strong>System</strong></td>
+<td>Background coordinator</td>
+<td>Dequeue events, dispatch to appenders, rotate files</td>
+</tr>
+</tbody>
+</table>
+<h3 id="functional-requirements-what-does-the-system-do">Functional Requirements (What does the system do?)</h3>
+<p>✅ <strong>Log Levels</strong>
+  - Support DEBUG, INFO, WARN, ERROR, FATAL severity levels
+  - Filter messages below configured minimum level</p>
+<p>✅ <strong>Multiple Appenders</strong>
+  - Write logs to console, file, and cloud destinations simultaneously
+  - Each appender independently configurable (level, formatter)</p>
+<p>✅ <strong>Async Writes</strong>
+  - Application thread only enqueues; background worker dispatches
+  - Non-blocking: app performance unaffected by slow I/O</p>
+<p>✅ <strong>Structured Logging</strong>
+  - Accept key-value context pairs: <code>logger.info("Order placed", order_id="123")</code>
+  - Format as JSON or plain text depending on appender formatter</p>
+<p>✅ <strong>Log Rotation</strong>
+  - Rotate file when it exceeds a maximum size (e.g., 10 MB)
+  - Keep configurable number of backup files</p>
+<p>✅ <strong>Configurable Formatters</strong>
+  - Plain text formatter: <code>[timestamp] LEVEL message key=value</code>
+  - JSON formatter: <code>{"timestamp": "...", "level": "...", "message": "..."}</code></p>
+<p>✅ <strong>Centralized Logger</strong>
+  - Single named-logger registry; same logger name → same instance
+  - Root logger as fallback for unconfigured names</p>
+<h3 id="non-functional-requirements-how-does-it-perform">Non-Functional Requirements (How does it perform?)</h3>
+<p>✅ <strong>Concurrency</strong>: Thread-safe logging from 100s of threads simultaneously<br />
+✅ <strong>Throughput</strong>: 100K+ log events/second without dropping messages<br />
+✅ <strong>Latency</strong>: &lt;1 ms overhead per <code>log()</code> call on calling thread<br />
+✅ <strong>Reliability</strong>: No log events lost on graceful shutdown<br />
+✅ <strong>Disk Safety</strong>: Log rotation prevents unbounded disk usage<br />
+✅ <strong>Extensibility</strong>: Add new appenders/formatters without modifying core  </p>
+<h3 id="constraints-clarifications">Constraints &amp; Clarifications</h3>
+<table>
+<thead>
+<tr>
+<th>Constraint</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Distributed?</strong></td>
+<td>YES — discuss LogAggregator and Kafka as scaling concern</td>
+</tr>
+<tr>
+<td><strong>Real cloud integration?</strong></td>
+<td>NO — mock CloudAppender for interview</td>
+</tr>
+<tr>
+<td><strong>Queue overflow?</strong></td>
+<td>Configurable: block caller or drop oldest (default: block)</td>
+</tr>
+<tr>
+<td><strong>Log rotation backups</strong></td>
+<td>Keep last 5 rotated files</td>
+</tr>
+<tr>
+<td><strong>Max file size</strong></td>
+<td>10 MB (configurable)</td>
+</tr>
+<tr>
+<td><strong>Worker threads</strong></td>
+<td>1 background worker (can scale to pool)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-02-structure-define-entities">Step 02: Structure — Define Entities</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Extract core objects from requirements. Look for <strong>nouns</strong>. Write them on whiteboard immediately.</p>
+</blockquote>
+<h3 id="step-21-list-core-entities-extract-nouns">Step 2.1: List Core Entities (Extract Nouns)</h3>
+<pre class="codehilite"><code>Logger, LogMessage, Appender, Formatter, LogLevel, LogRecord, LogManager, ...
+</code></pre>
+
+<h3 id="step-22-define-core-classes">Step 2.2: Define Core Classes</h3>
+<h4 id="logmessage-a-single-log-event"><strong>LogMessage</strong> — A single log event</h4>
+<pre class="codehilite"><code>Properties:
+  - level: LogLevel (DEBUG, INFO, WARN, ERROR, FATAL)
+  - message: str (human-readable description)
+  - logger_name: str (which logger produced this)
+  - timestamp: datetime (when the event occurred)
+  - thread_id: int (which thread emitted it)
+  - context: Dict[str, Any] (key-value structured pairs)
+
+Behaviors:
+  - (data object — no behaviors beyond construction)
+</code></pre>
+
+<h4 id="formatter-converts-a-logmessage-to-a-string"><strong>Formatter</strong> — Converts a LogMessage to a string</h4>
+<pre class="codehilite"><code>Properties:
+  - (abstract — subclasses hold format-specific config)
+
+Behaviors:
+  - format(log_message: LogMessage) -&gt; str
+    (PlainTextFormatter, JsonFormatter both implement this)
+</code></pre>
+
+<h4 id="appender-a-single-log-output-destination"><strong>Appender</strong> — A single log output destination</h4>
+<pre class="codehilite"><code>Properties:
+  - name: str (e.g., &quot;console&quot;, &quot;app.log&quot;)
+  - formatter: Formatter (how to render the message)
+  - min_level: LogLevel (this appender's own level filter)
+
+Behaviors:
+  - append(log_message: LogMessage): write the formatted string
+  - set_formatter(formatter): swap formatter at runtime
+</code></pre>
+
+<h4 id="logger-captures-log-events-from-application-code"><strong>Logger</strong> — Captures log events from application code</h4>
+<pre class="codehilite"><code>Properties:
+  - name: str (e.g., &quot;root&quot;, &quot;myapp.db&quot;)
+  - level: LogLevel (minimum level this logger processes)
+  - appenders: List[Appender]
+  - async_queue: Queue (buffer for worker thread)
+  - _worker: Thread (background dispatcher)
+
+Behaviors:
+  - debug/info/warn/error/fatal(message, **context): enqueue LogMessage
+  - log(level, message, **context): generic entry point
+  - add_appender(appender): register a new destination
+  - remove_appender(name): deregister a destination
+  - set_level(level): change minimum level at runtime
+  - shutdown(): drain queue and stop worker cleanly
+</code></pre>
+
+<h4 id="logmanager-singleton-registry-of-named-loggers"><strong>LogManager</strong> — Singleton registry of named loggers</h4>
+<pre class="codehilite"><code>Properties:
+  - _loggers: Dict[str, Logger]
+  - _lock: threading.RLock
+
+Behaviors:
+  - get_logger(name): retrieve or create named Logger
+  - configure(name, level, appenders): batch-configure a logger
+</code></pre>
+
+<h4 id="rotatingfileappender-file-appender-with-rotation"><strong>RotatingFileAppender</strong> — File appender with rotation</h4>
+<pre class="codehilite"><code>Properties:
+  - file_path: str
+  - max_bytes: int (default 10 MB)
+  - backup_count: int (default 5)
+  - current_size: int
+
+Behaviors:
+  - append(log_message): check size, rotate if needed, write
+  - _rotate(): rename log → log.1, log.1 → log.2, ... create fresh log
+</code></pre>
+
+<h3 id="step-23-define-enumerations-state-type">Step 2.3: Define Enumerations (State &amp; Type)</h3>
+<pre class="codehilite"><code class="language-python">from enum import IntEnum
+
+class LogLevel(IntEnum):
+    DEBUG = 10    # Verbose developer detail
+    INFO  = 20    # Normal operational events
+    WARN  = 30    # Unexpected but recoverable situations
+    ERROR = 40    # Failures requiring attention
+    FATAL = 50    # Unrecoverable — system cannot continue
+</code></pre>
+
+<h3 id="step-24-why-these-entities">Step 2.4: Why These Entities?</h3>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Why</th>
+<th>Cost of Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>LogMessage</strong></td>
+<td>Structured event carrying all metadata</td>
+<td>Can't filter, format, or route intelligently</td>
+</tr>
+<tr>
+<td><strong>Logger</strong></td>
+<td>Single entry point per named component</td>
+<td>Every caller re-implements routing and filtering</td>
+</tr>
+<tr>
+<td><strong>Appender</strong></td>
+<td>Pluggable output destination</td>
+<td>Hard-coded destinations, can't add new sinks</td>
+</tr>
+<tr>
+<td><strong>Formatter</strong></td>
+<td>Decouples rendering from routing</td>
+<td>Each appender must know every output format</td>
+</tr>
+<tr>
+<td><strong>LogManager</strong></td>
+<td>Singleton registry of loggers</td>
+<td>Duplicate loggers, divergent configurations</td>
+</tr>
+<tr>
+<td><strong>RotatingFileAppender</strong></td>
+<td>Prevents disk overflow</td>
+<td>Log files grow unboundedly until disk full</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-03-interface-apis-entry-points">Step 03: Interface — APIs &amp; Entry Points</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Define the contract (inputs, outputs, exceptions) BEFORE implementation. Focus on "what" not "how".</p>
+</blockquote>
+<h3 id="step-31-public-api-contracts">Step 3.1: Public API Contracts</h3>
+<h4 id="1-get-or-create-a-logger-critical"><strong>1. Get or Create a Logger</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def get_logger(name: str = &quot;root&quot;) -&gt; Logger:
+    &quot;&quot;&quot;
+    Retrieve the named Logger from the global registry (LogManager).
+    Creates a new Logger with default configuration if it doesn't exist.
+
+    Returns: Logger instance (same instance for same name — always).
+    Raises: nothing (always returns a usable Logger).
+
+    Thread Safety: THREAD-SAFE (guarded by LogManager RLock)
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="2-log-an-event-critical"><strong>2. Log an Event</strong> ⭐ CRITICAL</h4>
+<pre class="codehilite"><code class="language-python">def log(self, level: LogLevel, message: str, **context) -&gt; None:
+    &quot;&quot;&quot;
+    Enqueue a log event for async dispatch.
+
+    Precondition: level &gt;= self.level (otherwise silently dropped)
+    Postcondition: LogMessage placed on async queue; returns immediately.
+
+    Args:
+      level   — severity of the event
+      message — human-readable description
+      **context — arbitrary key-value structured fields
+
+    Raises: nothing (logging must never crash the caller)
+
+    Concurrency: THREAD-SAFE — queue.Queue is thread-safe
+    Response Time: &lt;1 ms (just enqueues, does NOT block on I/O)
+    &quot;&quot;&quot;
+    pass
+
+# Convenience shorthands (all delegate to log()):
+def debug(self, message: str, **context) -&gt; None: ...
+def info(self, message: str, **context) -&gt; None: ...
+def warn(self, message: str, **context) -&gt; None: ...
+def error(self, message: str, **context) -&gt; None: ...
+def fatal(self, message: str, **context) -&gt; None: ...
+</code></pre>
+
+<h4 id="3-add-remove-appender"><strong>3. Add / Remove Appender</strong></h4>
+<pre class="codehilite"><code class="language-python">def add_appender(self, appender: Appender) -&gt; None:
+    &quot;&quot;&quot;
+    Register an output destination for this logger.
+    Appender will receive all messages at or above its own min_level.
+
+    Thread Safety: THREAD-SAFE (guarded by logger RLock)
+    &quot;&quot;&quot;
+    pass
+
+def remove_appender(self, name: str) -&gt; bool:
+    &quot;&quot;&quot;
+    Deregister the appender with the given name.
+    Returns True if found and removed, False if not found.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="4-set-log-level"><strong>4. Set Log Level</strong></h4>
+<pre class="codehilite"><code class="language-python">def set_level(self, level: LogLevel) -&gt; None:
+    &quot;&quot;&quot;
+    Change the minimum severity level at runtime.
+    Messages below the new level are silently dropped BEFORE enqueuing.
+
+    Example: set_level(LogLevel.WARN) suppresses all DEBUG/INFO traffic.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h4 id="5-graceful-shutdown"><strong>5. Graceful Shutdown</strong></h4>
+<pre class="codehilite"><code class="language-python">def shutdown(self) -&gt; None:
+    &quot;&quot;&quot;
+    Signal background worker to stop after draining the queue.
+
+    Postcondition: all enqueued messages written before method returns.
+    Timeout: up to 30 seconds; forcibly stops after timeout.
+
+    Important: call this at application exit to prevent message loss.
+    &quot;&quot;&quot;
+    pass
+</code></pre>
+
+<h3 id="step-32-exception-failure-model">Step 3.2: Exception / Failure Model</h3>
+<p>The logging system is designed to never propagate exceptions to callers:</p>
+<pre class="codehilite"><code class="language-python">class LoggingException(Exception):
+    &quot;&quot;&quot;Base — only used internally; never reaches application code.&quot;&quot;&quot;
+    pass
+
+class AppenderWriteError(LoggingException):
+    &quot;&quot;&quot;Raised inside worker thread; caught, logged to stderr, worker continues.&quot;&quot;&quot;
+    pass
+
+class FormatterError(LoggingException):
+    &quot;&quot;&quot;Raised if formatter fails; fallback to str(log_message).&quot;&quot;&quot;
+    pass
+</code></pre>
+
+<p><strong>Design principle</strong>: if an appender fails (disk full, network down), the worker logs the error to stderr and continues processing — application code is never interrupted.</p>
+<h3 id="step-33-api-usage-example">Step 3.3: API Usage Example</h3>
+<pre class="codehilite"><code class="language-python"># 1. Get logger
+logger = LogManager.get_instance().get_logger(&quot;myapp.orders&quot;)
+
+# 2. Configure — add console + file output
+logger.add_appender(ConsoleAppender(PlainTextFormatter()))
+logger.add_appender(RotatingFileAppender(&quot;app.log&quot;, JsonFormatter(), max_bytes=10*1024*1024))
+logger.set_level(LogLevel.INFO)
+
+# 3. Log events (non-blocking — returns immediately)
+logger.info(&quot;Application started&quot;, version=&quot;2.1.0&quot;, env=&quot;production&quot;)
+logger.warn(&quot;High memory usage&quot;, usage_pct=85)
+logger.error(&quot;Database connection failed&quot;, host=&quot;db.internal&quot;, retry=3)
+
+# 4. Structured log → JSON formatter output:
+# {&quot;timestamp&quot;: &quot;2025-01-15T12:30:45&quot;, &quot;level&quot;: &quot;ERROR&quot;,
+#  &quot;logger&quot;: &quot;myapp.orders&quot;, &quot;message&quot;: &quot;Database connection failed&quot;,
+#  &quot;host&quot;: &quot;db.internal&quot;, &quot;retry&quot;: 3}
+
+# 5. Graceful shutdown at application exit
+logger.shutdown()
+</code></pre>
+
+<hr />
+<h2 id="step-04-architecture-relationships-diagram">Step 04: Architecture — Relationships &amp; Diagram</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Use composition, aggregation, and inheritance. Prefer composition over inheritance. Check cardinality (1:1, 1:N).</p>
+</blockquote>
+<h3 id="step-41-relationship-types">Step 4.1: Relationship Types</h3>
+<pre class="codehilite"><code>LogManager HAS-A loggers (1:N Composition)
+  └─ LogManager owns lifecycle of all Logger instances
+
+Logger HAS-A appenders (1:N Composition)
+  └─ Logger owns and manages its appender list
+
+Logger HAS-A async_queue (1:1 Composition)
+  └─ Each Logger has its own queue + worker thread
+
+Appender HAS-A formatter (1:1 Composition)
+  └─ Appender owns its formatter (Strategy pattern)
+
+LogMessage IS-A value object (no ownership)
+  └─ Created by Logger, consumed by Appenders
+
+RotatingFileAppender IS-A Appender (Inheritance)
+  └─ Extends FileAppender with rotation behavior
+
+ConsoleAppender IS-A Appender (Inheritance)
+  └─ Writes formatted output to sys.stdout
+
+CloudAppender IS-A Appender (Inheritance)
+  └─ Sends formatted output to remote endpoint
+</code></pre>
+
+<h3 id="step-42-complete-uml-class-diagram">Step 4.2: Complete UML Class Diagram</h3>
+<pre class="codehilite"><code>┌──────────────────────────────────┐
+│     LogManager (Singleton)       │
+├──────────────────────────────────┤
+│ - _instance: LogManager          │
+│ - _loggers: Dict[str, Logger]    │
+│ - _lock: threading.RLock         │
+├──────────────────────────────────┤
+│ + get_instance(): LogManager     │
+│ + get_logger(name): Logger       │
+│ + configure(name, level, appnds) │
+└──────────────┬───────────────────┘
+       manages 1:N
+               ▼
+┌─────────────────────────────────────┐
+│           Logger                    │
+├─────────────────────────────────────┤
+│ - name: str                         │
+│ - level: LogLevel                   │
+│ - appenders: List[Appender]         │
+│ - _queue: queue.Queue               │
+│ - _worker: Thread (daemon)          │
+│ - _lock: threading.RLock            │
+│ - _running: bool                    │
+├─────────────────────────────────────┤
+│ + log(level, message, **ctx): void  │
+│ + debug/info/warn/error/fatal(...)  │
+│ + add_appender(appender): void      │
+│ + remove_appender(name): bool       │
+│ + set_level(level): void            │
+│ + shutdown(): void                  │
+│ - _worker_loop(): void              │
+└──────────────┬──────────────────────┘
+       notifies 1:N
+               ▼
+┌─────────────────────────────────────┐
+│        Appender (Abstract)          │
+├─────────────────────────────────────┤
+│ - name: str                         │
+│ - formatter: Formatter              │
+│ - min_level: LogLevel               │
+├─────────────────────────────────────┤
+│ + append(log_message): void  [ABC]  │
+│ + set_formatter(fmt): void          │
+└──┬──────────────────────────────────┘
+   │ implemented by
+   ├─→ ConsoleAppender   (writes to stdout)
+   ├─→ FileAppender      (writes to file)
+   ├─→ RotatingFileAppender (file + rotation)
+   └─→ CloudAppender     (mock remote send)
+
+Each Appender HAS-A:
+┌──────────────────────────────────┐
+│      Formatter (Abstract)        │
+├──────────────────────────────────┤
+│ + format(log_message): str [ABC] │
+└──┬───────────────────────────────┘
+   │ implemented by
+   ├─→ PlainTextFormatter  → &quot;[timestamp] LEVEL name — message key=val&quot;
+   └─→ JsonFormatter       → '{&quot;timestamp&quot;:..., &quot;level&quot;:..., ...}'
+
+LogMessage (Value Object — passed through the pipeline):
+┌──────────────────────────────────┐
+│         LogMessage               │
+├──────────────────────────────────┤
+│ - level: LogLevel                │
+│ - message: str                   │
+│ - logger_name: str               │
+│ - timestamp: datetime            │
+│ - thread_id: int                 │
+│ - context: Dict[str, Any]        │
+└──────────────────────────────────┘
+
+LogLevel (IntEnum — enables numeric comparison):
+DEBUG(10) &lt; INFO(20) &lt; WARN(30) &lt; ERROR(40) &lt; FATAL(50)
+</code></pre>
+
+<h3 id="step-43-cardinality-summary">Step 4.3: Cardinality Summary</h3>
+<table>
+<thead>
+<tr>
+<th>Relationship</th>
+<th>Cardinality</th>
+<th>Type</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LogManager → Loggers</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Registry owns all named loggers</td>
+</tr>
+<tr>
+<td>Logger → Appenders</td>
+<td>1:N</td>
+<td>Composition</td>
+<td>Logger routes to multiple destinations</td>
+</tr>
+<tr>
+<td>Logger → Queue</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>Each logger has isolated async buffer</td>
+</tr>
+<tr>
+<td>Appender → Formatter</td>
+<td>1:1</td>
+<td>Composition</td>
+<td>Each appender has one active formatter</td>
+</tr>
+<tr>
+<td>Appender → LogMessage</td>
+<td>N:1</td>
+<td>Association</td>
+<td>Many appenders consume same message</td>
+</tr>
+<tr>
+<td>RotatingFileAppender → FileAppender</td>
+<td>1:1</td>
+<td>Inheritance</td>
+<td>Extends with rotation capability</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-05-optimization-design-patterns">Step 05: Optimization — Design Patterns</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Don't force patterns. Only solve specific problems.</p>
+</blockquote>
+<h3 id="pattern-1-singleton-for-logmanager">Pattern 1: <strong>Singleton</strong> (For LogManager)</h3>
+<p><strong>Problem</strong>: Different modules asking for the same named logger must receive the same configured instance — not separate unconfigured copies.</p>
+<p><strong>Solution</strong>: LogManager is a Singleton that owns the logger registry.</p>
+<pre class="codehilite"><code class="language-python">class LogManager:
+    _instance = None
+    _lock = threading.RLock()
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if not hasattr(self, '_initialized'):
+            self._loggers = {}
+            self._initialized = True
+
+    @classmethod
+    def get_instance(cls) -&gt; 'LogManager':
+        return cls()
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ One registry, consistent logger state, no duplicate workers<br />
+<strong>Trade-off</strong>: ⚠️ Global state; reset between unit tests required</p>
+<hr />
+<h3 id="pattern-2-strategy-for-formatters">Pattern 2: <strong>Strategy</strong> (For Formatters)</h3>
+<p><strong>Problem</strong>: Console output wants human-readable text; file/cloud output wants machine-parseable JSON. The formatting algorithm must be swappable without touching Appender logic.</p>
+<p><strong>Solution</strong>: <code>Formatter</code> abstract base class with pluggable implementations.</p>
+<pre class="codehilite"><code class="language-python">class Formatter(ABC):
+    @abstractmethod
+    def format(self, msg: LogMessage) -&gt; str:
+        pass
+
+class PlainTextFormatter(Formatter):
+    def format(self, msg: LogMessage) -&gt; str:
+        ts = msg.timestamp.strftime(&quot;%Y-%m-%d %H:%M:%S&quot;)
+        ctx = &quot; &quot;.join(f&quot;{k}={v}&quot; for k, v in msg.context.items())
+        return f&quot;[{ts}] {msg.level.name:&lt;5} {msg.logger_name} — {msg.message} {ctx}&quot;.strip()
+
+class JsonFormatter(Formatter):
+    def format(self, msg: LogMessage) -&gt; str:
+        import json
+        record = {
+            &quot;timestamp&quot;: msg.timestamp.isoformat(),
+            &quot;level&quot;: msg.level.name,
+            &quot;logger&quot;: msg.logger_name,
+            &quot;message&quot;: msg.message,
+            **msg.context
+        }
+        return json.dumps(record)
+
+# Usage: swap formatter at runtime
+file_appender.set_formatter(JsonFormatter())
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Open/Closed — add new formats without touching appenders<br />
+<strong>Trade-off</strong>: ⚠️ Extra abstraction layer for simple cases</p>
+<hr />
+<h3 id="pattern-3-observer-async-appender-for-dispatching">Pattern 3: <strong>Observer / Async Appender</strong> (For Dispatching)</h3>
+<p><strong>Problem</strong>: If appenders write synchronously in the calling thread, a slow network or full disk blocks the application.</p>
+<p><strong>Solution</strong>: Logger queues <code>LogMessage</code> objects; a background worker thread drains the queue and notifies each appender — the Observer role.</p>
+<pre class="codehilite"><code class="language-python">class Logger:
+    def log(self, level: LogLevel, message: str, **context):
+        if level &gt;= self.level:
+            msg = LogMessage(level, message, self.name, **context)
+            self._queue.put(msg)          # Non-blocking enqueue
+
+    def _worker_loop(self):
+        while self._running or not self._queue.empty():
+            try:
+                msg = self._queue.get(timeout=0.1)
+                with self._lock:
+                    appenders_snapshot = list(self._appenders)
+                for appender in appenders_snapshot:
+                    if msg.level &gt;= appender.min_level:
+                        appender.append(msg)  # Each appender is an &quot;Observer&quot;
+            except queue.Empty:
+                continue
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Calling thread never blocks on I/O; slow appenders don't cascade<br />
+<strong>Trade-off</strong>: ⚠️ Messages are delivered slightly delayed; must flush on shutdown</p>
+<hr />
+<h3 id="pattern-4-chain-of-responsibility-for-level-filtering">Pattern 4: <strong>Chain of Responsibility</strong> (For Level Filtering)</h3>
+<p><strong>Problem</strong>: Each layer (logger, appender) needs to independently filter messages by severity without coupling decisions together.</p>
+<p><strong>Solution</strong>: Each node in the chain independently checks the level and either processes or drops the message.</p>
+<pre class="codehilite"><code class="language-python"># Logger-level filter (outermost gate)
+def log(self, level: LogLevel, message: str, **context):
+    if level &lt; self.level:      # Logger gate: drop below logger's minimum
+        return
+    self._queue.put(LogMessage(level, message, self.name, **context))
+
+# Appender-level filter (inner gate — each appender decides independently)
+def append(self, msg: LogMessage):
+    if msg.level &lt; self.min_level:   # Appender gate
+        return
+    formatted = self.formatter.format(msg)
+    self._write(formatted)
+
+# Example: Logger at DEBUG, FileAppender at WARN
+# → DEBUG/INFO events hit Logger, enqueue, then FileAppender silently drops them
+# → WARN/ERROR/FATAL events pass both gates and are written
+</code></pre>
+
+<p><strong>Benefit</strong>: ✅ Flexible multi-level filtering; file only captures errors, console shows all<br />
+<strong>Trade-off</strong>: ⚠️ Events still enqueued if logger level passes but appender drops; minor waste</p>
+<hr />
+<h3 id="design-patterns-summary-table">Design Patterns Summary Table</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Problem Solved</th>
+<th>Where Applied</th>
+<th>Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Singleton</strong></td>
+<td>Single consistent logger registry</td>
+<td>LogManager</td>
+<td>No duplicate loggers or workers</td>
+</tr>
+<tr>
+<td><strong>Strategy</strong></td>
+<td>Pluggable output format</td>
+<td>Formatter (Plain/JSON)</td>
+<td>Add formats without touching appenders</td>
+</tr>
+<tr>
+<td><strong>Observer / Async</strong></td>
+<td>Non-blocking I/O dispatch</td>
+<td>Logger → Appenders via queue</td>
+<td>Application thread never waits on disk/network</td>
+</tr>
+<tr>
+<td><strong>Chain of Responsibility</strong></td>
+<td>Independent level filtering at each layer</td>
+<td>Logger + each Appender</td>
+<td>Fine-grained per-destination filtering</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="step-06-implementation-code-concurrency">Step 06: Implementation — Code &amp; Concurrency</h2>
+<blockquote>
+<p><strong>Interview Tip</strong>: Write thread-safe, defensive code. Mention "Thread Safety" even if not asked.</p>
+</blockquote>
+<h3 id="complete-thread-safe-implementation">Complete Thread-Safe Implementation</h3>
+<pre class="codehilite"><code class="language-python">&quot;&quot;&quot;
+Logging System — Interview Implementation
+Demonstrates:
+1. Singleton LogManager + named Logger registry
+2. Async background worker (non-blocking log calls)
+3. Strategy pattern — PlainTextFormatter vs JsonFormatter
+4. Chain of Responsibility — per-logger and per-appender level filters
+5. RotatingFileAppender — automatic size-based rotation
+6. Graceful shutdown (queue drain)
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import json
+import os
+import queue
+import sys
+import threading
+from abc import ABC, abstractmethod
+from datetime import datetime
+from enum import IntEnum
+from typing import Any, Dict, List, Optional
+
+
+# ============================================================================
+# ENUMERATIONS
+# ============================================================================
+
+class LogLevel(IntEnum):
+    DEBUG = 10
+    INFO  = 20
+    WARN  = 30
+    ERROR = 40
+    FATAL = 50
+
+
+# ============================================================================
+# VALUE OBJECT
+# ============================================================================
+
+class LogMessage:
+    &quot;&quot;&quot;Immutable snapshot of a single log event.&quot;&quot;&quot;
+
+    def __init__(self, level: LogLevel, message: str, logger_name: str,
+                 **context: Any):
+        self.level = level
+        self.message = message
+        self.logger_name = logger_name
+        self.timestamp = datetime.now()
+        self.thread_id = threading.get_ident()
+        self.context: Dict[str, Any] = context
+
+    def __repr__(self) -&gt; str:
+        return (f&quot;LogMessage({self.level.name}, {self.logger_name!r},&quot;
+                f&quot; {self.message!r})&quot;)
+
+
+# ============================================================================
+# FORMATTERS  (Strategy pattern)
+# ============================================================================
+
+class Formatter(ABC):
+    @abstractmethod
+    def format(self, msg: LogMessage) -&gt; str:
+        pass
+
+
+class PlainTextFormatter(Formatter):
+    &quot;&quot;&quot;Human-readable single-line format.&quot;&quot;&quot;
+
+    def format(self, msg: LogMessage) -&gt; str:
+        ts = msg.timestamp.strftime(&quot;%Y-%m-%d %H:%M:%S&quot;)
+        ctx_str = &quot;&quot;
+        if msg.context:
+            ctx_str = &quot;  &quot; + &quot; &quot;.join(f&quot;{k}={v}&quot; for k, v in msg.context.items())
+        return f&quot;[{ts}] {msg.level.name:&lt;5} [{msg.logger_name}] {msg.message}{ctx_str}&quot;
+
+
+class JsonFormatter(Formatter):
+    &quot;&quot;&quot;Machine-parseable JSON format for structured log indexing.&quot;&quot;&quot;
+
+    def format(self, msg: LogMessage) -&gt; str:
+        record: Dict[str, Any] = {
+            &quot;timestamp&quot;: msg.timestamp.isoformat(),
+            &quot;level&quot;: msg.level.name,
+            &quot;logger&quot;: msg.logger_name,
+            &quot;thread&quot;: msg.thread_id,
+            &quot;message&quot;: msg.message,
+        }
+        record.update(msg.context)
+        return json.dumps(record)
+
+
+# ============================================================================
+# APPENDERS
+# ============================================================================
+
+class Appender(ABC):
+    &quot;&quot;&quot;Abstract base: a single log output destination.&quot;&quot;&quot;
+
+    def __init__(self, name: str, formatter: Formatter,
+                 min_level: LogLevel = LogLevel.DEBUG):
+        self.name = name
+        self.formatter = formatter
+        self.min_level = min_level
+
+    def set_formatter(self, formatter: Formatter) -&gt; None:
+        self.formatter = formatter
+
+    def append(self, msg: LogMessage) -&gt; None:
+        &quot;&quot;&quot;Filter by min_level then delegate to _write.&quot;&quot;&quot;
+        if msg.level &lt; self.min_level:
+            return
+        try:
+            formatted = self.formatter.format(msg)
+            self._write(formatted)
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write(f&quot;[Appender:{self.name}] write error: {exc}\n&quot;)
+
+    @abstractmethod
+    def _write(self, text: str) -&gt; None:
+        pass
+
+
+class ConsoleAppender(Appender):
+    &quot;&quot;&quot;Writes to stdout.&quot;&quot;&quot;
+
+    def __init__(self, formatter: Optional[Formatter] = None,
+                 min_level: LogLevel = LogLevel.DEBUG):
+        super().__init__(&quot;console&quot;, formatter or PlainTextFormatter(), min_level)
+
+    def _write(self, text: str) -&gt; None:
+        print(text)
+
+
+class FileAppender(Appender):
+    &quot;&quot;&quot;Writes to a plain file (no rotation).&quot;&quot;&quot;
+
+    def __init__(self, file_path: str, formatter: Optional[Formatter] = None,
+                 min_level: LogLevel = LogLevel.DEBUG):
+        super().__init__(file_path, formatter or PlainTextFormatter(), min_level)
+        self.file_path = file_path
+
+    def _write(self, text: str) -&gt; None:
+        with open(self.file_path, &quot;a&quot;, encoding=&quot;utf-8&quot;) as fh:
+            fh.write(text + &quot;\n&quot;)
+
+
+class RotatingFileAppender(Appender):
+    &quot;&quot;&quot;File appender that rotates when the file exceeds max_bytes.&quot;&quot;&quot;
+
+    def __init__(self, file_path: str, formatter: Optional[Formatter] = None,
+                 min_level: LogLevel = LogLevel.DEBUG,
+                 max_bytes: int = 10 * 1024 * 1024,
+                 backup_count: int = 5):
+        super().__init__(file_path, formatter or PlainTextFormatter(), min_level)
+        self.file_path = file_path
+        self.max_bytes = max_bytes
+        self.backup_count = backup_count
+        self._file_lock = threading.Lock()
+
+    def _rotate(self) -&gt; None:
+        &quot;&quot;&quot;Rename log.N → log.N+1 and create a fresh log file.&quot;&quot;&quot;
+        for i in range(self.backup_count - 1, 0, -1):
+            src = f&quot;{self.file_path}.{i}&quot;
+            dst = f&quot;{self.file_path}.{i + 1}&quot;
+            if os.path.exists(src):
+                os.rename(src, dst)
+        if os.path.exists(self.file_path):
+            os.rename(self.file_path, f&quot;{self.file_path}.1&quot;)
+
+    def _write(self, text: str) -&gt; None:
+        with self._file_lock:
+            if os.path.exists(self.file_path):
+                current_size = os.path.getsize(self.file_path)
+                if current_size &gt;= self.max_bytes:
+                    self._rotate()
+            with open(self.file_path, &quot;a&quot;, encoding=&quot;utf-8&quot;) as fh:
+                fh.write(text + &quot;\n&quot;)
+
+
+class CloudAppender(Appender):
+    &quot;&quot;&quot;Mock cloud appender (Elasticsearch / CloudWatch).&quot;&quot;&quot;
+
+    def __init__(self, endpoint: str = &quot;https://mock-cloud.example.com&quot;,
+                 formatter: Optional[Formatter] = None,
+                 min_level: LogLevel = LogLevel.ERROR):
+        super().__init__(&quot;cloud&quot;, formatter or JsonFormatter(), min_level)
+        self.endpoint = endpoint
+        self._sent: List[str] = []
+
+    def _write(self, text: str) -&gt; None:
+        # In production: HTTP POST to endpoint
+        self._sent.append(text)
+        print(f&quot;  [CLOUD -&gt; {self.endpoint}] {text[:80]}...&quot;)
+
+
+# ============================================================================
+# LOGGER
+# ============================================================================
+
+_SENTINEL = object()   # Signals worker to stop
+
+
+class Logger:
+    &quot;&quot;&quot;
+    Named logger — enqueues LogMessage objects for async dispatch.
+    One background worker thread drains the queue and calls each Appender.
+    &quot;&quot;&quot;
+
+    def __init__(self, name: str, level: LogLevel = LogLevel.DEBUG):
+        self.name = name
+        self._level = level
+        self._appenders: List[Appender] = []
+        self._lock = threading.RLock()         # RLock: worker holds it while notifying
+        self._queue: queue.Queue = queue.Queue()
+        self._running = True
+        self._worker = threading.Thread(
+            target=self._worker_loop, name=f&quot;log-worker-{name}&quot;, daemon=True
+        )
+        self._worker.start()
+
+    # ---- public API ----
+
+    @property
+    def level(self) -&gt; LogLevel:
+        return self._level
+
+    def set_level(self, level: LogLevel) -&gt; None:
+        with self._lock:
+            self._level = level
+
+    def add_appender(self, appender: Appender) -&gt; None:
+        with self._lock:
+            self._appenders.append(appender)
+
+    def remove_appender(self, name: str) -&gt; bool:
+        with self._lock:
+            before = len(self._appenders)
+            self._appenders = [a for a in self._appenders if a.name != name]
+            return len(self._appenders) &lt; before
+
+    def log(self, level: LogLevel, message: str, **context: Any) -&gt; None:
+        &quot;&quot;&quot;Enqueue a message for async dispatch (non-blocking).&quot;&quot;&quot;
+        if level &lt; self._level:
+            return
+        msg = LogMessage(level, message, self.name, **context)
+        self._queue.put(msg)
+
+    def debug(self, message: str, **ctx: Any) -&gt; None:
+        self.log(LogLevel.DEBUG, message, **ctx)
+
+    def info(self, message: str, **ctx: Any) -&gt; None:
+        self.log(LogLevel.INFO, message, **ctx)
+
+    def warn(self, message: str, **ctx: Any) -&gt; None:
+        self.log(LogLevel.WARN, message, **ctx)
+
+    def error(self, message: str, **ctx: Any) -&gt; None:
+        self.log(LogLevel.ERROR, message, **ctx)
+
+    def fatal(self, message: str, **ctx: Any) -&gt; None:
+        self.log(LogLevel.FATAL, message, **ctx)
+
+    def shutdown(self, timeout: float = 5.0) -&gt; None:
+        &quot;&quot;&quot;Drain the queue then stop the worker thread.&quot;&quot;&quot;
+        self._running = False
+        self._queue.put(_SENTINEL)   # Unblock worker if waiting
+        self._worker.join(timeout=timeout)
+
+    # ---- background worker ----
+
+    def _worker_loop(self) -&gt; None:
+        while True:
+            try:
+                item = self._queue.get(timeout=0.05)
+            except queue.Empty:
+                if not self._running and self._queue.empty():
+                    break
+                continue
+
+            if item is _SENTINEL:
+                # Drain remaining real messages before exiting
+                while not self._queue.empty():
+                    try:
+                        remaining = self._queue.get_nowait()
+                        if remaining is not _SENTINEL:
+                            self._dispatch(remaining)
+                    except queue.Empty:
+                        break
+                break
+
+            self._dispatch(item)
+
+    def _dispatch(self, msg: LogMessage) -&gt; None:
+        with self._lock:
+            appenders = list(self._appenders)
+        for appender in appenders:
+            appender.append(msg)
+
+
+# ============================================================================
+# LOG MANAGER  (Singleton)
+# ============================================================================
+
+class LogManager:
+    &quot;&quot;&quot;
+    Singleton registry for named Logger instances.
+    Same name → same Logger object, always.
+    &quot;&quot;&quot;
+
+    _instance: Optional[LogManager] = None
+    _class_lock = threading.RLock()
+
+    def __new__(cls, *args: Any, **kwargs: Any) -&gt; LogManager:
+        if cls._instance is None:
+            with cls._class_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self) -&gt; None:
+        if not hasattr(self, &quot;_initialized&quot;):
+            self._loggers: Dict[str, Logger] = {}
+            self._lock = threading.RLock()
+            self._initialized = True
+
+    @classmethod
+    def get_instance(cls) -&gt; LogManager:
+        return cls()
+
+    def get_logger(self, name: str = &quot;root&quot;,
+                   level: LogLevel = LogLevel.DEBUG) -&gt; Logger:
+        &quot;&quot;&quot;Return existing logger or create a new one.&quot;&quot;&quot;
+        with self._lock:
+            if name not in self._loggers:
+                self._loggers[name] = Logger(name, level)
+            return self._loggers[name]
+
+    def shutdown_all(self, timeout: float = 5.0) -&gt; None:
+        &quot;&quot;&quot;Gracefully shut down every registered logger.&quot;&quot;&quot;
+        with self._lock:
+            loggers = list(self._loggers.values())
+        for logger in loggers:
+            logger.shutdown(timeout)
+
+
+# ============================================================================
+# DEMO SCENARIOS
+# ============================================================================
+
+def demo_1_basic_logging() -&gt; None:
+    print(&quot;\n&quot; + &quot;=&quot; * 70)
+    print(&quot;DEMO 1: BASIC LOGGING — CONSOLE + PLAIN TEXT&quot;)
+    print(&quot;=&quot; * 70)
+
+    manager = LogManager.get_instance()
+    logger = manager.get_logger(&quot;demo1&quot;, LogLevel.DEBUG)
+    logger.add_appender(ConsoleAppender(PlainTextFormatter(), LogLevel.DEBUG))
+
+    logger.debug(&quot;Application booting&quot;, component=&quot;init&quot;)
+    logger.info(&quot;Server listening&quot;, port=8080, host=&quot;0.0.0.0&quot;)
+    logger.warn(&quot;High memory usage&quot;, pct=87)
+    logger.error(&quot;Unhandled exception&quot;, exc=&quot;ValueError&quot;, line=42)
+    logger.fatal(&quot;Out of disk space&quot;, path=&quot;/var/log&quot;)
+
+    logger.shutdown()
+
+
+def demo_2_level_filtering() -&gt; None:
+    print(&quot;\n&quot; + &quot;=&quot; * 70)
+    print(&quot;DEMO 2: LEVEL FILTERING — LOGGER AT WARN, CONSOLE SEES WARN+&quot;)
+    print(&quot;=&quot; * 70)
+
+    manager = LogManager.get_instance()
+    logger = manager.get_logger(&quot;demo2&quot;, LogLevel.WARN)
+    logger.add_appender(ConsoleAppender(PlainTextFormatter(), LogLevel.DEBUG))
+
+    logger.debug(&quot;This DEBUG message is silently dropped by the logger gate&quot;)
+    logger.info(&quot;This INFO message is silently dropped by the logger gate&quot;)
+    logger.warn(&quot;WARN passes the logger gate → printed&quot;)
+    logger.error(&quot;ERROR passes the logger gate → printed&quot;)
+
+    logger.shutdown()
+
+
+def demo_3_json_formatter_and_cloud() -&gt; None:
+    print(&quot;\n&quot; + &quot;=&quot; * 70)
+    print(&quot;DEMO 3: JSON FORMATTER + CLOUD APPENDER (ERROR+)&quot;)
+    print(&quot;=&quot; * 70)
+
+    manager = LogManager.get_instance()
+    logger = manager.get_logger(&quot;demo3&quot;, LogLevel.DEBUG)
+
+    console = ConsoleAppender(PlainTextFormatter(), LogLevel.DEBUG)
+    cloud = CloudAppender(min_level=LogLevel.ERROR, formatter=JsonFormatter())
+
+    logger.add_appender(console)
+    logger.add_appender(cloud)
+
+    logger.info(&quot;Request received&quot;, method=&quot;GET&quot;, path=&quot;/api/orders&quot;)
+    logger.warn(&quot;Slow query detected&quot;, duration_ms=1450, table=&quot;orders&quot;)
+    logger.error(&quot;Payment gateway timeout&quot;, gateway=&quot;Stripe&quot;, retry=2)
+
+    logger.shutdown()
+
+
+def demo_4_rotating_file() -&gt; None:
+    print(&quot;\n&quot; + &quot;=&quot; * 70)
+    print(&quot;DEMO 4: ROTATING FILE APPENDER (tiny 200-byte limit)&quot;)
+    print(&quot;=&quot; * 70)
+
+    import tempfile, glob
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        log_path = os.path.join(tmpdir, &quot;app.log&quot;)
+        manager = LogManager.get_instance()
+        logger = manager.get_logger(&quot;demo4&quot;, LogLevel.DEBUG)
+        # Tiny limit so rotation triggers in the demo
+        rotating = RotatingFileAppender(
+            log_path,
+            PlainTextFormatter(),
+            LogLevel.DEBUG,
+            max_bytes=200,
+            backup_count=3,
+        )
+        logger.add_appender(rotating)
+
+        for i in range(10):
+            logger.info(f&quot;Log line {i:02d}&quot;, iteration=i, value=i * 100)
+
+        logger.shutdown()
+
+        files = sorted(glob.glob(log_path + &quot;*&quot;))
+        print(f&quot;  Files created after rotation: {[os.path.basename(f) for f in files]}&quot;)
+        print(f&quot;  Rotation working: {len(files) &gt; 1}&quot;)
+
+
+def demo_5_multithreaded() -&gt; None:
+    print(&quot;\n&quot; + &quot;=&quot; * 70)
+    print(&quot;DEMO 5: MULTI-THREADED — 5 THREADS LOGGING CONCURRENTLY&quot;)
+    print(&quot;=&quot; * 70)
+
+    manager = LogManager.get_instance()
+    logger = manager.get_logger(&quot;demo5&quot;, LogLevel.INFO)
+    logger.add_appender(ConsoleAppender(PlainTextFormatter(), LogLevel.INFO))
+
+    results = []
+    lock = threading.Lock()
+
+    def worker(thread_id: int) -&gt; None:
+        for i in range(3):
+            logger.info(f&quot;Thread message {i}&quot;, thread=thread_id, iteration=i)
+        with lock:
+            results.append(thread_id)
+
+    threads = [threading.Thread(target=worker, args=(tid,)) for tid in range(1, 6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    logger.shutdown()
+    print(f&quot;\n  All {len(results)} threads completed successfully.&quot;)
+
+
+# ============================================================================
+# ENTRY POINT
+# ============================================================================
+
+if __name__ == &quot;__main__&quot;:
+    print(&quot;=&quot; * 70)
+    print(&quot;LOGGING SYSTEM — INTERVIEW IMPLEMENTATION&quot;)
+    print(&quot;=&quot; * 70)
+
+    demo_1_basic_logging()
+    demo_2_level_filtering()
+    demo_3_json_formatter_and_cloud()
+    demo_4_rotating_file()
+    demo_5_multithreaded()
+
+    print(&quot;\n&quot; + &quot;=&quot; * 70)
+    print(&quot;ALL DEMOS COMPLETED SUCCESSFULLY&quot;)
+    print(&quot;=&quot; * 70 + &quot;\n&quot;)
+</code></pre>
+
+<h3 id="thread-safety-analysis">Thread-Safety Analysis</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Lock Strategy</th>
+<th>Guarantees</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>log() enqueue</strong></td>
+<td><code>queue.Queue</code> (thread-safe built-in)</td>
+<td>Multiple callers never corrupt the queue</td>
+</tr>
+<tr>
+<td><strong>add/remove appender</strong></td>
+<td>Logger <code>RLock</code></td>
+<td>No mid-list modification during dispatch</td>
+</tr>
+<tr>
+<td><strong>_dispatch (worker)</strong></td>
+<td>Snapshot appenders under <code>RLock</code></td>
+<td>Concurrent add/remove safe while iterating</td>
+</tr>
+<tr>
+<td><strong>RotatingFileAppender._write</strong></td>
+<td>Per-appender <code>Lock</code></td>
+<td>No interleaved writes; rotation is atomic</td>
+</tr>
+<tr>
+<td><strong>LogManager.get_logger</strong></td>
+<td>LogManager <code>RLock</code></td>
+<td>Same name always returns same instance</td>
+</tr>
+<tr>
+<td><strong>LogManager Singleton init</strong></td>
+<td>Class-level <code>RLock</code></td>
+<td>Double-checked locking; single instance</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Concurrency Principles</strong>:
+1. ✅ <code>RLock</code> (reentrant) — worker can re-enter the same lock within <code>_dispatch</code>; prevents deadlock
+2. ✅ Minimize lock duration — appenders are snapshotted inside the lock, then called outside it
+3. ✅ Worker is a daemon thread — does not prevent application exit
+4. ✅ <code>_SENTINEL</code> object drains queue cleanly before worker stops</p>
+<hr />
+<h2 id="demo-scenarios">Demo Scenarios</h2>
+<h3 id="scenario-1-basic-log-levels-console-output">Scenario 1: Basic Log Levels (Console Output)</h3>
+<pre class="codehilite"><code>[2025-01-15 12:30:45] DEBUG [demo1] Application booting  component=init
+[2025-01-15 12:30:45] INFO  [demo1] Server listening  port=8080 host=0.0.0.0
+[2025-01-15 12:30:45] WARN  [demo1] High memory usage  pct=87
+[2025-01-15 12:30:45] ERROR [demo1] Unhandled exception  exc=ValueError line=42
+[2025-01-15 12:30:45] FATAL [demo1] Out of disk space  path=/var/log
+</code></pre>
+
+<h3 id="scenario-2-level-filtering-logger-at-warn">Scenario 2: Level Filtering (Logger at WARN)</h3>
+<pre class="codehilite"><code>[Silently dropped] DEBUG — &quot;This DEBUG message is silently dropped&quot;
+[Silently dropped] INFO  — &quot;This INFO message is silently dropped&quot;
+[2025-01-15 12:30:46] WARN  [demo2] WARN passes the logger gate → printed
+[2025-01-15 12:30:46] ERROR [demo2] ERROR passes the logger gate → printed
+</code></pre>
+
+<h3 id="scenario-3-json-formatter-cloud-appender-error">Scenario 3: JSON Formatter + Cloud Appender (ERROR+)</h3>
+<pre class="codehilite"><code>Console (plain text):
+  [2025-01-15 12:30:47] INFO  [demo3] Request received  method=GET path=/api/orders
+  [2025-01-15 12:30:47] WARN  [demo3] Slow query detected  duration_ms=1450 table=orders
+  [2025-01-15 12:30:47] ERROR [demo3] Payment gateway timeout  gateway=Stripe retry=2
+
+Cloud receives (JSON, ERROR level only):
+  {&quot;timestamp&quot;:&quot;2025-01-15T12:30:47&quot;,&quot;level&quot;:&quot;ERROR&quot;,&quot;logger&quot;:&quot;demo3&quot;,
+   &quot;message&quot;:&quot;Payment gateway timeout&quot;,&quot;gateway&quot;:&quot;Stripe&quot;,&quot;retry&quot;:2}
+</code></pre>
+
+<h3 id="scenario-4-log-rotation">Scenario 4: Log Rotation</h3>
+<pre class="codehilite"><code>After 10 log lines with 200-byte size limit:
+  Files created: ['app.log', 'app.log.1', 'app.log.2', 'app.log.3']
+  Rotation working: True
+</code></pre>
+
+<h3 id="scenario-5-multi-threaded-logging">Scenario 5: Multi-threaded Logging</h3>
+<pre class="codehilite"><code>5 threads each emitting 3 INFO messages concurrently → 15 lines total
+No interleaved/corrupt output; all 5 threads complete successfully.
+</code></pre>
+
+<hr />
+<h2 id="interview-qa">Interview Q&amp;A</h2>
+<h3 id="basic-questions">Basic Questions</h3>
+<p><strong>Q1: Why is async logging important?</strong></p>
+<p>A: Synchronous logging blocks the application thread until the I/O completes. A file write can take 1-10 ms; a network call to Elasticsearch can take 50+ ms. With async logging, the calling thread enqueues in ~microseconds and continues — the background worker handles I/O independently. This is critical for high-throughput services.</p>
+<p><strong>Q2: How does log level filtering work?</strong></p>
+<p>A: Two-gate chain of responsibility:
+1. <strong>Logger gate</strong> — if <code>event.level &lt; logger.level</code>, drop immediately (no enqueue, no allocation).
+2. <strong>Appender gate</strong> — if <code>event.level &lt; appender.min_level</code>, the appender skips writing.</p>
+<p>This allows a console appender to show DEBUG while a file appender only records ERROR.</p>
+<p><strong>Q3: What is structured logging and why is it valuable?</strong></p>
+<p>A: Instead of <code>logger.info("Order placed for user 123 amount $99")</code>, you write <code>logger.info("Order placed", user_id=123, amount=99)</code>. The key-value pairs are stored in <code>LogMessage.context</code> and rendered as JSON by <code>JsonFormatter</code>. This makes logs machine-searchable: <code>WHERE amount &gt; 50 AND user_id = 123</code> in Elasticsearch vs full-text regex on strings.</p>
+<p><strong>Q4: How does log rotation work?</strong></p>
+<p>A: Before each write, <code>RotatingFileAppender</code> checks <code>os.path.getsize(file_path)</code>. If it exceeds <code>max_bytes</code>, it renames <code>app.log → app.log.1</code>, <code>app.log.1 → app.log.2</code>, etc. (up to <code>backup_count</code>), then creates a fresh <code>app.log</code>. The oldest backup is deleted if <code>backup_count</code> is exceeded.</p>
+<p><strong>Q5: How do you ensure logs are not lost on application shutdown?</strong></p>
+<p>A: <code>Logger.shutdown()</code> sets <code>_running = False</code> and puts a <code>_SENTINEL</code> on the queue. The worker drains all remaining real messages before the sentinel causes it to exit. <code>LogManager.shutdown_all()</code> calls this on every registered logger.</p>
+<hr />
+<h3 id="intermediate-questions">Intermediate Questions</h3>
+<p><strong>Q6: How is thread safety maintained when multiple threads log concurrently?</strong></p>
+<p>A: <code>queue.Queue</code> is inherently thread-safe (uses an internal lock). Multiple callers can call <code>log()</code> simultaneously without corruption. The single worker thread sequentially dequeues and dispatches — serializing all appender writes without needing additional locking in the hot path.</p>
+<p><strong>Q7: Why use <code>threading.RLock</code> instead of <code>threading.Lock</code> in Logger?</strong></p>
+<p>A: <code>_dispatch</code> is called from <code>_worker_loop</code> while holding <code>_lock</code> (to snapshot appenders). If an appender internally calls back into the same Logger (e.g., a meta-logging scenario), a plain <code>Lock</code> would deadlock. An <code>RLock</code> (reentrant lock) allows the same thread to re-acquire it.</p>
+<p><strong>Q8: How would you add a new Syslog or Kafka appender?</strong></p>
+<p>A: Create a class that extends <code>Appender</code> and implements <code>_write(text: str)</code>. The formatter is already injected; the appender just sends the text to the new destination. Zero changes to Logger, LogManager, or other appenders.</p>
+<p><strong>Q9: What is the difference between <code>FileAppender</code> and <code>RotatingFileAppender</code>?</strong></p>
+<p>A: <code>FileAppender</code> opens and appends without checking file size — it will grow unboundedly. <code>RotatingFileAppender</code> adds a per-write size check and a rotation mechanism, maintaining at most <code>1 + backup_count</code> files. Use <code>FileAppender</code> only for short-lived processes; prefer <code>RotatingFileAppender</code> for long-running services.</p>
+<p><strong>Q10: How would you redact sensitive data (passwords, tokens)?</strong></p>
+<p>A: Add a <code>RedactingFormatter</code> that wraps another formatter. Before returning the string, it applies regex patterns to replace sensitive fields: <code>re.sub(r'"password":"[^"]*"', '"password":"[REDACTED]"', text)</code>. Plug it in as the formatter for any appender that writes to external storage.</p>
+<hr />
+<h3 id="advanced-questions">Advanced Questions</h3>
+<p><strong>Q11: How would you implement log sampling for high-traffic services?</strong></p>
+<p>A: Add a <code>SamplingAppender</code> wrapper that forwards only 1 in N messages: <code>if random.random() &lt; self.sample_rate: self._inner.append(msg)</code>. Apply it only to DEBUG/INFO at the appender level; always forward WARN+ unsampled.</p>
+<p><strong>Q12: How would you centralize logs from 10 microservices?</strong></p>
+<p>A: Each service uses a <code>CloudAppender</code> that POSTs JSON log batches to a Kafka topic. A consumer group reads from Kafka and indexes into Elasticsearch. Kibana/Grafana queries Elasticsearch. Correlation IDs (<code>trace_id</code>, <code>request_id</code>) in <code>LogMessage.context</code> link events across services.</p>
+<hr />
+<h2 id="scaling-qa">Scaling Q&amp;A</h2>
+<h3 id="q1-handle-100k-log-events-per-second-from-10-services">Q1: Handle 100K log events per second from 10 services?</h3>
+<p><strong>Solution</strong>: Replace the single queue with a ring buffer (circular array, lock-free). Batch writes: accumulate 100 messages or 50 ms, then write in one <code>fwrite()</code> call. Compress before cloud upload (gzip reduces 10x). Each service's CloudAppender batches and sends to Kafka, decoupling write spikes from Elasticsearch indexing speed.</p>
+<h3 id="q2-multi-appender-performance-one-slow-appender-blocking-others">Q2: Multi-appender performance — one slow appender blocking others?</h3>
+<p><strong>Solution</strong>: Give each appender its own queue and background thread (or thread-pool worker). The Logger dispatches to per-appender queues in O(N) time with no I/O — a slow CloudAppender's queue backs up in memory without blocking the FileAppender or ConsoleAppender.</p>
+<h3 id="q3-log-search-at-scale-years-of-data">Q3: Log search at scale (years of data)?</h3>
+<p><strong>Solution</strong>: Elasticsearch: ingest pipeline tags each document with <code>@timestamp</code>, <code>level</code>, <code>service</code>. Index per-day (<code>logs-2025-01-15</code>). ILM (Index Lifecycle Management) moves indexes from hot SSD → warm HDD → cold archive → delete after retention period. Search in &lt;1 s across years via inverted index on structured fields.</p>
+<h3 id="q4-cost-optimization-for-log-storage">Q4: Cost optimization for log storage?</h3>
+<p><strong>Solution</strong>: Tiered strategy: keep ERROR+ in hot storage (7 days), WARN in warm (30 days), INFO in cold (90 days), delete DEBUG after 24 hours. Compress all files with gzip. Apply log sampling (1 in 100) for INFO in high-traffic paths. Estimated 80% storage reduction vs naive "keep everything forever."</p>
+<h3 id="q5-distributed-tracing-across-services">Q5: Distributed tracing across services?</h3>
+<p><strong>Solution</strong>: Inject <code>trace_id</code> and <code>span_id</code> into <code>LogMessage.context</code> via a thread-local context propagator (similar to OpenTelemetry). All log events for a single user request share the same <code>trace_id</code>. Elasticsearch query on <code>trace_id</code> reconstructs the full execution path across all 10 services.</p>
+<h3 id="q6-real-time-alerting-on-error-patterns">Q6: Real-time alerting on error patterns?</h3>
+<p><strong>Solution</strong>: Stream log events to Kafka. A stream processor (Flink/Kafka Streams) applies a sliding window: if ERROR count &gt; 50 in 60 seconds, trigger a PagerDuty alert. This decouples alerting from the logging write path — no synchronous notification in the hot path.</p>
+<hr />
+<h2 id="success-checklist">Success Checklist</h2>
+<ul>
+<li>[ ] Explain all 6 steps: Setup → Structure → Interface → Architecture → Optimization → Implementation</li>
+<li>[ ] Draw UML class diagram: LogManager → Logger → Appender hierarchy → Formatter</li>
+<li>[ ] Explain async logging: queue + worker thread, why non-blocking matters</li>
+<li>[ ] Explain two-gate level filtering: Logger gate then Appender gate</li>
+<li>[ ] Demonstrate Strategy pattern: swap PlainTextFormatter vs JsonFormatter</li>
+<li>[ ] Explain log rotation: size-based rename chain, backup_count</li>
+<li>[ ] Run complete implementation (5 demos) without errors</li>
+<li>[ ] Explain thread safety: RLock vs Lock, snapshot-then-iterate pattern</li>
+<li>[ ] Explain graceful shutdown: sentinel drains queue before worker exits</li>
+<li>[ ] Answer 5+ scaling Q&amp;A questions (ring buffer, per-appender threads, Elasticsearch)</li>
+<li>[ ] Discuss trade-offs: sync vs async, in-process vs out-of-process aggregation</li>
+</ul>
+<hr />
+<p><strong>Ready for interview? Start logging! 📝</strong></p>
+            </div>
+            <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
+                           color:var(--text-muted); text-align:center; font-size:.88em;">
+                <p>Last updated: 2026-06-08</p>
+                <p><a href="https://github.com/Prakash-sa/low-level-design-ultimatum">View on GitHub ↗</a></p>
+            </footer>
+        </main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+    </script>
+    <script>
+    // 1. DARK MODE
+    (function() {
+        var btn = document.getElementById('darkModeBtn');
+        var html = document.documentElement;
+        var KEY = 'lldu_theme';
+        var apply = function(theme) {
+            html.setAttribute('data-theme', theme);
+            btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        };
+        apply(localStorage.getItem(KEY) || 'light');
+        btn.addEventListener('click', function() {
+            var next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            apply(next);
+            localStorage.setItem(KEY, next);
+        });
+    })();
+
+    // 2. READING PROGRESS BAR
+    (function() {
+        var bar = document.getElementById('reading-progress');
+        window.addEventListener('scroll', function() {
+            var docH = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = (docH > 0 ? (window.scrollY / docH) * 100 : 0) + '%';
+        }, { passive: true });
+    })();
+
+    // 3. COPY CODE BUTTONS
+    (function() {
+        document.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.classList.contains('mermaid')) return;  // diagrams, not code
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            wrapper.appendChild(btn);
+
+            btn.addEventListener('click', function() {
+                var text = pre.innerText || pre.textContent || '';
+                var done = function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(function() {
+                        fallbackCopy(text); done();
+                    });
+                } else { fallbackCopy(text); done(); }
+            });
+
+            // Ensure Prism highlights as Python if no language class set
+            var codeEl = pre.querySelector('code');
+            if (codeEl && !codeEl.className.includes('language-')) {
+                codeEl.classList.add('language-python');
+            }
+        });
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+        }
+
+        if (window.Prism) Prism.highlightAll();
+    })();
+
+    // 4. MOBILE SIDEBAR TOGGLE
+    (function() {
+        var hamburger = document.getElementById('hamburger');
+        var sidebar   = document.getElementById('sidebar');
+        var overlay   = document.getElementById('sidebarOverlay');
+        var openSidebar = function() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburger.textContent = '✕';
+        };
+        var closeSidebar = function() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburger.textContent = '☰';
+        };
+        hamburger.addEventListener('click', function() {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+        overlay.addEventListener('click', closeSidebar);
+    })();
+
+    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    document.addEventListener('DOMContentLoaded', function() {
+        var toggles = document.querySelectorAll('.nav-toggle');
+        var expandedKey = 'lldu_nav_expanded';
+
+        var loadExpanded = function() {
+            try { return JSON.parse(localStorage.getItem(expandedKey)) || []; }
+            catch(e) { return []; }
+        };
+        var saveExpanded = function(paths) {
+            try { localStorage.setItem(expandedKey, JSON.stringify(paths)); }
+            catch(e) {}
+        };
+
+        var expandedPaths = new Set(loadExpanded());
+
+        var applyState = function(li) {
+            var path = li.getAttribute('data-path');
+            var isExpanded = expandedPaths.has(path);
+            li.setAttribute('data-collapsed', isExpanded ? 'false' : 'true');
+            var btn = li.querySelector('.nav-toggle');
+            if (btn) btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        };
+
+        document.querySelectorAll('.nav-folder').forEach(applyState);
+
+        toggles.forEach(function(btn) {
+            btn.addEventListener('click', function(event) {
+                event.preventDefault();
+                var li = btn.closest('.nav-folder');
+                var path = li.getAttribute('data-path');
+                var collapsed = li.getAttribute('data-collapsed') === 'true';
+                var newCollapsed = !collapsed;
+                li.setAttribute('data-collapsed', newCollapsed ? 'true' : 'false');
+                btn.setAttribute('aria-expanded', newCollapsed ? 'false' : 'true');
+                if (newCollapsed) { expandedPaths.delete(path); }
+                else { expandedPaths.add(path); }
+                saveExpanded([...expandedPaths]);
+            });
+            btn.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    btn.click();
+                }
+            });
+        });
+    });
+    </script>
+</body>
+</html>
