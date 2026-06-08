@@ -203,7 +203,7 @@
 
         /* ── Intro box ───────────────────────────────────── */
         .intro-box {
-            max-width: 900px;
+            max-width: 1280px;
             margin: 32px auto 0;
             padding: 20px 28px;
             background: var(--bg-card);
@@ -233,14 +233,18 @@
         .filter-bar {
             background: var(--bg-card);
             border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: var(--topbar);
+            z-index: 900;
+        }
+        .filter-inner {
+            max-width: 1280px;
+            margin: 0 auto;
             padding: 16px 24px;
             display: flex;
             gap: 8px;
             flex-wrap: wrap;
             align-items: center;
-            position: sticky;
-            top: var(--topbar);
-            z-index: 900;
         }
         .filter-label { font-size: .82em; font-weight: 600; color: var(--text-muted); margin-right: 4px; }
         .pill {
@@ -284,10 +288,16 @@
         .section-desc { color: var(--text-muted); font-size: .9em; margin: -14px 0 20px; }
 
         /* ── Cards ───────────────────────────────────────── */
+        /* Skip 3 columns on purpose: 4-card sections divide evenly into
+           4 or 2 columns, but 3 leaves a lonely trailing card. */
         .card-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            grid-template-columns: repeat(2, 1fr);
             gap: 20px;
+            align-items: stretch;
+        }
+        @media (min-width: 1024px) {
+            .card-grid { grid-template-columns: repeat(4, 1fr); }
         }
         .card {
             background: var(--bg-card);
@@ -424,7 +434,7 @@
         @media (max-width: 600px) {
             .card-grid { grid-template-columns: 1fr; }
             .content { padding: 24px 16px 48px; }
-            .filter-bar { padding: 12px 16px; }
+            .filter-inner { padding: 12px 16px; }
         }
     </style>
 </head>
@@ -487,13 +497,15 @@
 
 <!-- ── Filter Pills ───────────────────────────────────────── -->
 <div class="filter-bar" id="filterBar" role="group" aria-label="Filter topics">
-    <span class="filter-label">Filter:</span>
-    <button class="pill active" data-filter="all">All</button>
-    <button class="pill" data-filter="intro">📚 Introduction</button>
-    <button class="pill" data-filter="patterns">🏗️ Patterns</button>
-    <button class="pill" data-filter="examples">💼 Examples</button>
-    <button class="pill" data-filter="company">🏢 Company</button>
-    <button class="pill" data-filter="resources">🎓 Resources</button>
+    <div class="filter-inner">
+        <span class="filter-label">Filter:</span>
+        <button class="pill active" data-filter="all">All</button>
+        <button class="pill" data-filter="intro">📚 Introduction</button>
+        <button class="pill" data-filter="patterns">🏗️ Patterns</button>
+        <button class="pill" data-filter="examples">💼 Examples</button>
+        <button class="pill" data-filter="company">🏢 Company</button>
+        <button class="pill" data-filter="resources">🎓 Resources</button>
+    </div>
 </div>
 
 <!-- ── Main Content ───────────────────────────────────────── -->
