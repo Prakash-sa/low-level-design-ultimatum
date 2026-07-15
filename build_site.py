@@ -11,6 +11,7 @@ from pathlib import Path
 import markdown
 import json
 from datetime import datetime
+from html import escape as html_escape
 from urllib.parse import quote
 
 class SiteGenerator:
@@ -178,7 +179,9 @@ class SiteGenerator:
         // Prevent flash-of-wrong-theme
         (function(){{
             var t = localStorage.getItem('lldu_theme') || 'light';
+            var s = localStorage.getItem('lldu_sidebar') || 'expanded';
             document.documentElement.setAttribute('data-theme', t);
+            document.documentElement.setAttribute('data-sidebar', s);
         }})();
     </script>
     <style>
@@ -186,7 +189,7 @@ class SiteGenerator:
         :root {{
             --bg-page:       #f5f7ff;
             --bg-content:    #ffffff;
-            --bg-sidebar:    linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+            --bg-sidebar:    linear-gradient(165deg, #4667e8 0%, #2f8b8f 55%, #6e4ca6 100%);
             --bg-navbar:     #ffffff;
             --text-primary:  #1a1a2e;
             --text-muted:    #64748b;
@@ -195,14 +198,16 @@ class SiteGenerator:
             --accent:        #667eea;
             --accent-dark:   #764ba2;
             --navbar-shadow: 0 2px 10px rgba(0,0,0,0.08);
-            --sidebar-width: 280px;
+            --sidebar-width: clamp(248px, 23vw, 304px);
+            --sidebar-collapsed-width: 64px;
             --topbar-height: 56px;
             --progress-color:#667eea;
+            --sidebar-shadow: 16px 0 42px rgba(27, 32, 84, 0.16);
         }}
         [data-theme="dark"] {{
             --bg-page:       #0f1117;
             --bg-content:    #1a1c2a;
-            --bg-sidebar:    linear-gradient(160deg, #1e1a3d 0%, #2d1a4a 100%);
+            --bg-sidebar:    linear-gradient(165deg, #162139 0%, #164346 58%, #2c1d48 100%);
             --bg-navbar:     #161824;
             --text-primary:  #e2e8f0;
             --text-muted:    #94a3b8;
@@ -212,6 +217,7 @@ class SiteGenerator:
             --accent-dark:   #a78bfa;
             --navbar-shadow: 0 2px 10px rgba(0,0,0,0.5);
             --progress-color:#818cf8;
+            --sidebar-shadow: 16px 0 42px rgba(0,0,0,0.28);
         }}
 
         /* ── Reset ─────────────────────────────────────── */
@@ -314,66 +320,159 @@ class SiteGenerator:
             width: var(--sidebar-width);
             background: var(--bg-sidebar);
             color: var(--text-sidebar);
-            padding: 20px 16px;
+            padding: 18px 14px;
             overflow-y: auto;
+            overflow-x: hidden;
             flex-shrink: 0;
             position: sticky;
             top: var(--topbar-height);
             height: calc(100vh - var(--topbar-height));
-            transition: transform .3s ease;
+            box-shadow: var(--sidebar-shadow);
+            transition: width .24s ease, padding .24s ease, transform .3s ease;
             z-index: 900;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,255,255,0.34) transparent;
         }}
-        .sidebar h2 {{
-            font-size: 1.1em;
-            margin-bottom: 16px;
-            padding-bottom: 10px;
+        .sidebar::-webkit-scrollbar {{ width: 8px; }}
+        .sidebar::-webkit-scrollbar-thumb {{
+            background: rgba(255,255,255,0.28);
+            border-radius: 999px;
+        }}
+        .sidebar-header {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 14px;
+            padding: 4px 2px 14px;
             border-bottom: 2px solid rgba(255,255,255,0.25);
+        }}
+        .sidebar-title {{
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
             color: white;
+            text-decoration: none;
+            font-size: 1.06em;
+            font-weight: 800;
+            letter-spacing: 0;
+        }}
+        .sidebar-title:hover {{ text-decoration: none; background: transparent; }}
+        .sidebar-logo {{
+            display: inline-grid;
+            place-items: center;
+            width: 28px;
+            height: 28px;
+            border-radius: 8px;
+            background: rgba(255,255,255,0.17);
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.18);
+            flex: 0 0 auto;
+        }}
+        .sidebar-title-text {{
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        .sidebar-collapse {{
+            width: 30px;
+            height: 30px;
+            border: 1px solid rgba(255,255,255,0.35);
+            border-radius: 8px;
+            background: rgba(255,255,255,0.14);
+            color: white;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 auto;
+            line-height: 1;
+            transition: background .2s, border-color .2s;
+        }}
+        .sidebar-collapse:hover {{
+            background: rgba(255,255,255,0.24);
+            border-color: rgba(255,255,255,0.58);
+        }}
+        .sidebar-nav {{
+            opacity: 1;
+            transition: opacity .18s ease;
         }}
 
         /* ── Sidebar Nav ───────────────────────────────── */
         .sidebar ul {{ list-style: none; padding-left: 0; margin-left: 0; }}
-        .sidebar li {{ margin: 4px 0; }}
-        .nav-row {{ display: flex; align-items: center; gap: 6px; }}
+        .sidebar li {{ margin: 3px 0; }}
+        .nav-row {{
+            display: grid;
+            grid-template-columns: 24px minmax(0, 1fr);
+            align-items: center;
+            gap: 8px;
+            min-height: 34px;
+        }}
         .nav-toggle {{
-            width: 22px; height: 22px;
-            border: 1px solid rgba(255,255,255,0.5);
-            background: transparent;
+            width: 24px; height: 24px;
+            border: 1px solid rgba(255,255,255,0.44);
+            background: rgba(255,255,255,0.08);
             color: white;
-            border-radius: 4px;
+            border-radius: 6px;
             cursor: pointer;
-            font-size: 12px;
+            font-size: 11px;
             line-height: 1;
             display: inline-flex; align-items: center; justify-content: center;
-            transition: background .2s;
+            transition: background .2s, border-color .2s, transform .2s;
             flex-shrink: 0;
         }}
-        .nav-toggle:hover {{ background: rgba(255,255,255,0.2); }}
+        .nav-toggle:hover {{
+            background: rgba(255,255,255,0.2);
+            border-color: rgba(255,255,255,0.68);
+        }}
         .nav-folder[data-collapsed="true"] .nav-toggle::after {{ content: "▶"; }}
         .nav-folder[data-collapsed="false"] .nav-toggle::after {{ content: "▼"; }}
         .nav-folder[data-collapsed="true"] > .nav-children {{ display: none; }}
-        .nav-folder > .nav-children {{ margin-top: 6px; }}
+        .nav-folder > .nav-children {{ margin-top: 4px; }}
         .sidebar a {{
             display: block;
             color: var(--text-sidebar);
             text-decoration: none;
-            padding: 7px 10px;
-            border-radius: 5px;
-            transition: all .2s;
+            padding: 7px 9px;
+            border-radius: 7px;
+            transition: background .2s, color .2s, transform .2s;
             word-break: break-word;
             font-size: .92em;
         }}
         .sidebar a:hover {{
             background: rgba(255,255,255,0.18);
-            padding-left: 14px;
+            transform: translateX(2px);
             text-decoration: none;
         }}
-        .nav-file > a {{ padding-left: 30px; }}
+        .nav-file > a {{ padding-left: 40px; }}
         .nav-folder > .nav-row > a {{ font-weight: 600; }}
         .nav-children {{
-            margin-left: 12px;
-            border-left: 1px solid rgba(255,255,255,0.2);
-            padding-left: 8px;
+            margin-left: 11px;
+            border-left: 1px solid rgba(255,255,255,0.22);
+            padding-left: 9px;
+        }}
+        html[data-sidebar="collapsed"] .sidebar {{
+            width: var(--sidebar-collapsed-width);
+            padding: 14px 8px;
+        }}
+        html[data-sidebar="collapsed"] .sidebar-header {{
+            justify-content: center;
+            padding-bottom: 10px;
+        }}
+        html[data-sidebar="collapsed"] .sidebar-title,
+        html[data-sidebar="collapsed"] .sidebar-nav {{
+            opacity: 0;
+            pointer-events: none;
+            width: 0;
+            height: 0;
+            overflow: hidden;
+        }}
+        html[data-sidebar="collapsed"] .sidebar-collapse {{
+            width: 36px;
+            height: 36px;
+        }}
+        html[data-sidebar="collapsed"] main {{
+            padding-left: 40px;
         }}
 
         /* ── Main Content ──────────────────────────────── */
@@ -382,7 +481,7 @@ class SiteGenerator:
             padding: 36px 48px;
             background: var(--bg-content);
             min-width: 0;
-            transition: background .3s;
+            transition: background .3s, padding .24s ease;
         }}
 
         /* ── Breadcrumbs ───────────────────────────────── */
@@ -498,12 +597,27 @@ class SiteGenerator:
                 position: fixed;
                 left: 0;
                 top: var(--topbar-height);
+                width: min(var(--sidebar-width), calc(100vw - 42px));
                 height: calc(100vh - var(--topbar-height));
                 transform: translateX(-100%);
                 z-index: 1050;
                 box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+                padding: 18px 14px;
             }}
             .sidebar.open {{ transform: translateX(0); }}
+            .sidebar-collapse {{ display: none; }}
+            html[data-sidebar="collapsed"] .sidebar {{
+                width: min(var(--sidebar-width), calc(100vw - 42px));
+                padding: 18px 14px;
+            }}
+            html[data-sidebar="collapsed"] .sidebar-title,
+            html[data-sidebar="collapsed"] .sidebar-nav {{
+                opacity: 1;
+                pointer-events: auto;
+                width: auto;
+                height: auto;
+                overflow: visible;
+            }}
             main {{ padding: 20px 18px; }}
             h1 {{ font-size: 1.5em; }}
         }}
@@ -530,8 +644,19 @@ class SiteGenerator:
 
     <div class="wrapper">
         <nav class="sidebar" id="sidebar">
-            <h2>🎯 LLD</h2>
-            {nav_html}
+            <div class="sidebar-header">
+                <a href="{self.base_url}" class="sidebar-title" title="Low-Level Design Ultimatum">
+                    <span class="sidebar-logo">🎯</span>
+                    <span class="sidebar-title-text">LLD</span>
+                </a>
+                <button class="sidebar-collapse" id="sidebarCollapse" type="button"
+                        aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar">
+                    <span class="collapse-icon" aria-hidden="true">◀</span>
+                </button>
+            </div>
+            <div class="sidebar-nav">
+                {nav_html}
+            </div>
         </nav>
         <main>
             <div class="breadcrumbs">
@@ -654,7 +779,32 @@ class SiteGenerator:
         overlay.addEventListener('click', closeSidebar);
     }})();
 
-    // 5. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
+    // 5. DESKTOP SIDEBAR COLLAPSE
+    (function() {{
+        var btn = document.getElementById('sidebarCollapse');
+        var html = document.documentElement;
+        var icon = btn ? btn.querySelector('.collapse-icon') : null;
+        var KEY = 'lldu_sidebar';
+        if (!btn) return;
+
+        var apply = function(state) {{
+            var collapsed = state === 'collapsed';
+            html.setAttribute('data-sidebar', collapsed ? 'collapsed' : 'expanded');
+            btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+            btn.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+            btn.setAttribute('title', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+            if (icon) icon.textContent = collapsed ? '▶' : '◀';
+        }};
+
+        apply(localStorage.getItem(KEY) || html.getAttribute('data-sidebar') || 'expanded');
+        btn.addEventListener('click', function() {{
+            var next = html.getAttribute('data-sidebar') === 'collapsed' ? 'expanded' : 'collapsed';
+            apply(next);
+            try {{ localStorage.setItem(KEY, next); }} catch(e) {{}}
+        }});
+    }})();
+
+    // 6. SIDEBAR NAV COLLAPSE/EXPAND (preserved original logic)
     document.addEventListener('DOMContentLoaded', function() {{
         var toggles = document.querySelectorAll('.nav-toggle');
         var expandedKey = 'lldu_nav_expanded';
@@ -712,18 +862,21 @@ class SiteGenerator:
             html = "<ul>"
             for item in items:
                 item_class = "nav-folder" if item["type"] == "folder" else "nav-file"
+                item_name = html_escape(item["name"])
+                item_attr = html_escape(item["name"], quote=True)
+                item_url = html_escape(item["url"], quote=True)
                 if item["type"] == "folder":
                     html += (
-                        f'<li class="{item_class}" data-collapsed="true" data-path="{item["url"]}">'
+                        f'<li class="{item_class}" data-collapsed="true" data-path="{item_url}">'
                         f'<div class="nav-row">'
-                        f'<button class="nav-toggle" aria-label="Toggle {item["name"]}" aria-expanded="false"></button>'
-                        f'<a href="{item["url"]}">{item["name"]}</a>'
+                        f'<button class="nav-toggle" aria-label="Toggle {item_attr}" aria-expanded="false"></button>'
+                        f'<a href="{item_url}" title="{item_attr}"><span class="nav-label">{item_name}</span></a>'
                         f'</div>'
                     )
                     html += f'<div class="nav-children">{render(item["items"])}</div>'
                     html += "</li>"
                 else:
-                    html += f'<li class="{item_class}"><a href="{item["url"]}">{item["name"]}</a></li>'
+                    html += f'<li class="{item_class}"><a href="{item_url}" title="{item_attr}"><span class="nav-label">{item_name}</span></a></li>'
             html += "</ul>"
             return html
         
