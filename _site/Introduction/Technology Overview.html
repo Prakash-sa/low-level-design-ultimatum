@@ -493,423 +493,271 @@
                 <a href="/low-level-design-ultimatum/">Home</a> <span>/</span> <a href="/low-level-design-ultimatum/Introduction/">Introduction</a>
             </div>
             <div class="content">
-                <h1 id="technology-overview-read-aloud-interview-notes">Technology Overview: Read-Aloud Interview Notes</h1>
-<p>Use this document as a spoken checklist during an LLD or system design interview. The goal is not to recite every line word-for-word. The goal is to make sure you mention the important engineering choices, tradeoffs, and reasoning signals that interviewers expect.</p>
+                <h1 id="low-level-design-and-oop-glossary">Low-Level Design and OOP Glossary</h1>
+<h2 id="topic-tags">Topic Tags</h2>
+<table>
+<thead>
+<tr>
+<th>Letter</th>
+<th>Topics</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A</td>
+<td><a href="#abstraction">Abstraction</a>, <a href="#abstract-class">Abstract Class</a>, <a href="#actor">Actor</a>, <a href="#adapter-pattern">Adapter Pattern</a>, <a href="#aggregation">Aggregation</a>, <a href="#association">Association</a></td>
+</tr>
+<tr>
+<td>B</td>
+<td><a href="#builder-pattern">Builder Pattern</a>, <a href="#business-invariant">Business Invariant</a></td>
+</tr>
+<tr>
+<td>C</td>
+<td><a href="#class">Class</a>, <a href="#class-diagram">Class Diagram</a>, <a href="#command-pattern">Command Pattern</a>, <a href="#composition">Composition</a>, <a href="#concurrency">Concurrency</a>, <a href="#constructor">Constructor</a></td>
+</tr>
+<tr>
+<td>D</td>
+<td><a href="#dependency">Dependency</a>, <a href="#dependency-injection">Dependency Injection</a>, <a href="#dependency-inversion-principle">Dependency Inversion Principle</a>, <a href="#design-pattern">Design Pattern</a>, <a href="#domain-model">Domain Model</a>, <a href="#dto">DTO</a></td>
+</tr>
+<tr>
+<td>E</td>
+<td><a href="#encapsulation">Encapsulation</a>, <a href="#entity">Entity</a>, <a href="#enum">Enum</a></td>
+</tr>
+<tr>
+<td>F</td>
+<td><a href="#facade-pattern">Facade Pattern</a>, <a href="#factory-pattern">Factory Pattern</a></td>
+</tr>
+<tr>
+<td>G</td>
+<td><a href="#god-class">God Class</a></td>
+</tr>
+<tr>
+<td>H</td>
+<td><a href="#has-a-relationship">Has-A Relationship</a></td>
+</tr>
+<tr>
+<td>I</td>
+<td><a href="#inheritance">Inheritance</a>, <a href="#interface">Interface</a>, <a href="#interface-segregation-principle">Interface Segregation Principle</a>, <a href="#is-a-relationship">Is-A Relationship</a></td>
+</tr>
+<tr>
+<td>L</td>
+<td><a href="#liskov-substitution-principle">Liskov Substitution Principle</a></td>
+</tr>
+<tr>
+<td>M</td>
+<td><a href="#method">Method</a></td>
+</tr>
+<tr>
+<td>O</td>
+<td><a href="#object">Object</a>, <a href="#observer-pattern">Observer Pattern</a>, <a href="#open-closed-principle">Open Closed Principle</a></td>
+</tr>
+<tr>
+<td>P</td>
+<td><a href="#polymorphism">Polymorphism</a></td>
+</tr>
+<tr>
+<td>R</td>
+<td><a href="#repository">Repository</a>, <a href="#responsibility">Responsibility</a></td>
+</tr>
+<tr>
+<td>S</td>
+<td><a href="#service">Service</a>, <a href="#single-responsibility-principle">Single Responsibility Principle</a>, <a href="#singleton-pattern">Singleton Pattern</a>, <a href="#state-pattern">State Pattern</a>, <a href="#strategy-pattern">Strategy Pattern</a></td>
+</tr>
+<tr>
+<td>U</td>
+<td><a href="#use-case">Use Case</a></td>
+</tr>
+<tr>
+<td>V</td>
+<td><a href="#value-object">Value Object</a></td>
+</tr>
+</tbody>
+</table>
 <hr />
-<h2 id="1-opening-summary">1) Opening Summary</h2>
-<p>Read aloud:</p>
-<p>"Before I jump into classes or code, I want to clarify the technology choices and constraints. I will choose technologies based on functional requirements, non-functional requirements, scale, team familiarity, operational complexity, and expected evolution of the system. My goal is to keep the design simple enough for the current requirements while leaving clear extension points for future growth."</p>
-<p>Important points to mention:</p>
-<ul>
-<li>Start with requirements before technology.</li>
-<li>Avoid choosing a tool just because it is popular.</li>
-<li>Explain tradeoffs: simplicity, scalability, reliability, cost, maintainability, and team expertise.</li>
-<li>Mention that technology decisions should be revisited when scale or constraints change.</li>
-</ul>
-<hr />
-<h2 id="2-requirement-framing">2) Requirement Framing</h2>
-<p>Read aloud:</p>
-<p>"I would first separate functional requirements from non-functional requirements. Functional requirements tell me what the system must do. Non-functional requirements tell me how well it must do it, such as latency, availability, throughput, consistency, security, observability, and cost."</p>
-<p>Mention:</p>
-<ul>
-<li>Functional requirements: user actions, workflows, APIs, business rules.</li>
-<li>Non-functional requirements: latency, availability, scalability, durability, consistency, security, compliance, cost.</li>
-<li>Constraints: existing infrastructure, programming language, cloud provider, database preference, deployment environment, and team skills.</li>
-<li>Assumptions: call them out explicitly so the interviewer can correct them.</li>
-</ul>
-<p>Good interview line:</p>
-<p>"If the scale is small, I will prefer a simpler monolithic design. If scale, ownership, or deployment independence becomes important, I can evolve parts of it into services."</p>
-<hr />
-<h2 id="3-language-choice">3) Language Choice</h2>
-<p>Read aloud:</p>
-<p>"For language choice, I would prefer the language the team is strongest in, unless the domain strongly favors another one. For example, Java or Kotlin are strong for backend services with mature ecosystem support, Python is great for fast development and data-heavy workflows, Go is useful for high-concurrency infrastructure services, and TypeScript is strong when frontend and backend teams want shared typing."</p>
-<p>Mention:</p>
-<ul>
-<li>Java/Kotlin: mature backend ecosystem, concurrency, Spring, enterprise support.</li>
-<li>Python: speed of development, scripting, data/ML, but weaker CPU-bound performance.</li>
-<li>Go: simple deployment, efficient concurrency, infrastructure tools.</li>
-<li>TypeScript/Node.js: full-stack productivity, async I/O, real-time APIs.</li>
-<li>C++/Rust: performance-critical systems, memory control, lower-level services.</li>
-</ul>
-<p>Tradeoff line:</p>
-<p>"I would not pick a language only for performance unless performance is actually the bottleneck. Most interview systems bottleneck first on data modeling, network calls, database access, or poor caching."</p>
-<hr />
-<h2 id="4-backend-framework">4) Backend Framework</h2>
-<p>Read aloud:</p>
-<p>"For the backend framework, I would pick something conventional and well-supported because interview systems usually value clarity, testability, and maintainability more than exotic framework choices."</p>
-<p>Mention:</p>
-<ul>
-<li>Spring Boot for Java/Kotlin services.</li>
-<li>FastAPI or Django for Python.</li>
-<li>Express, NestJS, or Fastify for Node.js/TypeScript.</li>
-<li>Gin/Fiber or standard net/http for Go.</li>
-<li>Use framework features for routing, validation, dependency injection, middleware, authentication hooks, and error handling.</li>
-</ul>
-<p>Important interview points:</p>
-<ul>
-<li>Keep controllers thin.</li>
-<li>Put business rules in services or domain classes.</li>
-<li>Put persistence logic behind repositories or DAOs.</li>
-<li>Use dependency injection to make components testable.</li>
-<li>Return consistent API responses and error formats.</li>
-</ul>
-<p>Read aloud:</p>
-<p>"I would avoid placing business logic directly in controllers. Controllers should handle HTTP concerns, services should handle use cases, and repositories should handle persistence."</p>
-<hr />
-<h2 id="5-api-style">5) API Style</h2>
-<p>Read aloud:</p>
-<p>"For external APIs, I would usually start with REST because it is simple, widely understood, cache-friendly, and easy to test. If the system needs flexible client-driven querying, GraphQL can be considered. For internal high-performance service-to-service communication, gRPC can be a good fit."</p>
-<p>Mention:</p>
-<ul>
-<li>REST: simple CRUD and resource-oriented APIs.</li>
-<li>GraphQL: flexible queries, fewer round trips, but more complexity in authorization, caching, and query cost control.</li>
-<li>gRPC: efficient binary protocol, strong contracts, good for internal services.</li>
-<li>WebSocket/SSE: real-time updates, chat, notifications, live dashboards.</li>
-</ul>
-<p>Important API details:</p>
-<ul>
-<li>Versioning: <code>/v1</code>, headers, or backward-compatible contracts.</li>
-<li>Pagination: limit/offset or cursor-based.</li>
-<li>Filtering and sorting.</li>
-<li>Idempotency for retries.</li>
-<li>Rate limiting and request validation.</li>
-<li>Consistent error responses.</li>
-</ul>
-<p>Good interview line:</p>
-<p>"For write APIs that can be retried, I would use idempotency keys so duplicate client retries do not create duplicate side effects."</p>
-<hr />
-<h2 id="6-data-store-choice">6) Data Store Choice</h2>
-<p>Read aloud:</p>
-<p>"I would choose the database based on access patterns, consistency needs, relationship complexity, query shape, and expected scale. I would not default to NoSQL just because the system may scale; a relational database often handles a lot of traffic when modeled and indexed properly."</p>
-<p>Relational database:</p>
-<ul>
-<li>Good for structured data.</li>
-<li>Strong consistency and transactions.</li>
-<li>Joins and relational integrity.</li>
-<li>Examples: PostgreSQL, MySQL.</li>
-<li>Best for orders, payments, inventory, booking, user accounts, and systems with important constraints.</li>
-</ul>
-<p>NoSQL database:</p>
-<ul>
-<li>Good for high-scale, flexible schema, key-value access, document access, or wide-column workloads.</li>
-<li>Examples: DynamoDB, MongoDB, Cassandra.</li>
-<li>Best when access patterns are known and denormalization is acceptable.</li>
-</ul>
-<p>Search database:</p>
-<ul>
-<li>Use Elasticsearch/OpenSearch for full-text search, ranking, filtering, and analytics-style search.</li>
-<li>Do not treat search indexes as the source of truth.</li>
-</ul>
-<p>Cache:</p>
-<ul>
-<li>Use Redis or Memcached for hot reads, sessions, counters, rate limits, distributed locks with care, and short-lived computed results.</li>
-</ul>
-<p>Interview line:</p>
-<p>"My source of truth should be the durable database. Caches and search indexes are derived data and can be rebuilt."</p>
-<hr />
-<h2 id="7-data-modeling">7) Data Modeling</h2>
-<p>Read aloud:</p>
-<p>"I would model the core entities first, identify relationships, and then decide which constraints must be enforced by code and which should be enforced by the database."</p>
-<p>Mention:</p>
-<ul>
-<li>Entities, attributes, IDs, relationships, and ownership.</li>
-<li>One-to-one, one-to-many, many-to-many relationships.</li>
-<li>Primary keys and foreign keys.</li>
-<li>Unique constraints for business invariants.</li>
-<li>Indexes based on query patterns.</li>
-<li>Normalization for correctness.</li>
-<li>Denormalization for read performance when justified.</li>
-</ul>
-<p>Important note:</p>
-<p>"I would not add indexes blindly. Each index improves read performance for certain queries but slows writes and consumes storage."</p>
-<hr />
-<h2 id="8-consistency-and-transactions">8) Consistency and Transactions</h2>
-<p>Read aloud:</p>
-<p>"For consistency, I would first identify which operations require strong consistency and which can tolerate eventual consistency. Money movement, inventory reservation, booking, and account state usually need stronger guarantees. Notifications, analytics, feeds, and search indexing can often be eventually consistent."</p>
-<p>Mention:</p>
-<ul>
-<li>Strong consistency for critical state.</li>
-<li>Eventual consistency for derived or asynchronous state.</li>
-<li>ACID transactions for multi-row updates inside one database.</li>
-<li>Optimistic locking with version numbers.</li>
-<li>Pessimistic locking when conflicts are high.</li>
-<li>Distributed transactions are complex; prefer sagas or outbox pattern when possible.</li>
-</ul>
-<p>Good interview line:</p>
-<p>"If I need to update the database and publish an event reliably, I would consider the transactional outbox pattern so I do not lose events between the database commit and message publish."</p>
-<hr />
-<h2 id="9-caching-strategy">9) Caching Strategy</h2>
-<p>Read aloud:</p>
-<p>"I would add caching only after identifying hot reads or expensive computations. The cache should have a clear invalidation strategy, TTL, and fallback path to the source of truth."</p>
-<p>Mention:</p>
-<ul>
-<li>Cache-aside: application checks cache, falls back to DB, then populates cache.</li>
-<li>Write-through: write to cache and database together.</li>
-<li>Write-behind: async persistence, faster but riskier.</li>
-<li>TTL-based invalidation.</li>
-<li>Explicit invalidation on writes.</li>
-<li>Cache stampede protection with locking or request coalescing.</li>
-<li>Avoid caching sensitive data unless encrypted and access-controlled.</li>
-</ul>
-<p>Interview line:</p>
-<p>"Caching improves latency but introduces stale data risk, so I would only cache data where staleness is acceptable or can be controlled."</p>
-<hr />
-<h2 id="10-messaging-and-async-processing">10) Messaging and Async Processing</h2>
-<p>Read aloud:</p>
-<p>"If some work does not need to happen in the request-response path, I would move it to asynchronous processing. This improves latency and isolates failures."</p>
-<p>Mention:</p>
-<ul>
-<li>Message queues: SQS, RabbitMQ, Kafka, Pub/Sub.</li>
-<li>Use async jobs for emails, notifications, image processing, analytics, search indexing, fraud checks, and report generation.</li>
-<li>Queues smooth traffic spikes.</li>
-<li>Consumers should be idempotent because messages may be delivered more than once.</li>
-<li>Use dead-letter queues for repeated failures.</li>
-<li>Track retries and backoff.</li>
-</ul>
-<p>Kafka vs queue:</p>
-<ul>
-<li>Queue: task distribution and background jobs.</li>
-<li>Kafka: event streaming, ordered logs, replay, analytics pipelines.</li>
-</ul>
-<p>Good interview line:</p>
-<p>"I will design consumers to be idempotent because at-least-once delivery can create duplicate processing."</p>
-<hr />
-<h2 id="11-concurrency-and-thread-safety">11) Concurrency and Thread Safety</h2>
-<p>Read aloud:</p>
-<p>"For concurrency, I would identify shared mutable state and protect it carefully. In a distributed system, I would prefer database constraints, atomic operations, optimistic locking, or single-writer patterns over relying on in-memory locks."</p>
-<p>Mention:</p>
-<ul>
-<li>Race conditions.</li>
-<li>Deadlocks.</li>
-<li>Atomic operations.</li>
-<li>Locks, semaphores, and synchronized sections.</li>
-<li>Thread-safe collections.</li>
-<li>Optimistic concurrency control with version columns.</li>
-<li>Idempotency keys.</li>
-<li>Distributed locks only when necessary, with TTL and fencing tokens.</li>
-</ul>
-<p>Interview line:</p>
-<p>"In-memory locks only protect one process. If multiple instances are running, I need database-level constraints, distributed coordination, or a design that avoids shared mutable state."</p>
-<hr />
-<h2 id="12-security">12) Security</h2>
-<p>Read aloud:</p>
-<p>"Security should be part of the design, not an afterthought. I would handle authentication, authorization, input validation, secrets management, transport security, and audit logging."</p>
-<p>Mention:</p>
-<ul>
-<li>Authentication: who the user is.</li>
-<li>Authorization: what the user can do.</li>
-<li>RBAC or ABAC depending on complexity.</li>
-<li>OAuth2/OIDC for delegated identity.</li>
-<li>JWT or opaque tokens with proper expiration.</li>
-<li>Passwords hashed with strong algorithms, never encrypted or stored as plain text.</li>
-<li>TLS for data in transit.</li>
-<li>Encryption for sensitive data at rest.</li>
-<li>Input validation and output encoding.</li>
-<li>Protection against SQL injection, XSS, CSRF, SSRF, and insecure direct object references.</li>
-<li>Secrets in secret manager, not in code.</li>
-<li>Audit logs for sensitive actions.</li>
-</ul>
-<p>Good interview line:</p>
-<p>"Every request should be authenticated where required, authorized at the resource level, validated at the boundary, and logged enough for audit without leaking sensitive data."</p>
-<hr />
-<h2 id="13-observability">13) Observability</h2>
-<p>Read aloud:</p>
-<p>"For production readiness, I would add observability from the beginning: structured logs, metrics, traces, health checks, and alerts."</p>
-<p>Mention:</p>
-<ul>
-<li>Logs answer what happened.</li>
-<li>Metrics answer how the system is behaving.</li>
-<li>Traces answer where latency or failure happened across services.</li>
-<li>Health checks for deployment and load balancer decisions.</li>
-<li>Dashboards for latency, error rate, throughput, saturation, queue depth, cache hit rate, DB CPU, and slow queries.</li>
-<li>Alerts should be actionable and tied to user impact.</li>
-</ul>
-<p>Good interview line:</p>
-<p>"I would use correlation IDs so one user request can be traced across services, logs, and async jobs."</p>
-<hr />
-<h2 id="14-deployment-and-infrastructure">14) Deployment and Infrastructure</h2>
-<p>Read aloud:</p>
-<p>"For deployment, I would containerize the application and use CI/CD so builds, tests, and releases are repeatable. The deployment model depends on team size and scale."</p>
-<p>Mention:</p>
-<ul>
-<li>Docker for packaging.</li>
-<li>Kubernetes for orchestration when needed.</li>
-<li>Simpler platforms such as ECS, Cloud Run, App Service, or Heroku-style PaaS for smaller teams.</li>
-<li>CI/CD pipeline: lint, test, build, security scan, deploy.</li>
-<li>Blue-green or canary deployments for safer releases.</li>
-<li>Rollback strategy.</li>
-<li>Infrastructure as code: Terraform, CloudFormation, Pulumi.</li>
-<li>Environment separation: dev, staging, production.</li>
-</ul>
-<p>Interview line:</p>
-<p>"I would not introduce Kubernetes unless the operational benefits justify the complexity."</p>
-<hr />
-<h2 id="15-scalability">15) Scalability</h2>
-<p>Read aloud:</p>
-<p>"I would scale the system based on the bottleneck. First, I would measure. Then I would scale vertically, horizontally, cache hot reads, optimize queries, add read replicas, partition data, or split services only when needed."</p>
-<p>Mention:</p>
-<ul>
-<li>Vertical scaling: bigger machine, simplest early option.</li>
-<li>Horizontal scaling: more instances behind a load balancer.</li>
-<li>Stateless services scale more easily.</li>
-<li>Read replicas for read-heavy workloads.</li>
-<li>Sharding or partitioning for very large datasets.</li>
-<li>CDN for static assets and geographically distributed reads.</li>
-<li>Backpressure and rate limiting.</li>
-<li>Queue-based buffering for spikes.</li>
-</ul>
-<p>Good interview line:</p>
-<p>"I would keep application servers stateless so horizontal scaling is straightforward."</p>
-<hr />
-<h2 id="16-reliability-and-fault-tolerance">16) Reliability and Fault Tolerance</h2>
-<p>Read aloud:</p>
-<p>"For reliability, I would assume dependencies can fail. The design should use timeouts, retries with backoff, circuit breakers, fallbacks, idempotency, and clear failure modes."</p>
-<p>Mention:</p>
-<ul>
-<li>Timeouts on network calls.</li>
-<li>Retries only for retryable errors.</li>
-<li>Exponential backoff with jitter.</li>
-<li>Circuit breaker to stop repeated calls to a failing dependency.</li>
-<li>Bulkheads to isolate failures.</li>
-<li>Graceful degradation.</li>
-<li>Dead-letter queues.</li>
-<li>Backup and restore strategy.</li>
-<li>Disaster recovery objectives: RPO and RTO.</li>
-</ul>
-<p>Interview line:</p>
-<p>"Retries without idempotency can make failures worse, so I would combine retries with idempotent operations and bounded retry policies."</p>
-<hr />
-<h2 id="17-testing-strategy">17) Testing Strategy</h2>
-<p>Read aloud:</p>
-<p>"I would test the system at multiple levels. Unit tests validate business logic, integration tests validate database and external integrations, contract tests validate service boundaries, and end-to-end tests validate critical user flows."</p>
-<p>Mention:</p>
-<ul>
-<li>Unit tests for domain logic.</li>
-<li>Integration tests for database, cache, and queue behavior.</li>
-<li>API tests for request/response contracts.</li>
-<li>Contract tests for service-to-service communication.</li>
-<li>Load tests for performance-sensitive flows.</li>
-<li>Security tests for auth and permission checks.</li>
-<li>Regression tests for previously fixed bugs.</li>
-</ul>
-<p>Good interview line:</p>
-<p>"The highest-value tests are usually around business invariants, concurrency-sensitive paths, and critical workflows like payments or booking."</p>
-<hr />
-<h2 id="18-common-design-patterns-to-mention">18) Common Design Patterns to Mention</h2>
-<p>Read aloud:</p>
-<p>"I would use design patterns only where they simplify the design. Patterns are vocabulary for tradeoffs, not mandatory decoration."</p>
-<p>Mention:</p>
-<ul>
-<li>Factory: creating objects without exposing construction details.</li>
-<li>Strategy: swapping algorithms or policies at runtime.</li>
-<li>Observer: notifying multiple listeners when state changes.</li>
-<li>Command: representing actions as objects for undo, retry, or queues.</li>
-<li>Decorator: adding behavior without modifying the original class.</li>
-<li>Adapter: integrating incompatible interfaces.</li>
-<li>Facade: simplifying a complex subsystem.</li>
-<li>Singleton: use carefully; often dependency injection is cleaner.</li>
-<li>Builder: constructing complex objects step by step.</li>
-</ul>
-<p>Interview line:</p>
-<p>"If requirements say behavior may vary, I would look for Strategy. If multiple components need updates after an event, I would consider Observer or messaging. If object creation varies by type, Factory is a good fit."</p>
-<hr />
-<h2 id="19-monolith-vs-microservices">19) Monolith vs Microservices</h2>
-<p>Read aloud:</p>
-<p>"I would usually start with a modular monolith unless there is a strong reason for microservices. A modular monolith can still have clean boundaries, separate modules, and good testability without the operational cost of distributed systems."</p>
-<p>Mention:</p>
-<ul>
-<li>Monolith advantages: simpler deployment, easier debugging, simpler transactions, lower operational overhead.</li>
-<li>Microservice advantages: independent scaling, independent deployments, team ownership, technology flexibility.</li>
-<li>Microservice costs: network failures, distributed tracing, data consistency, versioning, deployment complexity.</li>
-<li>Good boundaries: business capabilities, ownership, data ownership, change frequency.</li>
-</ul>
-<p>Good interview line:</p>
-<p>"I would split into microservices when independent deployment, scaling, or ownership outweighs the cost of distributed system complexity."</p>
-<hr />
-<h2 id="20-cloud-and-managed-services">20) Cloud and Managed Services</h2>
-<p>Read aloud:</p>
-<p>"I would prefer managed services when they reduce operational burden and the team does not need deep control over the internals."</p>
-<p>Mention:</p>
-<ul>
-<li>Managed databases reduce backup, patching, replication, and failover burden.</li>
-<li>Managed queues reduce operational complexity.</li>
-<li>Object storage such as S3/GCS/Azure Blob for files, images, exports, and backups.</li>
-<li>CDN for static content and global delivery.</li>
-<li>Serverless for event-driven or bursty workloads.</li>
-<li>Watch for vendor lock-in, cost surprises, cold starts, and service limits.</li>
-</ul>
-<p>Interview line:</p>
-<p>"Managed services improve speed and reliability for many teams, but I would still design around service limits, cost, and portability where it matters."</p>
-<hr />
-<h2 id="21-performance-checklist">21) Performance Checklist</h2>
-<p>Read aloud:</p>
-<p>"For performance, I would first measure and identify the bottleneck instead of guessing."</p>
-<p>Mention:</p>
-<ul>
-<li>Optimize database queries and indexes.</li>
-<li>Avoid N+1 queries.</li>
-<li>Use pagination.</li>
-<li>Cache hot or expensive reads.</li>
-<li>Compress responses where useful.</li>
-<li>Avoid oversized payloads.</li>
-<li>Use async processing for slow side effects.</li>
-<li>Use connection pooling.</li>
-<li>Batch writes or reads where appropriate.</li>
-<li>Add load tests for critical paths.</li>
-</ul>
-<p>Good interview line:</p>
-<p>"The fastest request is often the one that avoids unnecessary work: fewer database calls, smaller payloads, and less synchronous processing."</p>
-<hr />
-<h2 id="22-cost-awareness">22) Cost Awareness</h2>
-<p>Read aloud:</p>
-<p>"Cost is also a design constraint. I would avoid over-provisioning early, use autoscaling carefully, choose storage tiers appropriately, and monitor expensive resources."</p>
-<p>Mention:</p>
-<ul>
-<li>Compute cost.</li>
-<li>Database cost.</li>
-<li>Cache memory cost.</li>
-<li>Data transfer cost.</li>
-<li>Logging and tracing volume.</li>
-<li>Queue and stream retention.</li>
-<li>CDN and object storage lifecycle policies.</li>
-</ul>
-<p>Interview line:</p>
-<p>"A technically scalable design is not good if it is unnecessarily expensive for the expected traffic."</p>
-<hr />
-<h2 id="23-interview-closing-summary">23) Interview Closing Summary</h2>
-<p>Read aloud:</p>
-<p>"To summarize, I would start with a simple, maintainable architecture: a conventional backend framework, clear API contracts, a relational database for core transactional data unless access patterns suggest otherwise, Redis for carefully selected caching, queues for asynchronous work, and strong observability. I would keep services stateless, enforce critical invariants in the database and domain layer, design writes to be idempotent, and scale only after measuring bottlenecks."</p>
-<p>Final points to mention:</p>
-<ul>
-<li>Requirements drive technology.</li>
-<li>Keep the first version simple.</li>
-<li>Make business invariants explicit.</li>
-<li>Prefer boring, proven technology for core systems.</li>
-<li>Add complexity only when it solves a real problem.</li>
-<li>Always discuss tradeoffs.</li>
-</ul>
-<hr />
-<h2 id="24-quick-read-aloud-version">24) Quick Read-Aloud Version</h2>
-<p>"I would begin by clarifying functional and non-functional requirements. Then I would choose technology based on scale, latency, consistency, availability, security, cost, and team familiarity. For most LLD interviews, I would start with a conventional backend framework, REST APIs, a relational database for core transactional state, Redis only for hot reads or short-lived data, and a queue for asynchronous jobs like notifications or indexing.</p>
-<p>I would keep controllers thin, put business logic in services or domain classes, and persistence behind repositories. I would model entities carefully, enforce critical constraints with database constraints and domain validation, and add indexes based on query patterns. For consistency-sensitive flows like payments, booking, or inventory, I would use transactions, locking, idempotency keys, and clear retry behavior.</p>
-<p>For scalability, I would keep services stateless, use load balancing, add read replicas or caching when reads become hot, and partition or shard only when needed. For reliability, I would use timeouts, retries with backoff, circuit breakers, dead-letter queues, and graceful degradation. For production readiness, I would add structured logs, metrics, tracing, health checks, alerts, CI/CD, rollback strategy, and secure secrets management.</p>
-<p>The main principle is to avoid unnecessary complexity. I would start with a modular monolith or simple service, use proven technologies, and evolve the design only when requirements or measured bottlenecks justify it."</p>
-<hr />
-<h2 id="25-high-signal-phrases-for-interviews">25) High-Signal Phrases for Interviews</h2>
-<ul>
-<li>"Requirements drive the technology choice."</li>
-<li>"I would start simple and evolve when constraints require it."</li>
-<li>"The database is the source of truth; caches and indexes are derived data."</li>
-<li>"I would make write operations idempotent because clients and queues retry."</li>
-<li>"I would distinguish strong consistency needs from eventual consistency needs."</li>
-<li>"I would keep application servers stateless for horizontal scaling."</li>
-<li>"I would measure before optimizing."</li>
-<li>"I would enforce critical business invariants in both the domain layer and the database."</li>
-<li>"I would avoid distributed transactions unless absolutely necessary."</li>
-<li>"I would prefer managed services when they reduce operational burden."</li>
-<li>"I would not introduce microservices unless independent scaling, deployment, or ownership justifies the complexity."</li>
-<li>"I would add observability early because debugging distributed systems without logs, metrics, and traces is expensive."</li>
-</ul>
+<h2 id="abstraction">Abstraction</h2>
+<p>Definition: Abstraction is the OOP principle of exposing only essential behavior while hiding internal implementation details.</p>
+<p>Read-aloud note: "I use abstraction to give clients a simple contract and keep complex implementation details hidden behind public methods or interfaces."</p>
+<p>Example: <code>PaymentProcessor.process(amount)</code> hides whether the payment is handled by card, wallet, or UPI.</p>
+<h2 id="abstract-class">Abstract Class</h2>
+<p>Definition: An abstract class is a partially implemented base class that defines shared behavior and requires subclasses to implement specific methods.</p>
+<p>Read-aloud note: "I use an abstract class when subclasses share common code but must still provide their own implementation for some behavior."</p>
+<p>Example: <code>Vehicle</code> can define <code>start()</code> behavior while requiring each subclass to implement <code>calculateFare()</code>.</p>
+<h2 id="actor">Actor</h2>
+<p>Definition: An actor is an external user, role, or system that interacts with the design to perform a use case.</p>
+<p>Read-aloud note: "I identify actors first because they help discover the main workflows and public methods the design must support."</p>
+<p>Example: In a parking lot system, actors can be <code>Driver</code>, <code>GateAttendant</code>, and <code>Admin</code>.</p>
+<h2 id="adapter-pattern">Adapter Pattern</h2>
+<p>Definition: The Adapter pattern converts one interface into another interface expected by the client.</p>
+<p>Read-aloud note: "I use Adapter when I need to integrate an existing or third-party class without changing the client code."</p>
+<p>Example: <code>StripePaymentAdapter</code> implements <code>PaymentProcessor</code> while internally calling Stripe-specific APIs.</p>
+<h2 id="aggregation">Aggregation</h2>
+<p>Definition: Aggregation is a weak whole-part relationship where the child can exist independently of the parent.</p>
+<p>Read-aloud note: "I use aggregation when one object references another, but does not control its lifecycle."</p>
+<p>Example: A <code>Team</code> has <code>Players</code>, but a <code>Player</code> can still exist if the <code>Team</code> is deleted.</p>
+<h2 id="association">Association</h2>
+<p>Definition: Association is a relationship where one class knows about or uses another class.</p>
+<p>Read-aloud note: "Association shows that two classes collaborate, but it does not necessarily mean ownership."</p>
+<p>Example: A <code>Doctor</code> is associated with many <code>Patients</code>.</p>
+<h2 id="builder-pattern">Builder Pattern</h2>
+<p>Definition: The Builder pattern constructs complex objects step by step.</p>
+<p>Read-aloud note: "I use Builder when an object has many optional fields or construction parameters and a constructor would become unreadable."</p>
+<p>Example: <code>ReportBuilder.setTitle().setDateRange().setFormat().build()</code> creates a complex report.</p>
+<h2 id="business-invariant">Business Invariant</h2>
+<p>Definition: A business invariant is a rule that must always remain true for the system to be valid.</p>
+<p>Read-aloud note: "I call out invariants because low-level design is not only about classes, it is also about preventing invalid state."</p>
+<p>Example: A confirmed seat booking must not overlap with another confirmed booking for the same seat and show.</p>
+<h2 id="class">Class</h2>
+<p>Definition: A class is a blueprint that defines state and behavior shared by objects of that type.</p>
+<p>Read-aloud note: "I create a class when a concept has meaningful responsibility, behavior, or lifecycle in the domain."</p>
+<p>Example: <code>ParkingTicket</code> can store ticket number, entry time, assigned spot, and payment status.</p>
+<h2 id="class-diagram">Class Diagram</h2>
+<p>Definition: A class diagram is a UML-style representation of classes, attributes, methods, and relationships.</p>
+<p>Read-aloud note: "I use a class diagram to communicate ownership, collaboration, and extension points clearly."</p>
+<p>Example: A movie booking diagram can show <code>Theater</code>, <code>Screen</code>, <code>Show</code>, <code>Seat</code>, <code>Booking</code>, and <code>Payment</code>.</p>
+<h2 id="command-pattern">Command Pattern</h2>
+<p>Definition: The Command pattern represents an action as an object.</p>
+<p>Read-aloud note: "I use Command when actions need to be queued, logged, retried, undone, or executed later."</p>
+<p>Example: A text editor can represent <code>InsertTextCommand</code> and <code>DeleteTextCommand</code> for undo and redo.</p>
+<h2 id="composition">Composition</h2>
+<p>Definition: Composition is a strong whole-part relationship where the parent owns the child lifecycle.</p>
+<p>Read-aloud note: "I use composition when a child object is a real part of the parent and should not live independently."</p>
+<p>Example: A <code>Board</code> is composed of <code>Cells</code>; if the board is removed, its cells are removed too.</p>
+<h2 id="concurrency">Concurrency</h2>
+<p>Definition: Concurrency means multiple operations may execute at overlapping times and access shared state.</p>
+<p>Read-aloud note: "I mention concurrency when two users can modify the same resource, because checking and updating must be atomic."</p>
+<p>Example: Two users trying to book the same movie seat must not both succeed.</p>
+<h2 id="constructor">Constructor</h2>
+<p>Definition: A constructor initializes an object into a valid starting state.</p>
+<p>Read-aloud note: "I keep constructors focused on creating a valid object, not doing heavy business workflows or external calls."</p>
+<p>Example: <code>Account(accountId, owner, openingBalance)</code> should validate that opening balance is not negative.</p>
+<h2 id="dependency">Dependency</h2>
+<p>Definition: A dependency is a relationship where one class needs another class to perform its responsibility.</p>
+<p>Read-aloud note: "I track dependencies because too many direct dependencies make a class hard to test and change."</p>
+<p>Example: <code>OrderService</code> depends on <code>PaymentProcessor</code> to complete checkout.</p>
+<h2 id="dependency-injection">Dependency Injection</h2>
+<p>Definition: Dependency injection provides a class its dependencies from the outside instead of creating them internally.</p>
+<p>Read-aloud note: "I use dependency injection to decouple classes and make them easier to test with mocks or alternate implementations."</p>
+<p>Example: <code>OrderService(PaymentProcessor processor)</code> receives the payment processor through its constructor.</p>
+<h2 id="dependency-inversion-principle">Dependency Inversion Principle</h2>
+<p>Definition: The Dependency Inversion Principle says high-level modules should depend on abstractions, not concrete implementations.</p>
+<p>Read-aloud note: "I apply DIP when business logic should not be tightly coupled to a specific database, payment provider, or notification channel."</p>
+<p>Example: <code>CheckoutService</code> depends on <code>PaymentGateway</code>, not directly on <code>StripeGateway</code>.</p>
+<h2 id="design-pattern">Design Pattern</h2>
+<p>Definition: A design pattern is a reusable solution to a common software design problem.</p>
+<p>Read-aloud note: "I use patterns only when they simplify the design or make extension cleaner."</p>
+<p>Example: Strategy fits when discount calculation can vary by coupon, membership, or campaign.</p>
+<h2 id="domain-model">Domain Model</h2>
+<p>Definition: A domain model is the set of classes and relationships that represent the core business concepts and rules.</p>
+<p>Read-aloud note: "I keep business behavior in the domain model instead of scattering rules across controllers or utility classes."</p>
+<p>Example: In a library system, <code>BookItem</code>, <code>Member</code>, <code>Loan</code>, <code>Reservation</code>, and <code>Fine</code> form the domain model.</p>
+<h2 id="dto">DTO</h2>
+<p>Definition: A Data Transfer Object carries data between layers or across boundaries without business logic.</p>
+<p>Read-aloud note: "I use DTOs to separate external request or response shape from internal domain objects."</p>
+<p>Example: <code>CreateBookingRequest</code> can contain <code>showId</code>, <code>seatIds</code>, and <code>userId</code>.</p>
+<h2 id="encapsulation">Encapsulation</h2>
+<p>Definition: Encapsulation bundles data with behavior and restricts direct access to internal state.</p>
+<p>Read-aloud note: "I use encapsulation to protect invariants by forcing state changes through controlled methods."</p>
+<p>Example: <code>Account.withdraw(amount)</code> validates balance instead of allowing direct modification of <code>balance</code>.</p>
+<h2 id="entity">Entity</h2>
+<p>Definition: An entity is a domain object with unique identity and lifecycle.</p>
+<p>Read-aloud note: "I model something as an entity when identity matters even if its attributes change."</p>
+<p>Example: A <code>User</code> remains the same user even if their email or phone number changes.</p>
+<h2 id="enum">Enum</h2>
+<p>Definition: An enum represents a fixed set of named constants.</p>
+<p>Read-aloud note: "I use enums for limited states or types to avoid invalid string values."</p>
+<p>Example: <code>BookingStatus</code> can be <code>PENDING</code>, <code>CONFIRMED</code>, <code>CANCELLED</code>, or <code>EXPIRED</code>.</p>
+<h2 id="facade-pattern">Facade Pattern</h2>
+<p>Definition: The Facade pattern provides a simplified interface over a complex subsystem.</p>
+<p>Read-aloud note: "I use Facade when a client should not need to coordinate many low-level components directly."</p>
+<p>Example: <code>BookingFacade.bookTicket()</code> can coordinate seat lock, payment, booking creation, and notification.</p>
+<h2 id="factory-pattern">Factory Pattern</h2>
+<p>Definition: The Factory pattern centralizes object creation logic and hides construction details.</p>
+<p>Read-aloud note: "I use Factory when object creation varies by type or condition."</p>
+<p>Example: <code>VehicleFactory.createVehicle(type)</code> can return <code>Car</code>, <code>Bike</code>, or <code>Truck</code>.</p>
+<h2 id="god-class">God Class</h2>
+<p>Definition: A god class is an oversized class that owns too many responsibilities.</p>
+<p>Read-aloud note: "I avoid god classes by splitting responsibilities into focused services, entities, strategies, and repositories."</p>
+<p>Example: <code>ParkingLotManager</code> should not handle spot assignment, payment, ticket printing, notifications, and reporting all by itself.</p>
+<h2 id="has-a-relationship">Has-A Relationship</h2>
+<p>Definition: A Has-A relationship means one object contains, owns, or uses another object.</p>
+<p>Read-aloud note: "I model Has-A relationships with composition or aggregation instead of inheritance."</p>
+<p>Example: A <code>Car</code> has an <code>Engine</code>.</p>
+<h2 id="inheritance">Inheritance</h2>
+<p>Definition: Inheritance lets a child class derive state or behavior from a parent class.</p>
+<p>Read-aloud note: "I use inheritance only for a true Is-A relationship where the child can safely substitute the parent."</p>
+<p>Example: <code>Car</code> and <code>Bike</code> can inherit from <code>Vehicle</code> if all vehicles share meaningful behavior.</p>
+<h2 id="interface">Interface</h2>
+<p>Definition: An interface defines a behavior contract that implementing classes must provide.</p>
+<p>Read-aloud note: "I use interfaces at variation points so high-level code depends on capabilities, not concrete classes."</p>
+<p>Example: <code>NotificationSender</code> can be implemented by <code>EmailSender</code>, <code>SmsSender</code>, and <code>PushSender</code>.</p>
+<h2 id="interface-segregation-principle">Interface Segregation Principle</h2>
+<p>Definition: The Interface Segregation Principle says clients should not depend on methods they do not use.</p>
+<p>Read-aloud note: "I split large interfaces into smaller focused interfaces so classes implement only relevant behavior."</p>
+<p>Example: Use <code>Printable</code> and <code>Scannable</code> instead of forcing every machine to implement one large <code>Machine</code> interface.</p>
+<h2 id="is-a-relationship">Is-A Relationship</h2>
+<p>Definition: An Is-A relationship means a subclass is a valid specialized form of its parent type.</p>
+<p>Read-aloud note: "I verify Is-A relationships with substitutability, not just shared fields."</p>
+<p>Example: A <code>SavingsAccount</code> is an <code>Account</code>, but a <code>User</code> is not a <code>DatabaseRecord</code> just because it can be saved.</p>
+<h2 id="liskov-substitution-principle">Liskov Substitution Principle</h2>
+<p>Definition: The Liskov Substitution Principle says subclasses must be usable wherever the base class is expected without breaking correctness.</p>
+<p>Read-aloud note: "I check LSP before using inheritance because a subclass should not surprise callers of the parent type."</p>
+<p>Example: A <code>ReadOnlyFile</code> subclass that throws on <code>write()</code> may violate expectations of a general <code>File</code> type with writable behavior.</p>
+<h2 id="method">Method</h2>
+<p>Definition: A method is behavior defined inside a class.</p>
+<p>Read-aloud note: "I design public methods around use cases and keep method names clear and action-oriented."</p>
+<p>Example: <code>Booking.confirm()</code>, <code>Booking.cancel()</code>, and <code>Booking.expire()</code> are clearer than directly setting status.</p>
+<h2 id="object">Object</h2>
+<p>Definition: An object is a runtime instance of a class with its own state and behavior.</p>
+<p>Read-aloud note: "Objects collaborate by calling methods on each other, and each object should protect its own valid state."</p>
+<p>Example: <code>ticket123</code> is an object of class <code>ParkingTicket</code>.</p>
+<h2 id="observer-pattern">Observer Pattern</h2>
+<p>Definition: The Observer pattern defines a one-to-many dependency where observers are notified when a subject changes state.</p>
+<p>Read-aloud note: "I use Observer when multiple components need to react to an event without tightly coupling the subject to each component."</p>
+<p>Example: When an order is placed, email, invoice, and analytics observers can react.</p>
+<h2 id="open-closed-principle">Open Closed Principle</h2>
+<p>Definition: The Open Closed Principle says software entities should be open for extension but closed for modification.</p>
+<p>Read-aloud note: "I apply OCP by adding new classes for new behavior instead of repeatedly editing stable code."</p>
+<p>Example: Add <code>WalletPaymentStrategy</code> without modifying existing card payment logic.</p>
+<h2 id="polymorphism">Polymorphism</h2>
+<p>Definition: Polymorphism allows different classes to be used through a common interface while providing different implementations.</p>
+<p>Read-aloud note: "I use polymorphism to remove conditionals when behavior depends on object type."</p>
+<p>Example: <code>pricingStrategy.calculatePrice(order)</code> works for <code>RegularPricing</code>, <code>SurgePricing</code>, or <code>DiscountPricing</code>.</p>
+<h2 id="repository">Repository</h2>
+<p>Definition: A repository abstracts data access for domain objects.</p>
+<p>Read-aloud note: "I use repositories to keep persistence logic separate from business logic."</p>
+<p>Example: <code>BookingRepository.findById(id)</code> and <code>BookingRepository.save(booking)</code> hide storage details.</p>
+<h2 id="responsibility">Responsibility</h2>
+<p>Definition: A responsibility is the specific job assigned to a class, method, or module.</p>
+<p>Read-aloud note: "Every class I introduce should have one clear responsibility that I can explain in one sentence."</p>
+<p>Example: <code>SeatLockManager</code> is responsible for temporarily locking seats during booking.</p>
+<h2 id="service">Service</h2>
+<p>Definition: A service coordinates a use case or business operation that does not naturally belong to one entity.</p>
+<p>Read-aloud note: "I use services to orchestrate workflows while keeping domain rules inside domain objects when possible."</p>
+<p>Example: <code>BookingService</code> coordinates seat availability, locking, payment, and booking confirmation.</p>
+<h2 id="single-responsibility-principle">Single Responsibility Principle</h2>
+<p>Definition: The Single Responsibility Principle says a class should have one clear reason to change.</p>
+<p>Read-aloud note: "I apply SRP by separating unrelated responsibilities into different classes."</p>
+<p>Example: Split payment processing, invoice generation, and notification sending into separate classes.</p>
+<h2 id="singleton-pattern">Singleton Pattern</h2>
+<p>Definition: The Singleton pattern ensures a class has only one shared instance and provides global access to it.</p>
+<p>Read-aloud note: "I mention Singleton carefully because global state can make testing and concurrency harder; dependency injection is often cleaner."</p>
+<p>Example: A configuration provider may be singleton-like if the application needs one shared configuration source.</p>
+<h2 id="state-pattern">State Pattern</h2>
+<p>Definition: The State pattern lets an object change behavior when its internal state changes.</p>
+<p>Read-aloud note: "I use State when many conditionals depend on lifecycle state."</p>
+<p>Example: A vending machine behaves differently in <code>IdleState</code>, <code>HasMoneyState</code>, <code>DispensingState</code>, and <code>SoldOutState</code>.</p>
+<h2 id="strategy-pattern">Strategy Pattern</h2>
+<p>Definition: The Strategy pattern defines interchangeable algorithms behind a common interface.</p>
+<p>Read-aloud note: "I use Strategy when a policy or algorithm can vary independently from the main object."</p>
+<p>Example: <code>ParkingSpotAssignmentStrategy</code> can be nearest-first, random, or preferred-zone based.</p>
+<h2 id="use-case">Use Case</h2>
+<p>Definition: A use case is a specific user goal or workflow the system must support.</p>
+<p>Read-aloud note: "I use use cases to validate that the class diagram actually supports real behavior."</p>
+<p>Example: In movie booking, a main use case is selecting seats, locking them, paying, and confirming the booking.</p>
+<h2 id="value-object">Value Object</h2>
+<p>Definition: A value object is an immutable domain object defined by its values rather than unique identity.</p>
+<p>Read-aloud note: "I use value objects for concepts where equality is based on fields, not identity."</p>
+<p>Example: Two <code>Money(100, "USD")</code> objects are equal if amount and currency are the same.</p>
             </div>
             <footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border);
                            color:var(--text-muted); text-align:center; font-size:.88em;">

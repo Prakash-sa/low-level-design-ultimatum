@@ -2,7 +2,25 @@
 
 ## Topic Tags
 
-[Abstraction](#abstraction) | [Abstract Class](#abstract-class) | [Actor](#actor) | [Adapter Pattern](#adapter-pattern) | [Aggregation](#aggregation) | [Association](#association) | [Builder Pattern](#builder-pattern) | [Business Invariant](#business-invariant) | [Class](#class) | [Class Diagram](#class-diagram) | [Command Pattern](#command-pattern) | [Composition](#composition) | [Concurrency](#concurrency) | [Constructor](#constructor) | [Dependency](#dependency) | [Dependency Injection](#dependency-injection) | [Dependency Inversion Principle](#dependency-inversion-principle) | [Design Pattern](#design-pattern) | [Domain Model](#domain-model) | [DTO](#dto) | [Encapsulation](#encapsulation) | [Entity](#entity) | [Enum](#enum) | [Facade Pattern](#facade-pattern) | [Factory Pattern](#factory-pattern) | [God Class](#god-class) | [Has-A Relationship](#has-a-relationship) | [Inheritance](#inheritance) | [Interface](#interface) | [Interface Segregation Principle](#interface-segregation-principle) | [Is-A Relationship](#is-a-relationship) | [Liskov Substitution Principle](#liskov-substitution-principle) | [Method](#method) | [Object](#object) | [Observer Pattern](#observer-pattern) | [Open Closed Principle](#open-closed-principle) | [Polymorphism](#polymorphism) | [Repository](#repository) | [Responsibility](#responsibility) | [Service](#service) | [Single Responsibility Principle](#single-responsibility-principle) | [Singleton Pattern](#singleton-pattern) | [State Pattern](#state-pattern) | [Strategy Pattern](#strategy-pattern) | [Use Case](#use-case) | [Value Object](#value-object)
+| Letter | Topics |
+| --- | --- |
+| A | [Abstraction](#abstraction), [Abstract Class](#abstract-class), [Actor](#actor), [Adapter Pattern](#adapter-pattern), [Aggregation](#aggregation), [Association](#association) |
+| B | [Builder Pattern](#builder-pattern), [Business Invariant](#business-invariant) |
+| C | [Class](#class), [Class Diagram](#class-diagram), [Command Pattern](#command-pattern), [Composition](#composition), [Concurrency](#concurrency), [Constructor](#constructor) |
+| D | [Dependency](#dependency), [Dependency Injection](#dependency-injection), [Dependency Inversion Principle](#dependency-inversion-principle), [Design Pattern](#design-pattern), [Domain Model](#domain-model), [DTO](#dto) |
+| E | [Encapsulation](#encapsulation), [Entity](#entity), [Enum](#enum) |
+| F | [Facade Pattern](#facade-pattern), [Factory Pattern](#factory-pattern) |
+| G | [God Class](#god-class) |
+| H | [Has-A Relationship](#has-a-relationship) |
+| I | [Inheritance](#inheritance), [Interface](#interface), [Interface Segregation Principle](#interface-segregation-principle), [Is-A Relationship](#is-a-relationship) |
+| L | [Liskov Substitution Principle](#liskov-substitution-principle) |
+| M | [Method](#method) |
+| O | [Object](#object), [Observer Pattern](#observer-pattern), [Open Closed Principle](#open-closed-principle) |
+| P | [Polymorphism](#polymorphism) |
+| R | [Repository](#repository), [Responsibility](#responsibility) |
+| S | [Service](#service), [Single Responsibility Principle](#single-responsibility-principle), [Singleton Pattern](#singleton-pattern), [State Pattern](#state-pattern), [Strategy Pattern](#strategy-pattern) |
+| U | [Use Case](#use-case) |
+| V | [Value Object](#value-object) |
 
 ---
 
